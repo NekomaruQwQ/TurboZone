@@ -116,6 +116,28 @@ pub struct WindowInfo {
 }
 
 impl WindowInfo {
+    /// Centers this window on its screen.
+    /// For maximized/minimized windows, adjusts the restored position.
+    pub fn center(&self) -> Result<()> {
+        match self.state {
+            WindowState::Normal =>
+                center_to_screen(self.hwnd),
+            WindowState::Maximized | WindowState::Minimized =>
+                center_restored_to_screen(self.hwnd),
+        }
+    }
+
+    /// Resizes this window's client area to `(width, height)`.
+    /// For maximized/minimized windows, adjusts the restored size.
+    pub fn resize(&self, width: i32, height: i32) -> Result<()> {
+        match self.state {
+            WindowState::Normal =>
+                resize_client(self.hwnd, width, height),
+            WindowState::Maximized | WindowState::Minimized =>
+                resize_restored_client(self.hwnd, width, height),
+        }
+    }
+
     pub fn from_hwnd(hwnd: HWND) -> Self {
         let window_text =
             get_window_text(hwnd);

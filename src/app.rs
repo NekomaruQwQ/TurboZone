@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use egui::*;
 
 use itertools::Itertools as _;
 
-use crate::native::*;
+use crate::config::*;
+use crate::native;
 use crate::core::*;
 
 const CHAR_EMPTY: char = '\u{26ab}';
@@ -14,8 +15,9 @@ const CHAR_CROSS: char = '\u{00d7}';
 const CHAR_WINDOW: char = '\u{1f5d6}';
 
 pub struct App {
-    windows: HashMap<Option<PathBuf>, Vec<WindowInfo>>,
-    executables: HashMap<PathBuf, ExecutableInfo>,
+    config: Config,
+    window_map: BTreeMap<Option<PathBuf>, Vec<WindowInfo>>,
+    executable_map: HashMap<PathBuf, ExecutableInfo>,
 }
 
 impl eframe::App for App {
@@ -26,22 +28,30 @@ impl eframe::App for App {
 
 impl App {
     pub fn new() -> Self {
+        let config =
+            load_config()
+                .inspect_err(|e| log::error!("{e}"))
+                .unwrap_or_default()
+                .unwrap_or_default();
         Self {
-            windows: HashMap::new(),
-            executables: HashMap::new(),
+            window_map: BTreeMap::new(),
+            executable_map: HashMap::new(),
+            config,
         }
     }
 
     fn refresh_windows(&mut self) {
-        self.windows =
+        self.window_map =
             Self::enumerate_windows()
                 .into_iter()
-                .into_group_map_by(|info| info.executable_path.clone());
+                .into_group_map_by(|info| info.executable_path.clone())
+                .into_iter()
+                .collect();
     }
 
     fn enumerate_windows() -> Vec<WindowInfo> {
-        enumerate_windows()
-            .inspect_err(|e| eprintln!("enumerate_windows() failed: {e}"))
+        native::enumerate_windows()
+            .inspect_err(|e| log::error!("enumerate_windows() failed: {e}"))
             .unwrap_or_default()
             .into_iter()
             .filter(|&hwnd| is_active(hwnd))
@@ -63,52 +73,133 @@ impl App {
         ScrollArea::vertical()
             .auto_shrink(false)
             .show(ui, |ui| {
-                for (executable_path, windows) in
-                    self.windows
-                        .iter()
-                        .sorted_by_key(|&(path, _)| path.clone()) {
-                    Self::group_ui(
-                        ui,
-                        &mut self.executables,
-                        executable_path.as_ref(),
-                        windows);
+                for (my_path, my_windows) in &self.window_map {
+                    let mut group_ui =
+                        GroupUI::new(
+                            &mut self.executable_map,
+                            &mut self.config,
+                            my_path.as_ref(),
+                            my_windows);
+                    ui.push_id(group_ui.display_path.clone(), |ui| {
+                        group_ui.ui(ui);
+                    });
                 }
             });
     }
+}
 
-    fn group_ui(
-        ui: &mut Ui,
-        executables: &mut HashMap<PathBuf, ExecutableInfo>,
-        my_path: Option<&PathBuf>,
-        my_windows: &[WindowInfo]) {
-        let my_info =
-            my_path.map(|path| &*{
-                executables
+struct GroupUI<'a> {
+    config: &'a mut Config,
+    windows: &'a [WindowInfo],
+    display_name: String,
+    display_path: String,
+    normalized_path: Option<PathBuf>,
+    resize_enabled: bool,
+}
+
+impl<'a> GroupUI<'a> {
+    fn new(
+        executable_map: &'a mut HashMap<PathBuf, ExecutableInfo>,
+        config: &'a mut Config,
+        path: Option<&'a PathBuf>,
+        windows: &'a [WindowInfo]) -> Self {
+        let executable_info =
+            path.map(|path| &*{
+                executable_map
                     .entry(path.clone())
                     .or_insert_with(|| ExecutableInfo::from_path(path))
             });
-        let my_display_name =
-            my_info
-                .and_then(|info| info.display_name.as_ref())
-                .map(String::as_str)
-                .unwrap_or("<unknown>");
-        let my_display_path =
-            my_info
-                .map(|info| info.display_path.as_str())
-                .unwrap_or("<unknown path>");
-        ui.push_id(my_display_path, |ui| {
-            ui.heading(my_display_name);
-            ui.add(Label::new(RichText::new(my_display_path).weak()).truncate());
-            ui.add_space(4.0);
-            for window in my_windows {
-                ui.push_id(window.hwnd.0, |ui| Self::item_ui(ui, window));
-                ui.add_space(2.0);
-            }
-            ui.add_space(8.0);
-        });
+
+        let display_name =
+            executable_info
+                .and_then(|info| info.display_name.clone())
+                .unwrap_or_else(|| "<unknown>".to_owned());
+        let display_path =
+            executable_info
+                .map(|info| info.display_path.clone())
+                .unwrap_or_else(|| "<unknown path>".to_owned());
+
+        // Normalize to forward slashes so lookups match the stored form.
+        let normalized_path =
+            path.map(|p| PathBuf::from(p.to_string_lossy().replace('\\', "/")));
+        let resize_enabled =
+            normalized_path
+                .as_ref()
+                .is_none_or(|p| !config.no_resize.contains(p));
+
+        Self {
+            config,
+            windows,
+            display_name,
+            display_path,
+            normalized_path,
+            resize_enabled,
+        }
     }
 
-    fn item_ui(ui: &mut Ui, window: &WindowInfo) {
+    fn set_resize_enabled(&mut self, enabled: bool) {
+        if let Some(ref path) = self.normalized_path {
+            if enabled {
+                self.config.no_resize.remove(path);
+            } else {
+                self.config.no_resize.insert(path.clone());
+            }
+            save_config(self.config)
+                .unwrap_or_else(|e| log::error!("failed to save config: {e}"));
+        }
+    }
+}
+
+impl GroupUI<'_> {
+    fn ui(&mut self, ui: &mut Ui) {
+        ui.heading(&self.display_name);
+        ui.add(Label::new(RichText::new(&self.display_path).weak()).truncate());
+
+        // Group-level controls: resize checkbox, center all, resize all.
+        ui.horizontal(|ui| {
+            // CENTER ALL button.
+            ui.add_sized((80.0, 16.0), Button::new("CENTER ALL"))
+                .clicked()
+                .then(|| {
+                    for window in self.windows {
+                        window.center()
+                            .unwrap_or_else(|e| log::error!("failed to center window: {e}"));
+                    }
+                });
+
+            // RESIZE ALL combobox.
+            ui.add_enabled_ui(self.resize_enabled, |ui| {
+                egui::ComboBox::from_id_salt("resize-all")
+                    .width(ui.available_width().min(120.0))
+                    .selected_text("Resize All")
+                    .show_ui(ui, |ui| {
+                        resolution_ui(ui, 0, 0, |width, height| {
+                            for window in self.windows {
+                                window.resize(width, height)
+                                    .unwrap_or_else(|e| log::error!("failed to resize window: {e}"));
+                            }
+                        });
+                    });
+            });
+
+            // Checkbox — only shown for groups with a known executable path.
+            let mut enabled = self.resize_enabled;
+            if ui.checkbox(&mut enabled, "Resize Enabled").changed() {
+                self.set_resize_enabled(enabled);
+            }
+        });
+
+        ui.add_space(4.0);
+
+        for window in self.windows {
+            ui.push_id(window.hwnd.0, |ui| Self::item_ui(ui, window, self.resize_enabled));
+            ui.add_space(2.0);
+        }
+
+        ui.add_space(8.0);
+    }
+
+    fn item_ui(ui: &mut Ui, window: &WindowInfo, resize_enabled: bool) {
         ui.horizontal(|ui| {
             ui.label(CHAR_WINDOW.to_string());
             match window.state {
@@ -130,63 +221,61 @@ impl App {
                 ui.add_sized((80.0, 16.0), Button::new("CENTER"))
                     .clicked()
                     .then(|| {
-                        let result = match window.state {
-                            WindowState::Normal =>
-                                center_to_screen(window.hwnd),
-                            WindowState::Maximized | WindowState::Minimized =>
-                                center_restored_to_screen(window.hwnd),
-                        };
-                        if let Err(err) = result {
-                            eprintln!("failed to center window: {err}");
-                        }
+                        window.center()
+                            .unwrap_or_else(|e| log::error!("failed to center window: {e}"));
                     });
             }
 
-            let width = window.client_size.map_or(0, |size| size.width);
-            let height = window.client_size.map_or(0, |size| size.height);
+            ui.add_enabled_ui(resize_enabled, |ui| {
+                let width = window.client_size.map_or(0, |size| size.width);
+                let height = window.client_size.map_or(0, |size| size.height);
 
-            egui::ComboBox::from_id_salt("size")
-                .width(ui.available_width().min(120.0))
-                .selected_text({
-                    if !(width == 0 && height == 0) {
-                        format!(
-                            "{} {width}x{height}",
-                            if is_known_resolution(width, height) {
-                                CHAR_CHECK
-                            } else {
-                                CHAR_EMPTY
-                            })
-                    } else {
-                        "<unknown size>".to_owned()
-                    }
-                })
-                .show_ui(ui, |ui| {
-                    for &(name, arr) in RESOLUTION_GROUPS {
-                        ui.add_sized(
-                            (ui.available_width(), 0.0),
-                            egui::Label::new(
-                                egui::RichText::new(format!("-{name}-  ")).weak()));
-                        for resolution in arr {
-                            ui.selectable_value(
-                                &mut format!("{}x{}", resolution.cx, resolution.cy),
-                                format!("{width}x{height}"),
-                                format!("{}{}{}", resolution.cx, CHAR_CROSS, resolution.cy))
-                                .clicked()
-                                .then(|| {
-                                    let result = match window.state {
-                                        WindowState::Normal =>
-                                            resize_client(window.hwnd, resolution.cx, resolution.cy),
-                                        WindowState::Maximized | WindowState::Minimized =>
-                                            resize_restored_client(window.hwnd, resolution.cx, resolution.cy),
-                                    };
-                                    if let Err(err) = result {
-                                        eprintln!("failed to resize window: {err}");
-                                    }
-                                });
+                egui::ComboBox::from_id_salt("size")
+                    .width(ui.available_width().min(120.0))
+                    .selected_text({
+                        if !(width == 0 && height == 0) {
+                            format!(
+                                "{} {width}x{height}",
+                                if is_known_resolution(width, height) {
+                                    CHAR_CHECK
+                                } else {
+                                    CHAR_EMPTY
+                                })
+                        } else {
+                            "<unknown size>".to_owned()
                         }
-                        ui.label("");
-                    }
-                });
+                    })
+                    .show_ui(ui, |ui| {
+                        resolution_ui(ui, width, height, |width, height| {
+                            window.resize(width, height)
+                                .unwrap_or_else(|e| log::error!("failed to resize window: {e}"));
+                        });
+                    });
+            });
         });
+    }
+}
+
+fn resolution_ui<F>(
+    ui: &mut Ui,
+    selected_width: u32,
+    selected_height: u32,
+    action: F)
+where
+    F: Fn(i32, i32) {
+    for &(name, arr) in RESOLUTION_GROUPS {
+        ui.add_sized(
+            (ui.available_width(), 0.0),
+            egui::Label::new(
+                egui::RichText::new(format!("-{name}-  ")).weak()));
+        for resolution in arr {
+            ui.selectable_value(
+                &mut format!("{}x{}", resolution.cx, resolution.cy),
+                format!("{selected_width}x{selected_height}"),
+                format!("{}{}{}", resolution.cx, CHAR_CROSS, resolution.cy))
+                .clicked()
+                .then(|| action(resolution.cx, resolution.cy));
+        }
+        ui.label("");
     }
 }
