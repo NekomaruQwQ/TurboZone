@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use euclid::default::Size2D;
+use euclid::default::*;
 use win32_version_info::VersionInfo;
 
 use windows::core::*;
@@ -36,49 +36,48 @@ pub fn get_window_state(hwnd: HWND) -> WindowState {
     }
 }
 
-pub const RESOLUTION_GROUPS: &[(&str, &[SIZE])] = &[
+pub const RESOLUTION_GROUPS: &[(&str, &[Size2D<i32>])] = &[
     ("16:10", RESOLUTIONS_16_10),
 ];
 
-pub const RESOLUTIONS_16_10: &[SIZE] = &[
-    SIZE { cx: 3840, cy: 2400 },
-    SIZE { cx: 2880, cy: 1800 },
-    SIZE { cx: 2560, cy: 1600 },
-    SIZE { cx: 1920, cy: 1200 },
-    SIZE { cx: 1680, cy: 1050 },
-    SIZE { cx: 1440, cy:  900 },
-    SIZE { cx: 1280, cy:  800 },
-    SIZE { cx:  960, cy:  600 },
-    SIZE { cx:  800, cy:  500 },
-    SIZE { cx:  640, cy:  400 },
-    SIZE { cx:  480, cy:  300 },
+pub const RESOLUTIONS_16_10: &[Size2D<i32>] = &[
+    Size2D::new(3840, 2400),
+    Size2D::new(2880, 1800),
+    Size2D::new(2560, 1600),
+    Size2D::new(1920, 1200),
+    Size2D::new(1680, 1050),
+    Size2D::new(1440,  900),
+    Size2D::new(1280,  800),
+    Size2D::new( 960,  600),
+    Size2D::new( 800,  500),
+    Size2D::new( 640,  400),
+    Size2D::new( 480,  300),
 ];
 
-pub fn is_known_resolution(width: u32, height: u32) -> bool {
+pub fn is_known_resolution(size: Size2D<u32>) -> bool {
     RESOLUTION_GROUPS
         .iter()
         .flat_map(|&(_, arr)| arr)
-        .any(|&item| {
-            item.cx == width as i32 &&
-            item.cy == height as i32})
+        .any(|&resolution|
+            resolution.width == size.width as i32 &&
+            resolution.height == size.height as i32)
 }
 
-pub const fn get_center_of_rect(rect: &RECT) -> POINT {
-    POINT {
-        x: rect.left + (rect.right  - rect.left) / 2,
-        y: rect.top  + (rect.bottom - rect.top ) / 2,
+/// Converts a Win32 [`RECT`] to a [`Box2D`] for euclid-based geometry.
+const fn box2d_from_rect(rect: &RECT) -> Box2D<i32> {
+    Box2D::new(
+        Point2D::new(rect.left, rect.top),
+        Point2D::new(rect.right, rect.bottom))
+}
+
+/// Converts a [`Box2D`] to a Win32 [`RECT`] for API calls.
+const fn box2d_into_rect(box2d: &Box2D<i32>) -> RECT {
+    RECT {
+        left:   box2d.min.x,
+        top:    box2d.min.y,
+        right:  box2d.max.x,
+        bottom: box2d.max.y,
     }
-}
-
-fn get_display_name_for_executable(path: &PathBuf)
-    -> Option<String> {
-    VersionInfo::from_file(path)
-        .map(|info| info.file_description)
-        .ok()
-        .or_else(|| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-        })
 }
 
 pub struct ExecutableInfo {
@@ -93,6 +92,16 @@ impl ExecutableInfo {
             display_name: get_display_name_for_executable(path),
         }
     }
+}
+
+fn get_display_name_for_executable(path: &PathBuf) -> Option<String> {
+    VersionInfo::from_file(path)
+        .map(|info| info.file_description)
+        .ok()
+        .or_else(|| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
 }
 
 pub struct WindowInfo {
@@ -116,28 +125,6 @@ pub struct WindowInfo {
 }
 
 impl WindowInfo {
-    /// Centers this window on its screen.
-    /// For maximized/minimized windows, adjusts the restored position.
-    pub fn center(&self) -> Result<()> {
-        match self.state {
-            WindowState::Normal =>
-                center_to_screen(self.hwnd),
-            WindowState::Maximized | WindowState::Minimized =>
-                center_restored_to_screen(self.hwnd),
-        }
-    }
-
-    /// Resizes this window's client area to `(width, height)`.
-    /// For maximized/minimized windows, adjusts the restored size.
-    pub fn resize(&self, width: i32, height: i32) -> Result<()> {
-        match self.state {
-            WindowState::Normal =>
-                resize_client(self.hwnd, width, height),
-            WindowState::Maximized | WindowState::Minimized =>
-                resize_restored_client(self.hwnd, width, height),
-        }
-    }
-
     pub fn from_hwnd(hwnd: HWND) -> Self {
         let window_text =
             get_window_text(hwnd);
@@ -195,19 +182,51 @@ pub fn is_centered(hwnd: HWND) -> Option<bool> {
     // SAFETY: `window_rect` is stack-local; its raw pointer is valid
     // for the duration of the call.
     unsafe { GetWindowRect(hwnd, &raw mut window_rect) }.ok()?;
-    let screen_center = get_center_of_rect(&monitor_info.rcWork);
-    let window_center = get_center_of_rect(&window_rect);
+    let screen_center = box2d_from_rect(&monitor_info.rcWork).center();
+    let window_center = box2d_from_rect(&window_rect).center();
     Some(window_center == screen_center)
+}
+
+/// Centers this window on its screen.
+/// For maximized/minimized windows, adjusts the restored position.
+pub fn center_window(hwnd: HWND) -> Result<()> {
+    match get_window_state(hwnd) {
+        WindowState::Normal =>
+            center_to_screen(hwnd),
+        WindowState::Maximized | WindowState::Minimized =>
+            center_restored_to_screen(hwnd),
+    }
+}
+
+/// Resizes this window's client area to `size`.
+/// For maximized/minimized windows, adjusts the restored size.
+pub fn resize_window(hwnd: HWND, size: Size2D<i32>) -> Result<()> {
+    match get_window_state(hwnd) {
+        WindowState::Normal =>
+            resize_client(hwnd, size),
+        WindowState::Maximized | WindowState::Minimized =>
+            resize_restored_client(hwnd, size),
+    }
 }
 
 pub fn center_to_screen(hwnd: HWND) -> Result<()> {
     let Some(monitor_info) = get_monitor_info_from_window(hwnd) else {
         return Err(Error::empty());
     };
+
     let mut window_rect = RECT::default();
+
     // SAFETY: `window_rect` is stack-local; its raw pointer is valid for the
     // duration of the call.
     unsafe { GetWindowRect(hwnd, &raw mut window_rect) }?;
+
+    let screen_center =
+        box2d_from_rect(&monitor_info.rcWork).center();
+    let window_size =
+        box2d_from_rect(&window_rect).size();
+    let window_position =
+        screen_center - window_size.to_vector() / 2;
+
     // SAFETY: Positional arguments are computed from prior successful API
     // calls (`get_monitor_info_from_window`, `GetWindowRect`); `SWP_NOSIZE`
     // makes the width/height arguments (0, 0) ignored; flag constants are valid.
@@ -215,12 +234,8 @@ pub fn center_to_screen(hwnd: HWND) -> Result<()> {
         SetWindowPos(
             hwnd,
             None,
-            monitor_info.rcWork.left
-                + (monitor_info.rcWork.right - monitor_info.rcWork.left) / 2
-                - (window_rect.right - window_rect.left) / 2,
-            monitor_info.rcWork.top
-                + (monitor_info.rcWork.bottom - monitor_info.rcWork.top) / 2
-                - (window_rect.bottom - window_rect.top) / 2,
+            window_position.x,
+            window_position.y,
             0,
             0,
             SWP_NOACTIVATE |
@@ -233,10 +248,14 @@ pub fn center_to_screen(hwnd: HWND) -> Result<()> {
 /// Checks whether the *restored* position (`rcNormalPosition`) of a maximized
 /// or minimized window is centered on the monitor work area.
 pub fn is_restored_centered(hwnd: HWND) -> Option<bool> {
-    let monitor_info = get_monitor_info_from_window(hwnd)?;
-    let placement = get_window_placement(hwnd).ok()?;
-    let screen_center = get_center_of_rect(&monitor_info.rcWork);
-    let window_center = get_center_of_rect(&placement.rcNormalPosition);
+    let monitor_info =
+        get_monitor_info_from_window(hwnd)?;
+    let placement =
+        get_window_placement(hwnd).ok()?;
+    let screen_center =
+        box2d_from_rect(&monitor_info.rcWork).center();
+    let window_center =
+        box2d_from_rect(&placement.rcNormalPosition).center();
     Some(window_center == screen_center)
 }
 
@@ -247,38 +266,41 @@ pub fn center_restored_to_screen(hwnd: HWND) -> Result<()> {
     let Some(monitor_info) = get_monitor_info_from_window(hwnd) else {
         return Err(Error::empty());
     };
-    let mut placement = get_window_placement(hwnd)?;
-    let rc = &placement.rcNormalPosition;
-    let w = rc.right - rc.left;
-    let h = rc.bottom - rc.top;
-    let work = &monitor_info.rcWork;
-    placement.rcNormalPosition = RECT {
-        left:   work.left + (work.right  - work.left - w) / 2,
-        top:    work.top  + (work.bottom - work.top  - h) / 2,
-        right:  work.left + (work.right  - work.left - w) / 2 + w,
-        bottom: work.top  + (work.bottom - work.top  - h) / 2 + h,
-    };
+
+    let mut placement =
+        get_window_placement(hwnd)?;
+    let window_size =
+        box2d_from_rect(&placement.rcNormalPosition).size();
+    let screen_center =
+        box2d_from_rect(&monitor_info.rcWork).center();
+
+    // Derive max from min + size to preserve exact dimensions for odd sizes.
+    let new_min =
+        screen_center - window_size.to_vector() / 2;
+    let new_max =
+        new_min + window_size.to_vector();
+    placement.rcNormalPosition =
+        box2d_into_rect(&Box2D::new(new_min, new_max));
     set_window_placement(hwnd, &placement)
 }
 
 /// Resizes the *restored* client area of a maximized or minimized window to
-/// `(width, height)` and re-centers the result around the old window center,
+/// `size` and re-centers the result around the old window center,
 /// without changing the window's current show state.
-pub fn resize_restored_client(hwnd: HWND, width: i32, height: i32) -> Result<()> {
-    let mut placement = get_window_placement(hwnd)?;
-    let frame = get_normal_frame(hwnd)?;
-    let old_rc = &placement.rcNormalPosition;
-    let old_center = get_center_of_rect(old_rc);
+pub fn resize_restored_client(hwnd: HWND, size: Size2D<i32>) -> Result<()> {
+    let mut placement =
+        get_window_placement(hwnd)?;
+    let frame =
+        get_normal_frame(hwnd)?;
+    let old_center =
+        box2d_from_rect(&placement.rcNormalPosition).center();
 
-    // Desired window size = desired client size + frame insets.
-    let new_w = width  + (frame.right - frame.left);
-    let new_h = height + (frame.bottom - frame.top);
-
-    placement.rcNormalPosition = RECT {
-        left:   old_center.x - new_w / 2,
-        top:    old_center.y - new_h / 2,
-        right:  old_center.x - new_w / 2 + new_w,
-        bottom: old_center.y - new_h / 2 + new_h,
-    };
+    // Desired window size = desired client size + frame overhead.
+    // Derive max from min + size to preserve exact dimensions for odd sizes.
+    let new_window_size = size + frame;
+    let new_min = old_center - new_window_size.to_vector() / 2;
+    let new_max = new_min + new_window_size.to_vector();
+    placement.rcNormalPosition =
+        box2d_into_rect(&Box2D::new(new_min, new_max));
     set_window_placement(hwnd, &placement)
 }

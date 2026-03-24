@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt as _;
 use std::path::PathBuf;
 
-use euclid::default::Size2D;
+use euclid::default::*;
 
 use windows::core::*;
 use windows::Win32::{
@@ -168,13 +168,13 @@ pub fn set_window_placement(hwnd: HWND, placement: &WINDOWPLACEMENT) -> Result<(
     unsafe { SetWindowPlacement(hwnd, placement) }
 }
 
-/// Computes the normal-state window frame (border/title insets) for `hwnd`
+/// Computes the total window-frame overhead (border + title bar) for `hwnd`
 /// by querying its window style and calling `AdjustWindowRectEx` on a zero rect.
 ///
-/// This gives the correct frame regardless of whether the window is currently
-/// maximized or minimized, because it derives the frame from the window's
-/// *style* rather than from its current geometry.
-pub fn get_normal_frame(hwnd: HWND) -> Result<RECT> {
+/// Returns a [`Size2D`] representing how much larger the window rectangle is
+/// than the client area. This is style-derived, so it is correct regardless of
+/// whether the window is currently maximized or minimized.
+pub fn get_normal_frame(hwnd: HWND) -> Result<Size2D<i32>> {
     // SAFETY: `GetWindowLongW` is a simple query on `hwnd` with no pointer arguments.
     #[expect(clippy::multiple_unsafe_ops_per_block, reason = "Windows API calls")]
     let (style, ex_style) = unsafe {(
@@ -187,7 +187,7 @@ pub fn get_normal_frame(hwnd: HWND) -> Result<RECT> {
     // SAFETY: `rect` is stack-local; its raw pointer is valid for the call.
     // `style`, `ex_style`, and `has_menu` are derived from prior successful queries.
     unsafe { AdjustWindowRectEx(&raw mut rect, style, has_menu, ex_style) }?;
-    Ok(rect)
+    Ok(Size2D::new(rect.right - rect.left, rect.bottom - rect.top))
 }
 
 /// Returns the restored client size of a window by subtracting the normal-state
@@ -200,41 +200,36 @@ pub fn get_restored_client_size(hwnd: HWND) -> Result<Size2D<u32>> {
     let placement = get_window_placement(hwnd)?;
     let frame = get_normal_frame(hwnd)?;
     let rc = placement.rcNormalPosition;
-    // `frame` has negative left/top and positive right/bottom values representing
-    // the frame insets. Subtracting them from the normal rect gives the client area.
-    let width  = (rc.right - rc.left) - (frame.right - frame.left);
-    let height = (rc.bottom - rc.top) - (frame.bottom - frame.top);
-    Ok(Size2D::new(width as u32, height as u32))
+    let window_size = Size2D::new(rc.right - rc.left, rc.bottom - rc.top);
+    let client_size = window_size - frame;
+    Ok(Size2D::new(client_size.width as u32, client_size.height as u32))
 }
 
-pub fn resize_client(hwnd: HWND, width: i32, height: i32) -> Result<()> {
+pub fn resize_client(hwnd: HWND, size: Size2D<i32>) -> Result<()> {
     let mut window_rect = RECT::default();
     let mut client_rect = RECT::default();
 
     // SAFETY: Both `RECT`s are stack-local; their raw pointers are valid for
     // the duration of each call.
     unsafe { GetWindowRect(hwnd, &raw mut window_rect) }?;
-    // SAFETY: Mentioned above;
+    // SAFETY: Mentioned above.
     unsafe { GetClientRect(hwnd, &raw mut client_rect) }?;
 
-    let old_window_size = SIZE {
-        cx: window_rect.right  - window_rect.left,
-        cy: window_rect.bottom - window_rect.top,
-    };
-    let old_client_size = SIZE {
-        cx: client_rect.right  - client_rect.left,
-        cy: client_rect.bottom - client_rect.top,
-    };
-    let new_client_size = SIZE {
-        cx: width,
-        cy: height,
-    };
-    let new_window_size = SIZE {
-        cx: old_window_size.cx + new_client_size.cx - old_client_size.cx,
-        cy: old_window_size.cy + new_client_size.cy - old_client_size.cy,
-    };
-    let new_x = window_rect.left + old_window_size.cx / 2i32 - new_window_size.cx / 2i32;
-    let new_y = window_rect.top  + old_window_size.cy / 2i32 - new_window_size.cy / 2i32;
+    let old_position =
+        Point2D::new(
+            window_rect.left,
+            window_rect.top);
+    let old_window_size =
+        Size2D::new(
+            window_rect.right  - window_rect.left,
+            window_rect.bottom - window_rect.top);
+    let old_client_size =
+        Size2D::new(
+            client_rect.right  - client_rect.left,
+            client_rect.bottom - client_rect.top);
+    let new_window_size = old_window_size + size - old_client_size;
+    let new_position =
+        old_position - (new_window_size - old_window_size).to_vector() / 2;
 
     // SAFETY: All positional/size arguments are computed from prior successful
     // Win32 API calls; flag constants are valid.
@@ -242,10 +237,10 @@ pub fn resize_client(hwnd: HWND, width: i32, height: i32) -> Result<()> {
         SetWindowPos(
             hwnd,
             None,
-            new_x,
-            new_y,
-            new_window_size.cx,
-            new_window_size.cy,
+            new_position.x,
+            new_position.y,
+            new_window_size.width,
+            new_window_size.height,
             SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER)
     }
 }

@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 use egui::*;
+use euclid::default::*;
 
 use itertools::Itertools as _;
 
@@ -162,7 +163,7 @@ impl GroupUI<'_> {
                 .clicked()
                 .then(|| {
                     for window in self.windows {
-                        window.center()
+                        center_window(window.hwnd)
                             .unwrap_or_else(|e| log::error!("failed to center window: {e}"));
                     }
                 });
@@ -173,9 +174,9 @@ impl GroupUI<'_> {
                     .width(ui.available_width().min(120.0))
                     .selected_text("Resize All")
                     .show_ui(ui, |ui| {
-                        resolution_ui(ui, 0, 0, |width, height| {
+                        resolution_ui(ui, Size2D::zero(), |size| {
                             for window in self.windows {
-                                window.resize(width, height)
+                                resize_window(window.hwnd, size)
                                     .unwrap_or_else(|e| log::error!("failed to resize window: {e}"));
                             }
                         });
@@ -221,33 +222,29 @@ impl GroupUI<'_> {
                 ui.add_sized((80.0, 16.0), Button::new("CENTER"))
                     .clicked()
                     .then(|| {
-                        window.center()
+                        center_window(window.hwnd)
                             .unwrap_or_else(|e| log::error!("failed to center window: {e}"));
                     });
             }
 
             ui.add_enabled_ui(resize_enabled, |ui| {
-                let width = window.client_size.map_or(0, |size| size.width);
-                let height = window.client_size.map_or(0, |size| size.height);
+                let size = window.client_size.unwrap_or_default();
 
                 egui::ComboBox::from_id_salt("size")
                     .width(ui.available_width().min(120.0))
                     .selected_text({
-                        if !(width == 0 && height == 0) {
+                        if size != Size2D::zero() {
                             format!(
-                                "{} {width}x{height}",
-                                if is_known_resolution(width, height) {
-                                    CHAR_CHECK
-                                } else {
-                                    CHAR_EMPTY
-                                })
+                                "{} {}x{}",
+                                if is_known_resolution(size) { CHAR_CHECK } else { CHAR_EMPTY },
+                                size.width, size.height)
                         } else {
                             "<unknown size>".to_owned()
                         }
                     })
                     .show_ui(ui, |ui| {
-                        resolution_ui(ui, width, height, |width, height| {
-                            window.resize(width, height)
+                        resolution_ui(ui, size, |size| {
+                            resize_window(window.hwnd, size)
                                 .unwrap_or_else(|e| log::error!("failed to resize window: {e}"));
                         });
                     });
@@ -256,25 +253,22 @@ impl GroupUI<'_> {
     }
 }
 
-fn resolution_ui<F>(
+fn resolution_ui(
     ui: &mut Ui,
-    selected_width: u32,
-    selected_height: u32,
-    action: F)
-where
-    F: Fn(i32, i32) {
+    selected: Size2D<u32>,
+    action: impl Fn(Size2D<i32>)) {
     for &(name, arr) in RESOLUTION_GROUPS {
         ui.add_sized(
             (ui.available_width(), 0.0),
             egui::Label::new(
                 egui::RichText::new(format!("-{name}-  ")).weak()));
-        for resolution in arr {
+        for &resolution in arr {
             ui.selectable_value(
-                &mut format!("{}x{}", resolution.cx, resolution.cy),
-                format!("{selected_width}x{selected_height}"),
-                format!("{}{}{}", resolution.cx, CHAR_CROSS, resolution.cy))
+                &mut format!("{}x{}", resolution.width, resolution.height),
+                format!("{}x{}", selected.width, selected.height),
+                format!("{}{}{}", resolution.width, CHAR_CROSS, resolution.height))
                 .clicked()
-                .then(|| action(resolution.cx, resolution.cy));
+                .then(|| action(resolution));
         }
         ui.label("");
     }
