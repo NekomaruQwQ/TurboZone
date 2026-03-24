@@ -139,22 +139,37 @@ impl<'a> GroupUI<'a> {
     }
 
     fn set_resize_enabled(&mut self, enabled: bool) {
-        if let Some(ref path) = self.normalized_path {
-            if enabled {
-                self.config.no_resize.remove(path);
-            } else {
-                self.config.no_resize.insert(path.clone());
-            }
-            save_config(self.config)
-                .unwrap_or_else(|e| log::error!("failed to save config: {e}"));
+        let Some(ref path) = self.normalized_path else {
+            panic!("cannot set resize enabled for unknown executable path");
+        };
+
+        if enabled {
+            self.config.no_resize.remove(path);
+        } else {
+            self.config.no_resize.insert(path.clone());
         }
+
+        save_config(self.config)
+            .unwrap_or_else(|e| log::error!("failed to save config: {e}"));
     }
 }
 
 impl GroupUI<'_> {
+    fn resize_enabled_ui(&mut self, ui: &mut Ui) {
+        // Only show the "Resize Enabled" checkbox for groups with a known
+        // executable path.
+        if self.normalized_path.is_some() {
+            let mut enabled = self.resize_enabled;
+            if ui.checkbox(&mut enabled, "Resize Enabled").changed() {
+                self.set_resize_enabled(enabled);
+            }
+        }
+    }
+
     fn ui(&mut self, ui: &mut Ui) {
         ui.heading(&self.display_name);
         ui.add(Label::new(RichText::new(&self.display_path).weak()).truncate());
+        ui.add_space(4.0);
 
         // Group-level controls: resize checkbox, center all, resize all.
         ui.horizontal(|ui| {
@@ -184,73 +199,71 @@ impl GroupUI<'_> {
             });
 
             // Checkbox — only shown for groups with a known executable path.
-            let mut enabled = self.resize_enabled;
-            if ui.checkbox(&mut enabled, "Resize Enabled").changed() {
-                self.set_resize_enabled(enabled);
-            }
+            self.resize_enabled_ui(ui);
         });
 
         ui.add_space(4.0);
 
         for window in self.windows {
-            ui.push_id(window.hwnd.0, |ui| Self::item_ui(ui, window, self.resize_enabled));
+            ui.push_id(window.hwnd.0, |ui| {
+                ui.horizontal(|ui| window_header_ui(ui, window));
+                ui.horizontal(|ui| window_command_ui(ui, window, self.resize_enabled));
+            });
             ui.add_space(2.0);
         }
 
-        ui.add_space(8.0);
+        ui.add_space(12.0);
     }
+}
 
-    fn item_ui(ui: &mut Ui, window: &WindowInfo, resize_enabled: bool) {
-        ui.horizontal(|ui| {
-            ui.label(CHAR_WINDOW.to_string());
-            match window.state {
-                WindowState::Maximized => {
-                    ui.add(Label::new(RichText::new("[max]").weak()));
-                },
-                WindowState::Minimized => {
-                    ui.add(Label::new(RichText::new("[min]").weak()));
-                },
-                WindowState::Normal => {}
-            }
-            ui.add(Label::new(&window.window_text).truncate());
-        });
+fn window_header_ui(ui: &mut Ui, window: &WindowInfo) {
+    ui.label(CHAR_WINDOW.to_string());
+    match window.state {
+        WindowState::Maximized => {
+            ui.add(Label::new(RichText::new("[max]").weak()));
+        },
+        WindowState::Minimized => {
+            ui.add(Label::new(RichText::new("[min]").weak()));
+        },
+        WindowState::Normal => {}
+    }
+    ui.add(Label::new(&window.window_text).truncate());
+}
 
-        ui.horizontal(|ui| {
-            if window.is_centered == Some(true) {
-                ui.add_sized((80.0, 16.0), Label::new(format!("{CHAR_CHECK}centered")));
-            } else {
-                ui.add_sized((80.0, 16.0), Button::new("CENTER"))
-                    .clicked()
-                    .then(|| {
-                        center_window(window.hwnd)
-                            .unwrap_or_else(|e| log::error!("failed to center window: {e}"));
-                    });
-            }
-
-            ui.add_enabled_ui(resize_enabled, |ui| {
-                let size = window.client_size.unwrap_or_default();
-
-                egui::ComboBox::from_id_salt("size")
-                    .width(ui.available_width().min(120.0))
-                    .selected_text({
-                        if size != Size2D::zero() {
-                            format!(
-                                "{} {}x{}",
-                                if is_known_resolution(size) { CHAR_CHECK } else { CHAR_EMPTY },
-                                size.width, size.height)
-                        } else {
-                            "<unknown size>".to_owned()
-                        }
-                    })
-                    .show_ui(ui, |ui| {
-                        resolution_ui(ui, size, |size| {
-                            resize_window(window.hwnd, size)
-                                .unwrap_or_else(|e| log::error!("failed to resize window: {e}"));
-                        });
-                    });
+fn window_command_ui(ui: &mut Ui, window: &WindowInfo, enabled: bool) {
+    if window.is_centered == Some(true) {
+        ui.add_sized((80.0, 16.0), Label::new(format!("{CHAR_CHECK}centered")));
+    } else {
+        ui.add_sized((80.0, 16.0), Button::new("CENTER"))
+            .clicked()
+            .then(|| {
+                center_window(window.hwnd)
+                    .unwrap_or_else(|e| log::error!("failed to center window: {e}"));
             });
-        });
     }
+
+    ui.add_enabled_ui(enabled, |ui| {
+        let size = window.client_size.unwrap_or_default();
+
+        egui::ComboBox::from_id_salt("size")
+            .width(ui.available_width().min(120.0))
+            .selected_text({
+                if size != Size2D::zero() {
+                    format!(
+                        "{} {}x{}",
+                        if is_known_resolution(size) { CHAR_CHECK } else { CHAR_EMPTY },
+                        size.width, size.height)
+                } else {
+                    "<unknown size>".to_owned()
+                }
+            })
+            .show_ui(ui, |ui| {
+                resolution_ui(ui, size, |size| {
+                    resize_window(window.hwnd, size)
+                        .unwrap_or_else(|e| log::error!("failed to resize window: {e}"));
+                });
+            });
+    });
 }
 
 fn resolution_ui(
