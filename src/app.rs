@@ -22,8 +22,8 @@ pub struct App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &Context, _: &mut eframe::Frame) {
-        CentralPanel::default().show(ctx, |ui| self.main_ui(ui));
+    fn ui(&mut self, ui: &mut Ui, _: &mut eframe::Frame) {
+        CentralPanel::default().show_inside(ui, |ui| self.main_ui(ui));
     }
 }
 

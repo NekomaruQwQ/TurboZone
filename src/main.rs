@@ -27,7 +27,7 @@ fn main() -> eframe::Result {
             setup_fonts(egui);
 
             egui.set_visuals(Visuals::dark());
-            egui.style_mut(|style| {
+            egui.global_style_mut(|style| {
                 style.interaction.selectable_labels = false;
             });
 
