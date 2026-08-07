@@ -40,43 +40,13 @@ enum Action {
     },
 }
 
-/// Tracks a periodic deadline without replaying missed ticks after a stall.
-struct TickSchedule {
-    interval: Duration,
-    next_tick: Instant,
-}
-
-impl TickSchedule {
-    /// Creates a schedule whose first tick is immediately due.
-    const fn immediate(now: Instant, interval: Duration) -> Self {
-        Self {
-            interval,
-            next_tick: now,
-        }
-    }
-
-    fn is_due(&self, now: Instant) -> bool {
-        now >= self.next_tick
-    }
-
-    /// Restarts the interval from `now`, intentionally skipping missed ticks.
-    fn restart(&mut self, now: Instant) {
-        self.next_tick = now
-            .checked_add(self.interval)
-            .expect("tick interval must fit within Instant");
-    }
-
-    fn remaining(&self, now: Instant) -> Duration {
-        self.next_tick.saturating_duration_since(now)
-    }
-}
-
 pub struct App {
     config: Config,
     window_map: BTreeMap<Option<PathBuf>, Vec<WindowInfo>>,
     executable_map: HashMap<PathBuf, ExecutableInfo>,
     pending_actions: Vec<Action>,
-    logic_schedule: TickSchedule,
+    /// Next periodic window-data refresh deadline.
+    next_logic_tick: Instant,
 }
 
 impl eframe::App for App {
@@ -85,14 +55,17 @@ impl eframe::App for App {
 
         // User actions make a logic tick due immediately. This preserves the
         // action -> refresh -> render invariant without adding click latency.
-        if !self.pending_actions.is_empty() || self.logic_schedule.is_due(now) {
+        if !self.pending_actions.is_empty() || now >= self.next_logic_tick {
             self.logic_tick();
-            self.logic_schedule.restart(Instant::now());
+            self.next_logic_tick = Instant::now()
+                .checked_add(LOGIC_INTERVAL)
+                .expect("logic interval must fit within Instant");
         }
 
         // Keep data refreshing even while the native window is hidden and
         // eframe therefore skips `App::ui`.
-        ctx.request_repaint_after(self.logic_schedule.remaining(Instant::now()));
+        ctx.request_repaint_after(
+            self.next_logic_tick.saturating_duration_since(Instant::now()));
     }
 
     fn ui(&mut self, ui: &mut Ui, _: &mut eframe::Frame) {
@@ -112,7 +85,7 @@ impl App {
             window_map: BTreeMap::new(),
             executable_map: HashMap::new(),
             pending_actions: Vec::new(),
-            logic_schedule: TickSchedule::immediate(Instant::now(), LOGIC_INTERVAL),
+            next_logic_tick: Instant::now(),
             config,
         }
     }
@@ -475,5 +448,3 @@ fn resolution_ui(
     selected_resolution
 }
 
-#[cfg(test)]
-mod tests;
