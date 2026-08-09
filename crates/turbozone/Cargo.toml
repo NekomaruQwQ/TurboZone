@@ -1,0 +1,20 @@
+# @human-maintained
+# @formatted
+
+lints = { workspace = true }
+
+[package]
+name = "turbozone"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[dependencies]
+turbozone-core = { workspace = true }
+turbozone-windows = { workspace = true }
+
+anyhow = { workspace = true }
+eframe = { workspace = true }
+log = { workspace = true }
+pretty_env_logger = { workspace = true }
+toml = { workspace = true }

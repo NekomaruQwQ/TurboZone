@@ -1,0 +1,17 @@
+# @human-maintained
+# @formatted
+
+lints = { workspace = true }
+
+[package]
+name = "turbozone-core"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[dependencies]
+euclid = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+toml = { workspace = true }

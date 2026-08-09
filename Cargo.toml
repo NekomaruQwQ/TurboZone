@@ -1,46 +1,60 @@
-[package]
-name = "Nekomaru-RnR"
+# @human-maintained
+# @formatted
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/turbozone",
+    "crates/turbozone-core",
+    "crates/turbozone-windows",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
 
-[dependencies]
+[workspace.dependencies]
+turbozone-core = { path = "crates/turbozone-core" }
+turbozone-windows = { path = "crates/turbozone-windows" }
+
 anyhow = "1.0"
 eframe = { version = "0.36.1", default-features = false, features = ["glow"] }
-egui = "0.36.1"
 euclid = "0.22.14"
-itertools = "0.15.0"
 log = "0.4.33"
 pretty_env_logger = "0.5.0"
 serde = { version = "1.0", features = ["derive"] }
-tap = "1.0.1"
 toml = "1.1.4"
 win32-version-info = "0.3.0"
 
-windows = { version = "0.62.2", features = [
+[workspace.dependencies.windows]
+version = "0.62.2"
+features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
-] }
+]
 
-[lints.clippy]
-cargo       = { level = "warn", priority = -1 }
-nursery     = { level = "warn", priority = -1 }
-pedantic    = { level = "warn", priority = -1 }
+[workspace.lints.clippy]
+cargo = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
 restriction = { level = "warn", priority = -1 }
 
-# #I-language cargo
+# I-language cargo
 cargo_common_metadata = "allow"
-multiple_crate_versions = "allow"           # can be fixed using `allowed-duplicate-crates`
+multiple_crate_versions = "allow" # can be fixed using `allowed-duplicate-crates`
 
 # I-language #pedantic
-doc_markdown = "allow"                      # allow non-words in docs without requiring backticks
+doc_markdown = "allow" # allow non-words in docs without requiring backticks
 
 # I-language #restriction
 arbitrary_source_item_ordering = "allow"
 as_conversions = "allow"
-big_endian_bytes = "allow"                  # allows using `to_be_bytes` and `from_be_bytes`
+big_endian_bytes = "allow"                 # allows using `to_be_bytes` and `from_be_bytes`
 blanket_clippy_restriction_lints = "allow"
 default_numeric_fallback = "allow"
 exhaustive_enums = "allow"
@@ -48,9 +62,11 @@ exhaustive_structs = "allow"
 expect_used = "allow"
 implicit_return = "allow"
 indexing_slicing = "allow"
-let_underscore_must_use = "allow"           # allows ignoring results of functions marked `#[must_use]`
+inline_modules = "allow"
+inline_trait_bounds = "allow"
+let_underscore_must_use = "allow"          # allows ignoring results of functions marked `#[must_use]`
 let_underscore_untyped = "allow"
-little_endian_bytes = "allow"               # allows using `to_le_bytes` and `from_le_bytes`
+little_endian_bytes = "allow"              # allows using `to_le_bytes` and `from_le_bytes`
 missing_docs_in_private_items = "allow"
 missing_inline_in_public_items = "allow"
 missing_trait_methods = "allow"
@@ -60,6 +76,7 @@ print_stdout = "allow"
 pub_use = "allow"
 question_mark_used = "allow"
 ref_patterns = "allow"
+rest_pattern_accessible_field = "allow"
 self_named_module_files = "allow"
 shadow_reuse = "allow"
 shadow_same = "allow"
@@ -88,39 +105,38 @@ integer_division_remainder_used = "allow"
 modulo_arithmetic = "allow"
 
 # III-conflicting-lints #complexity
-needless_borrowed_reference = "allow"   # or: `clippy::pattern_type_mismatch`
+needless_borrowed_reference = "allow" # or: `clippy::pattern_type_mismatch`
 
 # III-conflicting-lints #style
-needless_else = "allow"                 # or: `clippy::else_if_without_else`
+needless_else = "allow" # or: `clippy::else_if_without_else`
 
 # III-conflicting-lints #restriction
-pub_with_shorthand = "allow"            # xor: `clippy::pub_without_shorthand`
-semicolon_outside_block = "allow"       # xor: `clippy::semicolon_inside_block`
-unseparated_literal_suffix = "allow"    # xor: `clippy::separated_literal_suffix`
+pub_with_shorthand = "allow"         # xor: `clippy::pub_without_shorthand`
+semicolon_outside_block = "allow"    # xor: `clippy::semicolon_inside_block`
+unseparated_literal_suffix = "allow" # xor: `clippy::separated_literal_suffix`
 
 # IV-code-style #style
-doc_overindented_list_items = "allow"   # allows using 4 spaces for indenting docs
-manual_range_contains = "allow"         # makes code less noisy
-match_ref_pats = "allow"                # just looks cool XD
+doc_overindented_list_items = "allow" # allows using 4 spaces for indenting docs
+manual_range_contains = "allow"       # makes code less noisy
+match_ref_pats = "allow"              # just looks cool XD
 
 # IV-code-style #nursery
-option_if_let_else = "allow"            # helps readability in some cases
-suboptimal_flops = "allow"              # makes code less noisy
+option_if_let_else = "allow" # helps readability in some cases
+suboptimal_flops = "allow"   # makes code less noisy
 
 # IV-code-style #pedantic
-if_not_else = "allow"                   # helps readability in many cases
-map_unwrap_or = "allow"                 # helps readability in some cases
+if_not_else = "allow"             # helps readability in many cases
+map_unwrap_or = "allow"           # helps readability in some cases
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
-module_name_repetitions = "allow"       # e.g.: `winit::window::WindowBuilder`
+module_name_repetitions = "allow" # e.g.: `winit::window::WindowBuilder`
 must_use_candidate = "allow"
 wildcard_imports = "allow"
 
+absolute_paths = "allow"
 # IV-code-style #restriction
 as_underscore = "allow"
-absolute_paths = "allow"
 impl_trait_in_params = "allow"
 min_ident_chars = "allow"
 mod_module_files = "allow"
 multiple_inherent_impl = "allow"
-try_err ="allow"

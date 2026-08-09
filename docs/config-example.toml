@@ -1,0 +1,21 @@
+[[groups]] # converted to btreemap at runtime
+name = "My Edge PWA" # a named group, not necessarily identifier
+allow_resize = true # true by default and can be omitted
+default_size = [1440, 900] # optional if allow_resize
+
+[[groups]]
+executable.name = "..." # or other specifiers as below.
+# note that even if multiple executable matches, each executable becomes one group and all groups share the properties listed below.
+allow_resize = .. # and other properties, as shown above
+
+[[rules]]
+name = "My Edge PWA"
+group = { named = "edge-pwa" }
+executable.name = "msedge.exe" # or:
+executable.path = "C:/..." # or:
+executable.path.contains = "..." # implemented via nested struct.
+window_title = "..." # or:
+window_title.contains = "" # same mechanics
+# note that no regex or glob is needed.
+
+# unmatched windows automatically group by executable and follows the executable group properties

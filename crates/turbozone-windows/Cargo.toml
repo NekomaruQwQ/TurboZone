@@ -1,0 +1,17 @@
+# @human-maintained
+# @formatted
+
+lints = { workspace = true }
+
+[package]
+name = "turbozone-windows"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[dependencies]
+turbozone-core = { workspace = true }
+
+euclid = { workspace = true }
+win32-version-info = { workspace = true }
+windows = { workspace = true }
