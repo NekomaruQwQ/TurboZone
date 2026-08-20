@@ -1,0 +1,45 @@
+# This file uses only the SimpleRule subset accepted by M1.
+# Bare strings are exact matches; every configured match constraint is ANDed.
+
+[[rules]]
+name = "vscode.main" # required unique identifier and stable section identity
+description = "VS Code (Main Projects)" # optional display name
+
+move = "center" # omitted or false disables moving
+resize = [1440, 900] # omitted or false disables resizing
+
+match.priority = 10 # higher priorities match first; zero by default
+match.executable.name = "Code.exe" # exact, case-insensitive filename
+match.window.min_size = [640, 480] # inclusive client-area lower bound
+match.window.max_size = [7680, 4320] # inclusive client-area upper bound
+
+[[rules]]
+name = "tool.read-only"
+description = "Tool Window (Read Only)"
+
+# With move and resize omitted, this matched section exposes no actions.
+match.priority = 20
+match.executable.path = "C:/Apps/Tool/tool.exe" # exact normalized path
+match.window.title = "Tool Properties" # exact, case-sensitive title
+
+# The planned complete Rule format additionally supports the following forms,
+# which M1 rejects rather than silently ignoring. Replace the corresponding
+# simple property with a complete form; do not define both forms together.
+#
+# move.enabled = true
+# move.target = "center"
+# resize.enabled = true
+# resize.target_width = 1440
+# resize.target_height = 900
+# resize.min_width = 960
+# resize.min_height = 540
+# resize.max_width = 3840
+# resize.max_height = 2400
+# exact, regex, and glob are mutually exclusive alternatives:
+# match.executable.path.exact = "C:/Apps/Tool/tool.exe"
+# match.executable.path.regex = "..."
+# match.executable.path.glob = "C:/Apps/**/tool.exe"
+# starts_with, ends_with, and contains may instead be combined with each other:
+# match.executable.path.starts_with = "C:/Apps/"
+# match.executable.path.ends_with = "/tool.exe"
+# match.executable.path.contains = "/Tool/"
