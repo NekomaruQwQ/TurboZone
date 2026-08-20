@@ -1,12 +1,15 @@
-//! Platform-independent configuration, matching, grouping, and geometry for TurboRnR.
+//! Platform-independent configuration, matching, and geometry for TurboZone.
+
+#![feature(const_array)]
+#![feature(const_trait_impl)]
 
 #![deny(missing_docs)]
 
 mod config;
-mod geometry;
-mod grouping;
+mod data;
+mod manifest;
 
 pub use config::*;
-pub use geometry::*;
-pub use grouping::*;
-
+pub use data::*;
+pub use manifest::*;
+pub use euclid::default::Size2D;

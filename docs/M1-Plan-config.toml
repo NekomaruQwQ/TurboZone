@@ -1,45 +1,51 @@
-# This file uses only the SimpleRule subset accepted by M1.
-# Bare strings are exact matches; every configured match constraint is ANDed.
+# M1 accepts the full Rule and StringMatcher shapes documented in
+# M1-Plan-config.d.ts. Bare strings are exact and all configured constraints
+# within one rule are ANDed.
 
 [[rules]]
-name = "vscode.main" # required unique identifier and stable section identity
-description = "VS Code (Main Projects)" # optional display name
+name = "vscode.main"
+description = "  VS Code (Main Projects)  " # trimmed while loading
 
-move = "center" # omitted or false disables moving
-resize = [1440, 900] # omitted or false disables resizing
+move = true # equivalent to "center"
 
-match.priority = 10 # higher priorities match first; zero by default
-match.executable.name = "Code.exe" # exact, case-insensitive filename
-match.window.min_size = [640, 480] # inclusive client-area lower bound
-match.window.max_size = [7680, 4320] # inclusive client-area upper bound
+# Complete resize settings enable a primary action and filter selector choices.
+resize.enabled = true
+resize.target_width = 1440
+resize.target_height = 900
+resize.min_width = 960
+resize.min_height = 540
+resize.max_width = 3840
+resize.max_height = 2400
+
+match.priority = 10
+match.executable.name = "Code.exe" # exact and case-insensitive
+match.window.title.ends_with = "Visual Studio Code"
+match.window.min_size = [640, 480]
+match.window.max_size = [7680, 4320]
+
+[[rules]]
+name = "tool.selector-only"
+description = "Tool Windows"
+
+move = "center"
+resize = true # selector enabled without a configured primary target
+
+match.priority = 20
+match.executable.path.exact = "C:/Apps/Tool/tool.exe"
+match.window.title.starts_with = "Tool"
+match.window.title.contains = "Properties"
 
 [[rules]]
 name = "tool.read-only"
 description = "Tool Window (Read Only)"
 
-# With move and resize omitted, this matched section exposes no actions.
-match.priority = 20
-match.executable.path = "C:/Apps/Tool/tool.exe" # exact normalized path
-match.window.title = "Tool Properties" # exact, case-sensitive title
+# Omitted actions make this an intentional read-only section.
+match.priority = 30
+match.executable.name = "tool.exe"
+match.window.title = "Tool Diagnostics"
 
-# The planned complete Rule format additionally supports the following forms,
-# which M1 rejects rather than silently ignoring. Replace the corresponding
-# simple property with a complete form; do not define both forms together.
+# An object may keep selector limits while resizing is disabled.
+# An incomplete target_width/target_height pair produces a warning and both
+# target dimensions are ignored.
 #
-# move.enabled = true
-# move.target = "center"
-# resize.enabled = true
-# resize.target_width = 1440
-# resize.target_height = 900
-# resize.min_width = 960
-# resize.min_height = 540
-# resize.max_width = 3840
-# resize.max_height = 2400
-# exact, regex, and glob are mutually exclusive alternatives:
-# match.executable.path.exact = "C:/Apps/Tool/tool.exe"
-# match.executable.path.regex = "..."
-# match.executable.path.glob = "C:/Apps/**/tool.exe"
-# starts_with, ends_with, and contains may instead be combined with each other:
-# match.executable.path.starts_with = "C:/Apps/"
-# match.executable.path.ends_with = "/tool.exe"
-# match.executable.path.contains = "/Tool/"
+# StringMatcherV2 regex and glob objects remain reserved and are rejected by M1.

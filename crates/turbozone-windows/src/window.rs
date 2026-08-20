@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use euclid::default::{Box2D, Point2D};
-use turbozone_core::{ExecutableMetadata, WindowCandidate, WindowSize};
+use turbozone_core::Size2D;
 use win32_version_info::VersionInfo;
 use windows::core::{Error, Result};
 use windows::Win32::Foundation::{HWND, RECT};
@@ -43,8 +43,8 @@ pub enum WindowState {
     Minimized,
 }
 
-/// An immutable native window snapshot used by grouping and rendering.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// An immutable native window snapshot used by classification and rendering.
+#[derive(Debug, PartialEq, Eq)]
 pub struct WindowInfo {
     /// Native handle identifying the exact enumerated window.
     pub handle: WindowHandle,
@@ -55,7 +55,7 @@ pub struct WindowInfo {
     /// Current normal, maximized, or minimized state.
     pub state: WindowState,
     /// Controllable client-area size in physical pixels.
-    pub client_size: Option<WindowSize>,
+    pub client_size: Option<Size2D<i32>>,
     /// Whether the live or restored window rectangle is centered.
     pub is_centered: Option<bool>,
     /// Lexically normalized native executable path with forward slashes.
@@ -64,21 +64,6 @@ pub struct WindowInfo {
     pub executable_name: Option<String>,
     /// Friendly version-resource description used for display.
     pub executable_display_name: Option<String>,
-}
-
-impl WindowInfo {
-    /// Converts this native snapshot into a platform-neutral grouping candidate.
-    pub fn into_candidate(self) -> WindowCandidate<Self> {
-        WindowCandidate {
-            window_title: self.window_title.clone(),
-            executable: ExecutableMetadata {
-                name: self.executable_name.clone(),
-                path: self.executable_path.clone(),
-                display_name: self.executable_display_name.clone(),
-            },
-            payload: self,
-        }
-    }
 }
 
 /// Enumerates application windows while caching executable version metadata.
@@ -163,7 +148,7 @@ pub fn center_window(handle: WindowHandle) -> Result<()> {
 }
 
 /// Resizes a window client area without changing its current visual state.
-pub fn resize_window(handle: WindowHandle, size: WindowSize) -> Result<()> {
+pub fn resize_window(handle: WindowHandle, size: Size2D<i32>) -> Result<()> {
     match window_state(handle.0) {
         WindowState::Normal => native::resize_client(handle.0, size),
         WindowState::Maximized | WindowState::Minimized => {
@@ -240,7 +225,7 @@ fn center_restored_window(handle: HWND) -> Result<()> {
     native::set_window_placement(handle, &placement)
 }
 
-fn resize_restored_window(handle: HWND, size: WindowSize) -> Result<()> {
+fn resize_restored_window(handle: HWND, size: Size2D<i32>) -> Result<()> {
     let mut placement = native::get_window_placement(handle)?;
     let frame = native::get_normal_frame(handle)?;
     let old_center = box2d_from_rect(&placement.rcNormalPosition).center();

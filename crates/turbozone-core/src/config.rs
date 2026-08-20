@@ -1,431 +1,419 @@
-//! Deserialized and validated TurboRnR configuration.
+//! Configuration validation and compilation.
 
-use std::collections::BTreeMap;
-use std::error::Error;
-use std::fmt;
+use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
+use euclid::default::Size2D;
+use thiserror::Error;
 
-use crate::geometry::{optional_window_size_serde, WindowSize};
-
-/// The stable identifier of a named group.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[derive(Deserialize, Serialize)]
-#[serde(transparent)]
-pub struct GroupId(pub String);
-
-impl fmt::Display for GroupId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-/// An exact or substring string matcher as represented in TOML.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum StringMatcher {
-    /// Matches the entire candidate string.
-    Exact(String),
-    /// Matches when the candidate contains the configured substring.
-    Contains {
-        /// The required non-empty substring.
-        contains: String,
-    },
-}
-
-impl StringMatcher {
-    /// Matches a candidate, using Unicode lowercase comparison when case is ignored.
-    pub fn matches(&self, candidate: &str, case_sensitive: bool) -> bool {
-        match (self, case_sensitive) {
-            (&Self::Exact(ref expected), true) => candidate == expected,
-            (&Self::Contains { ref contains }, true) => candidate.contains(contains),
-            (&Self::Exact(ref expected), false) => candidate.to_lowercase() == expected.to_lowercase(),
-            (&Self::Contains { ref contains }, false) => {
-                candidate.to_lowercase().contains(&contains.to_lowercase())
-            },
-        }
-    }
-
-    fn contains_value(&self) -> Option<&str> {
-        match *self {
-            Self::Exact(_) => None,
-            Self::Contains { ref contains } => Some(contains),
-        }
-    }
-
-    fn value(&self) -> &str {
-        match *self {
-            Self::Exact(ref value) => value,
-            Self::Contains { ref contains } => contains,
-        }
-    }
-}
-
-/// Match constraints for executable metadata.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[derive(Deserialize, Serialize)]
-pub struct ExecutableMatcher {
-    /// Optional executable filename matcher.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<StringMatcher>,
-    /// Optional forward-slash executable path matcher.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<StringMatcher>,
-}
-
-impl ExecutableMatcher {
-    /// Returns whether no executable constraint was configured.
-    pub const fn is_unconstrained(&self) -> bool {
-        self.name.is_none() && self.path.is_none()
-    }
-
-    /// Matches executable metadata, ANDing every configured field.
-    pub fn matches(&self, name: Option<&str>, path: Option<&str>) -> bool {
-        self.name.as_ref().is_none_or(|matcher| {
-            name.is_some_and(|candidate| matcher.matches(candidate, false))
-        }) && self.path.as_ref().is_none_or(|matcher| {
-            path.is_some_and(|candidate| matcher.matches(candidate, false))
-        })
-    }
-}
-
-/// One group entry in the serialized configuration.
-///
-/// Validation converts this shape into either a named group or executable policy.
-/// Mixing the two forms is rejected.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Deserialize, Serialize)]
-pub struct GroupDefinition {
-    /// Stable identifier for the named-group form.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub id: Option<GroupId>,
-    /// Display label for the named-group form.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    /// Executable constraints for the executable-policy form.
-    #[serde(default, skip_serializing_if = "ExecutableMatcher::is_unconstrained")]
-    pub executable: ExecutableMatcher,
-    /// Whether windows in the resulting group may be resized.
-    pub allow_resize: bool,
-    /// Optional one-click resize target.
-    #[serde(default, with = "optional_window_size_serde", skip_serializing_if = "Option::is_none")]
-    pub default_size: Option<WindowSize>,
-}
-
-/// One ordered rule in the serialized configuration.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Deserialize, Serialize)]
-pub struct RuleDefinition {
-    /// Human-readable rule name used in diagnostics.
-    pub name: String,
-    /// Stable named-group target.
-    pub group: GroupId,
-    /// Optional executable constraints.
-    #[serde(default, skip_serializing_if = "ExecutableMatcher::is_unconstrained")]
-    pub executable: ExecutableMatcher,
-    /// Optional case-sensitive window-title constraint.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub window_title: Option<StringMatcher>,
-}
-
-/// The serialized top-level TurboRnR configuration.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[derive(Deserialize, Serialize)]
-pub struct Config {
-    /// Named groups and executable policies in source order.
-    #[serde(default)]
-    pub groups: Vec<GroupDefinition>,
-    /// Named-group routing rules in first-match order.
-    #[serde(default)]
-    pub rules: Vec<RuleDefinition>,
-}
+use crate::{
+    ComponentStringMatcher, Config, ConfigSize, ExecutableMatch, MoveConfig, MoveTarget,
+    ResizeConfig, ResizeSettings, Rule, RuleMatch, RuntimeConfig, RuntimeExecutableMatch,
+    RuntimeMove, RuntimeResize, RuntimeRule, RuntimeRuleMatch, RuntimeStringMatcher,
+    RuntimeWindowMatch, StringMatcher, WindowMatch,
+};
 
 impl Config {
-    /// Validates and separates serialized definitions into deterministic runtime state.
+    /// Validates serialized rules and compiles them into runtime state.
     pub fn validate(self) -> Result<RuntimeConfig, ConfigError> {
-        let mut named_groups = BTreeMap::new();
-        let mut executable_policies = Vec::new();
-
-        for (index, definition) in self.groups.into_iter().enumerate() {
-            validate_group_settings(index, definition.allow_resize, definition.default_size)?;
-            validate_executable_matcher(
-                &definition.executable,
-                &format!("groups[{index}].executable"))?;
-
-            let is_named = definition.id.is_some()
-                && definition.name.is_some()
-                && definition.executable.is_unconstrained();
-            let is_executable_policy = definition.id.is_none()
-                && definition.name.is_none()
-                && !definition.executable.is_unconstrained();
-
-            if is_named {
-                let id = definition.id.expect("named form checked above");
-                let name = definition.name.expect("named form checked above");
-                if id.0.is_empty() {
-                    return Err(ConfigError::EmptyGroupId { index });
-                }
-                if name.is_empty() {
-                    return Err(ConfigError::EmptyGroupName { index });
-                }
-                let group = NamedGroup {
-                    id: id.clone(),
-                    name,
-                    allow_resize: definition.allow_resize,
-                    default_size: definition.default_size,
-                };
-                if named_groups.insert(id.clone(), group).is_some() {
-                    return Err(ConfigError::DuplicateGroupId { id });
-                }
-            } else if is_executable_policy {
-                executable_policies.push(ExecutableGroupPolicy {
-                    executable: definition.executable,
-                    allow_resize: definition.allow_resize,
-                    default_size: definition.default_size,
-                });
-            } else {
-                return Err(ConfigError::InvalidGroupForm { index });
-            }
-        }
-
+        let mut names = BTreeSet::new();
         let mut rules = Vec::with_capacity(self.rules.len());
-        for (index, definition) in self.rules.into_iter().enumerate() {
-            validate_executable_matcher(
-                &definition.executable,
-                &format!("rules[{index}].executable"))?;
-            if let Some(ref window_title) = definition.window_title {
-                validate_string_matcher(window_title, &format!("rules[{index}].window_title"))?;
-            }
-            if !named_groups.contains_key(&definition.group) {
-                return Err(ConfigError::MissingRuleGroup {
-                    rule: definition.name,
-                    group: definition.group,
+
+        for (index, rule) in self.rules.into_iter().enumerate() {
+            if !is_valid_rule_name(&rule.name) {
+                return Err(ConfigError::InvalidRuleName {
+                    index,
+                    name: rule.name,
                 });
             }
-            rules.push(Rule {
-                name: definition.name,
-                group: definition.group,
-                executable: definition.executable,
-                window_title: definition.window_title,
-            });
+            if !names.insert(rule.name.clone()) {
+                return Err(ConfigError::DuplicateRuleName { name: rule.name });
+            }
+            rules.push(compile_rule(index, rule)?);
         }
 
-        Ok(RuntimeConfig {
-            named_groups,
-            executable_policies,
-            rules,
+        Ok(RuntimeConfig { rules })
+    }
+}
+
+/// Returns whether a name is a lowercase sequence of TOML-style dotted bare keys.
+pub fn is_valid_rule_name(name: &str) -> bool {
+    !name.is_empty() && name.split('.').all(|component| {
+        !component.is_empty() && component.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_' || byte == b'-'
         })
-    }
-}
-
-/// A validated named group targeted by rules.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NamedGroup {
-    /// Stable configuration identifier.
-    pub id: GroupId,
-    /// User-facing group name.
-    pub name: String,
-    /// Whether resize controls are enabled.
-    pub allow_resize: bool,
-    /// Optional one-click resize target.
-    pub default_size: Option<WindowSize>,
-}
-
-/// A validated ordered policy applied independently to each matching executable.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExecutableGroupPolicy {
-    /// Executable constraints.
-    pub executable: ExecutableMatcher,
-    /// Whether resize controls are enabled.
-    pub allow_resize: bool,
-    /// Optional one-click resize target.
-    pub default_size: Option<WindowSize>,
-}
-
-/// A validated ordered rule targeting a named group.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Rule {
-    /// Human-readable diagnostic name.
-    pub name: String,
-    /// Stable named-group target.
-    pub group: GroupId,
-    /// Executable constraints.
-    pub executable: ExecutableMatcher,
-    /// Optional case-sensitive title constraint.
-    pub window_title: Option<StringMatcher>,
-}
-
-impl Rule {
-    /// Matches a window, ANDing executable and title constraints.
-    pub fn matches(
-        &self,
-        executable_name: Option<&str>,
-        executable_path: Option<&str>,
-        window_title: &str) -> bool {
-        self.executable.matches(executable_name, executable_path)
-            && self.window_title.as_ref().is_none_or(|matcher| {
-                matcher.matches(window_title, true)
-            })
-    }
-}
-
-/// Validated configuration organized for deterministic runtime lookup.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct RuntimeConfig {
-    named_groups: BTreeMap<GroupId, NamedGroup>,
-    executable_policies: Vec<ExecutableGroupPolicy>,
-    rules: Vec<Rule>,
-}
-
-impl RuntimeConfig {
-    /// Returns the sorted named-group map.
-    pub const fn named_groups(&self) -> &BTreeMap<GroupId, NamedGroup> {
-        &self.named_groups
-    }
-
-    /// Returns executable policies in first-match order.
-    pub fn executable_policies(&self) -> &[ExecutableGroupPolicy] {
-        &self.executable_policies
-    }
-
-    /// Returns rules in first-match order.
-    pub fn rules(&self) -> &[Rule] {
-        &self.rules
-    }
+    })
 }
 
 /// A semantic configuration validation failure.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum ConfigError {
-    /// A group mixed named and executable-policy fields or completed neither form.
-    InvalidGroupForm {
-        /// Zero-based group index.
+    /// A rule name did not satisfy the lowercase dotted bare-key grammar.
+    #[error("rules[{index}].name '{name}' must match [a-z0-9_-]+(?:\\.[a-z0-9_-]+)*")]
+    InvalidRuleName {
+        /// Zero-based rule index.
         index: usize,
+        /// Invalid configured name.
+        name: String,
     },
-    /// A named group used an empty stable ID.
-    EmptyGroupId {
-        /// Zero-based group index.
-        index: usize,
+    /// The same rule name appeared more than once.
+    #[error("duplicate rule name '{name}'")]
+    DuplicateRuleName {
+        /// Duplicate configured name.
+        name: String,
     },
-    /// A named group used an empty display name.
-    EmptyGroupName {
-        /// Zero-based group index.
-        index: usize,
-    },
-    /// A named group ID occurred more than once.
-    DuplicateGroupId {
-        /// Duplicate stable ID.
-        id: GroupId,
-    },
-    /// A rule referenced no defined named group.
-    MissingRuleGroup {
-        /// Human-readable rule name.
-        rule: String,
-        /// Missing stable group ID.
-        group: GroupId,
-    },
-    /// A contains matcher used an empty substring.
-    EmptyContains {
+    /// A component matcher contained no predicates.
+    #[error("{field} must contain starts_with, ends_with, or contains")]
+    EmptyComponentMatcher {
         /// Configuration field containing the invalid matcher.
         field: String,
     },
-    /// A configured executable path used a backslash.
+    /// A component matcher contained an empty predicate value.
+    #[error("{field}.{component} must not be empty")]
+    EmptyComponentValue {
+        /// Configuration field containing the invalid matcher.
+        field: String,
+        /// Empty component property.
+        component: &'static str,
+    },
+    /// A configured executable-path pattern used a backslash.
+    #[error("{field} must use forward slashes; backslashes are not accepted")]
     BackslashInExecutablePath {
-        /// Configuration field containing the invalid path.
+        /// Configuration field containing the invalid path pattern.
         field: String,
     },
-    /// A configured default size contained a non-positive dimension.
-    InvalidDefaultSize {
-        /// Zero-based group index.
-        index: usize,
-        /// Invalid width.
-        width: i32,
-        /// Invalid height.
-        height: i32,
+    /// A configured dimension was not positive.
+    #[error("{field} must be positive, found {value}")]
+    InvalidDimension {
+        /// Configuration field containing the invalid dimension.
+        field: String,
+        /// Invalid configured value.
+        value: i32,
     },
-    /// A resize-disabled group also configured a default size.
-    DefaultSizeWhenResizeDisabled {
-        /// Zero-based group index.
-        index: usize,
+    /// A minimum dimension exceeded its corresponding maximum.
+    #[error("{minimum_field} must not exceed {maximum_field}")]
+    InvalidBounds {
+        /// Configuration field containing the minimum.
+        minimum_field: String,
+        /// Configuration field containing the maximum.
+        maximum_field: String,
     },
 }
 
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match *self {
-            Self::InvalidGroupForm { index } => write!(
-                f,
-                "groups[{index}] must be either id + name or executable.*"),
-            Self::EmptyGroupId { index } => write!(f, "groups[{index}].id must not be empty"),
-            Self::EmptyGroupName { index } => {
-                write!(f, "groups[{index}].name must not be empty")
-            },
-            Self::DuplicateGroupId { ref id } => write!(f, "duplicate named group id '{id}'"),
-            Self::MissingRuleGroup { ref rule, ref group } => {
-                write!(f, "rule '{rule}' references missing named group '{group}'")
-            },
-            Self::EmptyContains { ref field } => write!(f, "{field}.contains must not be empty"),
-            Self::BackslashInExecutablePath { ref field } => write!(
-                f,
-                "{field} must use forward slashes; backslashes are not accepted"),
-            Self::InvalidDefaultSize { index, width, height } => write!(
-                f,
-                "groups[{index}].default_size must be positive, found [{width}, {height}]"),
-            Self::DefaultSizeWhenResizeDisabled { index } => write!(
-                f,
-                "groups[{index}].default_size requires allow_resize = true"),
-        }
-    }
-}
-
-impl Error for ConfigError {}
-
-const fn validate_group_settings(
-    index: usize,
-    allow_resize: bool,
-    default_size: Option<WindowSize>) -> Result<(), ConfigError> {
-    let Some(default_size) = default_size else {
-        return Ok(());
+fn compile_rule(index: usize, rule: Rule) -> Result<RuntimeRule, ConfigError> {
+    let prefix = format!("rules[{index}]");
+    let description = rule.description.map(|description| description.trim().to_owned());
+    let move_action = match rule.r#move {
+        None | Some(MoveConfig::Boolean(false)) => RuntimeMove::Disabled,
+        Some(MoveConfig::Boolean(true) | MoveConfig::Target(MoveTarget::Center)) => {
+            RuntimeMove::Center
+        },
     };
-    if default_size.width <= 0 || default_size.height <= 0 {
-        return Err(ConfigError::InvalidDefaultSize {
-            index,
-            width: default_size.width,
-            height: default_size.height,
-        });
-    }
-    if !allow_resize {
-        return Err(ConfigError::DefaultSizeWhenResizeDisabled { index });
-    }
-    Ok(())
+    let resize = compile_resize(rule.resize, &rule.name, &prefix)?;
+    let matcher = compile_rule_match(rule.r#match.unwrap_or_default(), &prefix)?;
+
+    Ok(RuntimeRule {
+        name: rule.name,
+        description,
+        r#move: move_action,
+        resize,
+        r#match: matcher,
+    })
 }
 
-fn validate_executable_matcher(
-    matcher: &ExecutableMatcher,
-    field: &str) -> Result<(), ConfigError> {
-    if let Some(ref name) = matcher.name {
-        validate_string_matcher(name, &format!("{field}.name"))?;
+fn compile_resize(
+    resize: Option<ResizeConfig>,
+    rule_name: &str,
+    prefix: &str) -> Result<RuntimeResize, ConfigError> {
+    match resize {
+        None | Some(ResizeConfig::Boolean(false)) => Ok(RuntimeResize::default()),
+        Some(ResizeConfig::Boolean(true)) => Ok(RuntimeResize {
+            enabled: true,
+            ..RuntimeResize::default()
+        }),
+        Some(ResizeConfig::Size(size)) => {
+            let size = validate_size(size, &format!("{prefix}.resize"))?;
+            Ok(RuntimeResize {
+                enabled: true,
+                target_width: Some(size.width),
+                target_height: Some(size.height),
+                ..RuntimeResize::default()
+            })
+        },
+        Some(ResizeConfig::Settings(settings)) => {
+            compile_resize_settings(&settings, rule_name, prefix)
+        },
     }
-    if let Some(ref path) = matcher.path {
-        validate_string_matcher(path, &format!("{field}.path"))?;
-        if path.value().contains('\\') {
-            return Err(ConfigError::BackslashInExecutablePath {
-                field: format!("{field}.path"),
+}
+
+fn compile_resize_settings(
+    settings: &ResizeSettings,
+    rule_name: &str,
+    prefix: &str) -> Result<RuntimeResize, ConfigError> {
+    validate_optional_dimension(settings.target_width, &format!("{prefix}.resize.target_width"))?;
+    validate_optional_dimension(settings.target_height, &format!("{prefix}.resize.target_height"))?;
+    validate_optional_dimension(settings.min_width, &format!("{prefix}.resize.min_width"))?;
+    validate_optional_dimension(settings.min_height, &format!("{prefix}.resize.min_height"))?;
+    validate_optional_dimension(settings.max_width, &format!("{prefix}.resize.max_width"))?;
+    validate_optional_dimension(settings.max_height, &format!("{prefix}.resize.max_height"))?;
+    validate_optional_bounds(
+        settings.min_width,
+        settings.max_width,
+        &format!("{prefix}.resize.min_width"),
+        &format!("{prefix}.resize.max_width"))?;
+    validate_optional_bounds(
+        settings.min_height,
+        settings.max_height,
+        &format!("{prefix}.resize.min_height"),
+        &format!("{prefix}.resize.max_height"))?;
+
+    let (target_width, target_height) = match (settings.target_width, settings.target_height) {
+        (Some(width), Some(height)) => (Some(width), Some(height)),
+        (None, None) => (None, None),
+        (Some(_), None) | (None, Some(_)) => {
+            log::warn!(
+                "rule '{rule_name}' has an incomplete resize target; ignoring both target dimensions");
+            (None, None)
+        },
+    };
+
+    Ok(RuntimeResize {
+        enabled: settings.enabled,
+        target_width,
+        target_height,
+        min_width: settings.min_width,
+        min_height: settings.min_height,
+        max_width: settings.max_width,
+        max_height: settings.max_height,
+    })
+}
+
+fn compile_rule_match(
+    matcher: RuleMatch,
+    prefix: &str) -> Result<RuntimeRuleMatch, ConfigError> {
+    Ok(RuntimeRuleMatch {
+        priority: matcher.priority,
+        executable: matcher.executable
+            .map(|matcher| compile_executable_match(matcher, prefix))
+            .transpose()?
+            .filter(|matcher| !matcher.name.is_empty() || !matcher.path.is_empty()),
+        window: matcher.window
+            .map(|matcher| compile_window_match(matcher, prefix))
+            .transpose()?
+            .filter(|matcher| {
+                !matcher.title.is_empty()
+                    || matcher.min_size.is_some()
+                    || matcher.max_size.is_some()
+            }),
+    })
+}
+
+fn compile_executable_match(
+    matcher: ExecutableMatch,
+    prefix: &str) -> Result<RuntimeExecutableMatch, ConfigError> {
+    let name = matcher.name
+        .map(|matcher| compile_string_matcher(
+            matcher,
+            &format!("{prefix}.match.executable.name"),
+            false,
+            false))
+        .transpose()?
+        .unwrap_or_default();
+    let path = matcher.path
+        .map(|matcher| compile_string_matcher(
+            matcher,
+            &format!("{prefix}.match.executable.path"),
+            false,
+            true))
+        .transpose()?
+        .unwrap_or_default();
+    Ok(RuntimeExecutableMatch { name, path })
+}
+
+fn compile_window_match(
+    matcher: WindowMatch,
+    prefix: &str) -> Result<RuntimeWindowMatch, ConfigError> {
+    let title = matcher.title
+        .map(|matcher| compile_string_matcher(
+            matcher,
+            &format!("{prefix}.match.window.title"),
+            true,
+            false))
+        .transpose()?
+        .unwrap_or_default();
+    let min_size = matcher.min_size
+        .map(|size| validate_size(size, &format!("{prefix}.match.window.min_size")))
+        .transpose()?;
+    let max_size = matcher.max_size
+        .map(|size| validate_size(size, &format!("{prefix}.match.window.max_size")))
+        .transpose()?;
+    if let (Some(minimum), Some(maximum)) = (min_size, max_size) {
+        if minimum.width > maximum.width {
+            return Err(ConfigError::InvalidBounds {
+                minimum_field: format!("{prefix}.match.window.min_size[0]"),
+                maximum_field: format!("{prefix}.match.window.max_size[0]"),
+            });
+        }
+        if minimum.height > maximum.height {
+            return Err(ConfigError::InvalidBounds {
+                minimum_field: format!("{prefix}.match.window.min_size[1]"),
+                maximum_field: format!("{prefix}.match.window.max_size[1]"),
             });
         }
     }
-    Ok(())
+    Ok(RuntimeWindowMatch {
+        title,
+        min_size,
+        max_size,
+    })
 }
 
-fn validate_string_matcher(matcher: &StringMatcher, field: &str) -> Result<(), ConfigError> {
-    if matcher.contains_value() == Some("") {
-        Err(ConfigError::EmptyContains {
+fn compile_string_matcher(
+    matcher: StringMatcher,
+    field: &str,
+    case_sensitive: bool,
+    is_path: bool) -> Result<Vec<RuntimeStringMatcher>, ConfigError> {
+    match matcher {
+        StringMatcher::Bare(pattern) => Ok(vec![compile_string_predicate(
+            pattern,
+            field,
+            case_sensitive,
+            is_path,
+            string_equals)?]),
+        StringMatcher::Exact(matcher) => Ok(vec![compile_string_predicate(
+            matcher.exact,
+            field,
+            case_sensitive,
+            is_path,
+            string_equals)?]),
+        StringMatcher::Components(matcher) => {
+            compile_component_matcher(matcher, field, case_sensitive, is_path)
+        },
+    }
+}
+
+fn compile_component_matcher(
+    matcher: ComponentStringMatcher,
+    field: &str,
+    case_sensitive: bool,
+    is_path: bool) -> Result<Vec<RuntimeStringMatcher>, ConfigError> {
+    if matcher.starts_with.is_none() && matcher.ends_with.is_none() && matcher.contains.is_none() {
+        return Err(ConfigError::EmptyComponentMatcher {
             field: field.to_owned(),
+        });
+    }
+    let mut predicates = Vec::with_capacity(3);
+    if let Some(pattern) = matcher.starts_with {
+        validate_component_value(&pattern, field, "starts_with")?;
+        predicates.push(compile_string_predicate(
+            pattern,
+            &format!("{field}.starts_with"),
+            case_sensitive,
+            is_path,
+            string_starts_with)?);
+    }
+    if let Some(pattern) = matcher.ends_with {
+        validate_component_value(&pattern, field, "ends_with")?;
+        predicates.push(compile_string_predicate(
+            pattern,
+            &format!("{field}.ends_with"),
+            case_sensitive,
+            is_path,
+            string_ends_with)?);
+    }
+    if let Some(pattern) = matcher.contains {
+        validate_component_value(&pattern, field, "contains")?;
+        predicates.push(compile_string_predicate(
+            pattern,
+            &format!("{field}.contains"),
+            case_sensitive,
+            is_path,
+            string_contains)?);
+    }
+    Ok(predicates)
+}
+
+fn compile_string_predicate(
+    pattern: String,
+    field: &str,
+    case_sensitive: bool,
+    is_path: bool,
+    predicate: fn(input: &str, pattern: &str) -> bool) -> Result<RuntimeStringMatcher, ConfigError> {
+    if is_path && pattern.contains('\\') {
+        return Err(ConfigError::BackslashInExecutablePath {
+            field: field.to_owned(),
+        });
+    }
+    let pattern = if case_sensitive { pattern } else { pattern.to_lowercase() };
+    Ok(RuntimeStringMatcher::new(pattern, predicate))
+}
+
+fn validate_component_value(
+    value: &str,
+    field: &str,
+    component: &'static str) -> Result<(), ConfigError> {
+    if value.is_empty() {
+        Err(ConfigError::EmptyComponentValue {
+            field: field.to_owned(),
+            component,
         })
     } else {
         Ok(())
     }
+}
+
+fn validate_size(size: ConfigSize, field: &str) -> Result<Size2D<i32>, ConfigError> {
+    validate_dimension(size.0, &format!("{field}[0]"))?;
+    validate_dimension(size.1, &format!("{field}[1]"))?;
+    Ok(Size2D::new(size.0, size.1))
+}
+
+fn validate_optional_dimension(value: Option<i32>, field: &str) -> Result<(), ConfigError> {
+    if let Some(value) = value {
+        validate_dimension(value, field)?;
+    }
+    Ok(())
+}
+
+fn validate_dimension(value: i32, field: &str) -> Result<(), ConfigError> {
+    if value <= 0 {
+        Err(ConfigError::InvalidDimension {
+            field: field.to_owned(),
+            value,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_optional_bounds(
+    minimum: Option<i32>,
+    maximum: Option<i32>,
+    minimum_field: &str,
+    maximum_field: &str) -> Result<(), ConfigError> {
+    if minimum.zip(maximum).is_some_and(|(minimum, maximum)| minimum > maximum) {
+        Err(ConfigError::InvalidBounds {
+            minimum_field: minimum_field.to_owned(),
+            maximum_field: maximum_field.to_owned(),
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn string_equals(input: &str, pattern: &str) -> bool {
+    input == pattern
+}
+
+fn string_starts_with(input: &str, pattern: &str) -> bool {
+    input.starts_with(pattern)
+}
+
+fn string_ends_with(input: &str, pattern: &str) -> bool {
+    input.ends_with(pattern)
+}
+
+fn string_contains(input: &str, pattern: &str) -> bool {
+    input.contains(pattern)
 }
 
 #[cfg(test)]
@@ -437,205 +425,297 @@ mod tests {
     }
 
     #[test]
-    fn validate_accepts_rule_referencing_named_group() {
-        let config = parse(r#"
-            [[groups]]
-            id = "edge"
-            name = "Edge"
-            allow_resize = true
-
-            [[rules]]
-            name = "Edge rule"
-            group = "edge"
-        "#);
-
-        config.validate().expect("valid group reference must validate");
+    fn rule_name_accepts_lowercase_dotted_bare_keys() {
+        assert!(is_valid_rule_name("vscode.main-project_2"));
     }
 
     #[test]
-    fn validate_rejects_rule_referencing_missing_named_group() {
+    fn rule_name_rejects_characters_and_empty_dotted_components_outside_its_grammar() {
+        for name in ["", ".app", "app.", "app..main", "App", "app name", "app/main"] {
+            assert!(!is_valid_rule_name(name), "'{name}' must be rejected");
+        }
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_rule_names() {
         let config = parse(r#"
             [[rules]]
-            name = "Missing rule"
-            group = "missing"
+            name = "same"
+
+            [[rules]]
+            name = "same"
         "#);
 
         assert_eq!(
-            config.validate(),
-            Err(ConfigError::MissingRuleGroup {
-                rule: "Missing rule".to_owned(),
-                group: GroupId("missing".to_owned()),
-            }));
-    }
-
-    #[test]
-    fn validate_rejects_duplicate_named_group_ids() {
-        let config = parse(r#"
-            [[groups]]
-            id = "edge"
-            name = "First"
-            allow_resize = true
-
-            [[groups]]
-            id = "edge"
-            name = "Second"
-            allow_resize = true
-        "#);
-
-        assert_eq!(
-            config.validate(),
-            Err(ConfigError::DuplicateGroupId {
-                id: GroupId("edge".to_owned()),
-            }));
-    }
-
-    #[test]
-    fn deserialize_supports_exact_and_contains_matchers() {
-        let config = parse(r#"
-            [[groups]]
-            executable.name = "msedge.exe"
-            executable.path.contains = "/Microsoft/Edge/"
-            allow_resize = true
-        "#);
-        let executable = &config.groups[0].executable;
-
-        assert_eq!(
-            executable,
-            &ExecutableMatcher {
-                name: Some(StringMatcher::Exact("msedge.exe".to_owned())),
-                path: Some(StringMatcher::Contains {
-                    contains: "/Microsoft/Edge/".to_owned(),
-                }),
+            config.validate().expect_err("duplicate rule name must fail"),
+            ConfigError::DuplicateRuleName {
+                name: "same".to_owned(),
             });
     }
 
     #[test]
-    fn executable_matcher_is_case_insensitive_for_name_and_path() {
-        let matcher = ExecutableMatcher {
-            name: Some(StringMatcher::Exact("MSEDGE.EXE".to_owned())),
-            path: Some(StringMatcher::Contains {
-                contains: "/MICROSOFT/EDGE/".to_owned(),
-            }),
-        };
+    fn boolean_true_enables_default_actions() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "app"
+            move = true
+            resize = true
+        "#).validate().expect("Boolean action shorthands must validate");
+        let rule = &runtime.rules[0];
 
-        assert!(matcher.matches(
-            Some("msedge.exe"),
-            Some("C:/Program Files/Microsoft/Edge/msedge.exe")));
+        assert_eq!((rule.r#move, rule.resize.enabled), (RuntimeMove::Center, true));
     }
 
     #[test]
-    fn rule_title_matcher_is_case_sensitive() {
-        let rule = Rule {
-            name: "PWA".to_owned(),
-            group: GroupId("pwa".to_owned()),
-            executable: ExecutableMatcher::default(),
-            window_title: Some(StringMatcher::Contains {
-                contains: "My PWA".to_owned(),
-            }),
-        };
+    fn resize_size_compiles_to_primary_target() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "app"
+            resize = [1440, 900]
+        "#).validate().expect("resize tuple must validate");
 
-        assert!(!rule.matches(None, None, "my pwa"));
+        assert_eq!(
+            runtime.rules[0].resize.primary_size(),
+            Some(Size2D::new(1440, 900)));
     }
 
     #[test]
-    fn rule_fields_are_anded() {
-        let rule = Rule {
-            name: "Ready tool".to_owned(),
-            group: GroupId("tools".to_owned()),
-            executable: ExecutableMatcher {
-                name: Some(StringMatcher::Exact("tool.exe".to_owned())),
-                path: Some(StringMatcher::Contains {
-                    contains: "/tools/".to_owned(),
-                }),
-            },
-            window_title: Some(StringMatcher::Contains {
-                contains: "Ready".to_owned(),
-            }),
-        };
+    fn incomplete_resize_target_is_ignored() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "app"
+            resize.enabled = true
+            resize.target_width = 1440
+        "#).validate().expect("incomplete target is a warning, not an error");
 
-        assert!(!rule.matches(
+        assert_eq!(runtime.rules[0].resize.primary_size(), None);
+    }
+
+    #[test]
+    fn description_is_trimmed_without_empty_validation() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "app"
+            description = "   "
+        "#).validate().expect("empty trimmed description remains valid");
+
+        assert_eq!(runtime.rules[0].description.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn selector_limits_filter_manifest_sizes() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "app"
+            resize.enabled = true
+            resize.min_width = 1400
+            resize.max_height = 1000
+        "#).validate().expect("selector limits must validate");
+        let resize = runtime.rules[0].resize;
+
+        assert_eq!(
+            (
+                resize.allows_selector_size(Size2D::new(1440, 900)),
+                resize.allows_selector_size(Size2D::new(1280, 800))),
+            (true, false));
+    }
+
+    #[test]
+    fn component_matcher_ands_every_predicate() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "tool"
+            match.window.title.starts_with = "Tool"
+            match.window.title.ends_with = "Ready"
+            match.window.title.contains = " - "
+        "#).validate().expect("component matcher must validate");
+        let rule = &runtime.rules[0];
+
+        assert!(rule.matches(None, "c:/tool.exe", "Tool - Ready", None));
+    }
+
+    #[test]
+    fn bare_string_matcher_is_exact() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "tool"
+            match.window.title = "Tool"
+        "#).validate().expect("bare matcher must validate");
+
+        assert!(!runtime.rules[0].matches(None, "c:/tool.exe", "Tool Window", None));
+    }
+
+    #[test]
+    fn empty_component_matcher_is_rejected() {
+        let config = parse(r#"
+            [[rules]]
+            name = "tool"
+            match.window.title = {}
+        "#);
+
+        assert_eq!(
+            config.validate().expect_err("empty component matcher must fail"),
+            ConfigError::EmptyComponentMatcher {
+                field: "rules[0].match.window.title".to_owned(),
+            });
+    }
+
+    #[test]
+    fn executable_matchers_are_case_insensitive() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "tool"
+            match.executable.name = "TOOL.EXE"
+            match.executable.path.ends_with = "/TOOL.EXE"
+        "#).validate().expect("executable matcher must validate");
+
+        assert!(runtime.rules[0].matches(
             Some("tool.exe"),
-            Some("C:/other/tool.exe"),
-            "Ready"));
+            "c:/apps/tool.exe",
+            "Tool",
+            None));
     }
 
     #[test]
-    fn validate_rejects_backslash_in_configured_executable_path() {
-        let config = parse(r"
-            [[groups]]
-            executable.path = 'C:\Program Files\App\app.exe'
-            allow_resize = true
-        ");
-
-        assert_eq!(
-            config.validate(),
-            Err(ConfigError::BackslashInExecutablePath {
-                field: "groups[0].executable.path".to_owned(),
-            }));
-    }
-
-    #[test]
-    fn validate_rejects_empty_contains_value() {
+    fn executable_path_matcher_rejects_backslashes() {
         let config = parse(r#"
-            [[groups]]
-            executable.path.contains = ""
-            allow_resize = true
+            [[rules]]
+            name = "tool"
+            match.executable.path = 'C:\Apps\tool.exe'
         "#);
 
         assert_eq!(
-            config.validate(),
-            Err(ConfigError::EmptyContains {
-                field: "groups[0].executable.path".to_owned(),
-            }));
+            config.validate().expect_err("backslash path must fail"),
+            ConfigError::BackslashInExecutablePath {
+                field: "rules[0].match.executable.path".to_owned(),
+            });
     }
 
     #[test]
-    fn validate_rejects_non_positive_default_size() {
-        let config = parse(r#"
-            [[groups]]
-            id = "bad-size"
-            name = "Bad size"
-            allow_resize = true
-            default_size = [0, 900]
-        "#);
+    fn window_title_matchers_are_case_sensitive() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "tool"
+            match.window.title = "Tool"
+        "#).validate().expect("title matcher must validate");
 
-        assert_eq!(
-            config.validate(),
-            Err(ConfigError::InvalidDefaultSize {
-                index: 0,
-                width: 0,
-                height: 900,
-            }));
+        assert!(!runtime.rules[0].matches(None, "c:/tool.exe", "tool", None));
     }
 
     #[test]
-    fn validate_accepts_positive_euclid_default_size() {
-        let config = parse(r#"
-            [[groups]]
-            id = "good-size"
-            name = "Good size"
-            allow_resize = true
-            default_size = [1440, 900]
-        "#);
-        let runtime = config.validate().expect("positive size must validate");
+    fn matching_rule_prefers_higher_priority_over_source_order() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "first"
+            match.priority = 0
 
-        assert_eq!(
-            runtime.named_groups()[&GroupId("good-size".to_owned())].default_size,
-            Some(WindowSize::new(1440, 900)));
+            [[rules]]
+            name = "second"
+            match.priority = 10
+        "#).validate().expect("rules must validate");
+
+        assert_eq!(runtime.matching_rule_index(None, "c:/app.exe", "App", None), Some(1));
     }
 
     #[test]
-    fn validate_rejects_default_size_when_resize_is_disabled() {
+    fn matching_rule_uses_source_order_for_equal_priority() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "first"
+            match.priority = 10
+
+            [[rules]]
+            name = "second"
+            match.priority = 10
+        "#).validate().expect("rules must validate");
+
+        assert_eq!(runtime.matching_rule_index(None, "c:/app.exe", "App", None), Some(0));
+    }
+
+    #[test]
+    fn size_constrained_rule_rejects_missing_client_size() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "large"
+            match.window.min_size = [640, 480]
+        "#).validate().expect("size matcher must validate");
+
+        assert_eq!(runtime.matching_rule_index(None, "c:/app.exe", "App", None), None);
+    }
+
+    #[test]
+    fn size_bounds_are_inclusive() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "bounded"
+            match.window.min_size = [640, 480]
+            match.window.max_size = [640, 480]
+        "#).validate().expect("equal inclusive bounds must validate");
+
+        assert_eq!(
+            runtime.matching_rule_index(
+                None,
+                "c:/app.exe",
+                "App",
+                Some(Size2D::new(640, 480))),
+            Some(0));
+    }
+
+    #[test]
+    fn reversed_window_size_bounds_are_rejected() {
         let config = parse(r#"
-            [[groups]]
-            id = "disabled"
-            name = "Disabled"
-            allow_resize = false
-            default_size = [1440, 900]
+            [[rules]]
+            name = "bounded"
+            match.window.min_size = [800, 480]
+            match.window.max_size = [640, 1080]
         "#);
 
         assert_eq!(
-            config.validate(),
-            Err(ConfigError::DefaultSizeWhenResizeDisabled { index: 0 }));
+            config.validate().expect_err("reversed bounds must fail"),
+            ConfigError::InvalidBounds {
+                minimum_field: "rules[0].match.window.min_size[0]".to_owned(),
+                maximum_field: "rules[0].match.window.max_size[0]".to_owned(),
+            });
+    }
+
+    #[test]
+    fn future_regex_matcher_is_rejected_by_deserialization() {
+        let result = toml::from_str::<Config>(r#"
+            [[rules]]
+            name = "future"
+            match.window.title.regex = ".*"
+        "#);
+
+        result.expect_err("future matcher form must not deserialize");
+    }
+
+    #[test]
+    fn future_glob_matcher_is_rejected_by_deserialization() {
+        let result = toml::from_str::<Config>(r#"
+            [[rules]]
+            name = "future"
+            match.executable.name.glob = "*.exe"
+        "#);
+
+        result.expect_err("future matcher form must not deserialize");
+    }
+
+    #[test]
+    fn unknown_rule_property_is_rejected_by_deserialization() {
+        let result = toml::from_str::<Config>(r#"
+            [[rules]]
+            name = "future"
+            inherited_from = "base"
+        "#);
+
+        result.expect_err("unknown rule property must not deserialize");
+    }
+
+    #[test]
+    fn documented_m1_example_validates() {
+        let config = toml::from_str::<Config>(include_str!("../../../docs/M1-Plan-config.toml"))
+            .expect("documented M1 example must deserialize");
+
+        config.validate().expect("documented M1 example must validate");
     }
 }

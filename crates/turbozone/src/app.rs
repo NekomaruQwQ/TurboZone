@@ -1,11 +1,11 @@
-use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{Context, Ui};
-use turbozone_windows::{WindowHandle, WindowInfo, WindowSnapshotter};
-use turbozone_core::{resolve_window_groups, ResolvedGroupId, WindowGroup, WindowSize};
+use turbozone_core::Size2D;
+use turbozone_windows::{WindowHandle, WindowSnapshotter};
 
 use crate::configuration::ConfigState;
+use crate::data::{SectionedWindows, WindowPage};
 use crate::ui;
 
 const RENDER_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 30);
@@ -24,15 +24,16 @@ pub enum Action {
         /// Native handles captured by the UI.
         windows: Vec<WindowHandle>,
         /// One-shot client-area target.
-        size: WindowSize,
+        size: Size2D<i32>,
     },
 }
 
-/// TurboRnR application state shared by the logic and UI phases.
+/// TurboZone application state shared by the logic and UI phases.
 pub struct App {
     config: ConfigState,
     snapshotter: WindowSnapshotter,
-    groups: BTreeMap<ResolvedGroupId, WindowGroup<WindowInfo>>,
+    windows: SectionedWindows,
+    page: WindowPage,
     pending_actions: Vec<Action>,
     native_error: Option<String>,
     next_logic_tick: Instant,
@@ -44,7 +45,8 @@ impl App {
         Self {
             config: ConfigState::load(),
             snapshotter: WindowSnapshotter::default(),
-            groups: BTreeMap::new(),
+            windows: SectionedWindows::default(),
+            page: WindowPage::default(),
             pending_actions: Vec::new(),
             native_error: None,
             next_logic_tick: Instant::now(),
@@ -65,21 +67,21 @@ impl App {
                 let message = format!("window enumeration failed: {error}");
                 log::error!("{message}");
                 self.native_error = Some(message);
+                self.windows = SectionedWindows::default();
                 return;
             },
         };
         self.native_error = None;
-        self.groups = resolve_window_groups(
-            &self.config.runtime,
-            windows.into_iter().map(WindowInfo::into_candidate));
+        self.windows = SectionedWindows::from_windows(&self.config.runtime, windows);
     }
 
     fn app_ui(&mut self, ui: &mut Ui) {
         ui::app_ui(
             ui,
-            &self.groups,
+            &self.windows,
             &self.config,
             self.native_error.as_deref(),
+            &mut self.page,
             &mut self.pending_actions);
     }
 }

@@ -1,5 +1,6 @@
 mod app;
 mod configuration;
+mod data;
 mod ui;
 
 fn main() -> eframe::Result {

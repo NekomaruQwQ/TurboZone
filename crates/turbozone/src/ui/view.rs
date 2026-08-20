@@ -1,52 +1,29 @@
-use std::collections::BTreeMap;
-
 use eframe::egui::*;
-use turbozone_windows::{WindowHandle, WindowInfo, WindowState};
 use turbozone_core::{
-    is_known_resolution, ResolvedGroupId, WindowGroup, WindowSize, RESOLUTION_GROUPS,
+    is_known_window_size, RuntimeMove, RuntimeResize, RuntimeRule, Size2D,
+    WINDOW_SIZE_MANIFEST,
 };
+use turbozone_windows::{WindowHandle, WindowInfo, WindowState};
 
 use crate::app::Action;
 use crate::configuration::ConfigState;
+use crate::data::{SectionedWindows, WindowPage, WindowSection};
 
 use super::color;
 use super::widget::Card;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ResizeSelection {
-    Primary,
-    Alternative(WindowSize),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ResizeControl {
-    default_size: Option<WindowSize>,
-}
-
-impl ResizeControl {
-    const fn new(default_size: Option<WindowSize>) -> Self {
-        Self { default_size }
-    }
-
-    const fn target(self, selection: ResizeSelection) -> Option<WindowSize> {
-        match selection {
-            ResizeSelection::Primary => self.default_size,
-            ResizeSelection::Alternative(size) => Some(size),
-        }
-    }
-}
-
-/// Renders the complete TurboRnR window and appends accepted native actions.
+/// Renders the complete TurboZone window and appends accepted native actions.
 pub fn app_ui(
     ui: &mut Ui,
-    groups: &BTreeMap<ResolvedGroupId, WindowGroup<WindowInfo>>,
+    windows: &SectionedWindows,
     config: &ConfigState,
     native_error: Option<&str>,
+    page: &mut WindowPage,
     pending_actions: &mut Vec<Action>) {
     CentralPanel::default()
         .frame(Frame::new().inner_margin(Margin::same(10)))
         .show(ui, |ui| {
-            app_heading(ui, config);
+            app_heading(ui, config, windows.diagnostic_count(), page);
             ScrollArea::vertical()
                 .auto_shrink(false)
                 .scroll_bar_visibility(scroll_area::ScrollBarVisibility::AlwaysHidden)
@@ -57,20 +34,31 @@ pub fn app_ui(
                     if let Some(error) = native_error {
                         error_card(ui, "Windows", error);
                     }
-                    if groups.is_empty() {
-                        Card::default().show(ui, |ui| {
-                            ui.label(RichText::new("No application windows found").weak());
-                        });
-                    }
-                    for group in groups.values() {
-                        group_card(ui, group, pending_actions);
+                    match *page {
+                        WindowPage::Sections => {
+                            sections_page(ui, windows, config, pending_actions);
+                        },
+                        WindowPage::Unmatched => diagnostics_page(ui, windows),
                     }
                 });
         });
 }
 
-fn app_heading(ui: &mut Ui, config: &ConfigState) {
-    ui.heading("TurboRnR");
+fn app_heading(
+    ui: &mut Ui,
+    config: &ConfigState,
+    diagnostic_count: usize,
+    page: &mut WindowPage) {
+    ui.horizontal(|ui| {
+        ui.heading("TurboZone");
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.selectable_value(
+                page,
+                WindowPage::Unmatched,
+                format!("UNMATCHED ({diagnostic_count})"));
+            ui.selectable_value(page, WindowPage::Sections, "SECTIONS");
+        });
+    });
     let path = config.path.as_ref()
         .map_or_else(|| "Configuration path unavailable".to_owned(), |path| {
             path.display().to_string()
@@ -86,51 +74,76 @@ fn error_card(ui: &mut Ui, title: &str, error: &str) {
     });
 }
 
-fn group_card(
+fn sections_page(
     ui: &mut Ui,
-    group: &WindowGroup<WindowInfo>,
+    windows: &SectionedWindows,
+    config: &ConfigState,
+    pending_actions: &mut Vec<Action>) {
+    if windows.sections.is_empty() {
+        Card::default().show(ui, |ui| {
+            ui.label(RichText::new("No matched windows found").weak());
+        });
+        return;
+    }
+    for section in &windows.sections {
+        let Some(rule) = config.runtime.rules.get(section.rule_index) else {
+            continue;
+        };
+        section_card(ui, section, rule, pending_actions);
+    }
+}
+
+fn section_card(
+    ui: &mut Ui,
+    section: &WindowSection,
+    rule: &RuntimeRule,
     pending_actions: &mut Vec<Action>) {
     let (header_actions, body_actions) = Card::default().show_collapsible(
         ui,
-        ("window-group", &group.id),
-        |ui| group_header(ui, group),
-        |ui| group_body(ui, group));
+        ("window-section", rule.name.as_str(), section.executable_path.as_str()),
+        |ui| section_header(ui, section, rule),
+        |ui| section_body(ui, section, rule));
     pending_actions.extend(header_actions);
     pending_actions.extend(body_actions.unwrap_or_default());
 }
 
-fn group_header(ui: &mut Ui, group: &WindowGroup<WindowInfo>) -> Vec<Action> {
+fn section_header(ui: &mut Ui, section: &WindowSection, rule: &RuntimeRule) -> Vec<Action> {
     let mut actions = Vec::new();
     let available = Vec2::new(ui.available_width(), ui.spacing().interact_size.y);
     ui.allocate_ui_with_layout(available, Layout::right_to_left(Align::Center), |ui| {
-        let handles = || group.windows.iter().map(|window| window.handle).collect::<Vec<_>>();
-        if ui.button("CENTER ALL").clicked() {
+        let handles = || {
+            section.windows.iter()
+                .map(|window| window.handle)
+                .collect::<Vec<_>>()
+        };
+        if rule.r#move == RuntimeMove::Center && ui.button("CENTER ALL").clicked() {
             actions.push(Action::Center {
                 windows: handles(),
             });
         }
-        if group.allow_resize {
-            group_resize_controls(ui, group, handles, &mut actions);
-        } else {
-            ui.label(RichText::new("RESIZE OFF").small().weak());
+        if rule.resize.enabled {
+            section_resize_controls(ui, rule.resize, handles, &mut actions);
+        }
+        if rule.r#move == RuntimeMove::Disabled && !rule.resize.enabled {
+            ui.label(RichText::new("READ ONLY").small().weak());
         }
 
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-            ui.label(RichText::new(&group.name).heading());
-            ui.label(RichText::new(format!("{} windows", group.windows.len())).small().weak());
+            ui.label(RichText::new(
+                rule.description.as_deref().unwrap_or(&rule.name)).heading());
+            ui.label(RichText::new(format!("{} windows", section.windows.len())).small().weak());
         });
     });
     actions
 }
 
-fn group_resize_controls(
+fn section_resize_controls(
     ui: &mut Ui,
-    group: &WindowGroup<WindowInfo>,
+    resize: RuntimeResize,
     handles: impl Fn() -> Vec<WindowHandle>,
     actions: &mut Vec<Action>) {
-    let control = ResizeControl::new(group.default_size);
-    let Some(default_size) = control.target(ResizeSelection::Primary) else {
-        if let Some(size) = resize_menu_button(ui, "RESIZE") {
+    let Some(primary_size) = resize.primary_size() else {
+        if let Some(size) = resize_menu_button(ui, "RESIZE", resize) {
             actions.push(Action::Resize {
                 windows: handles(),
                 size,
@@ -139,30 +152,30 @@ fn group_resize_controls(
         return;
     };
 
-    if ui.button(format!("RESIZE {}x{}", default_size.width, default_size.height)).clicked() {
+    if ui.button(format!("RESIZE {}x{}", primary_size.width, primary_size.height)).clicked() {
         actions.push(Action::Resize {
             windows: handles(),
-            size: default_size,
+            size: primary_size,
         });
     }
-    if let Some(size) = resize_menu_button(ui, "\u{25bc}")
-        && let Some(target) = control.target(ResizeSelection::Alternative(size)) {
+    if let Some(size) = resize_menu_button(ui, "\u{25bc}", resize) {
         actions.push(Action::Resize {
             windows: handles(),
-            size: target,
+            size,
         });
     }
 }
 
-fn group_body(ui: &mut Ui, group: &WindowGroup<WindowInfo>) -> Vec<Action> {
+fn section_body(ui: &mut Ui, section: &WindowSection, rule: &RuntimeRule) -> Vec<Action> {
     let mut actions = Vec::new();
-    if let Some(path) = group.executable.as_ref().and_then(|executable| executable.path.as_deref()) {
+    if let Some(path) = section.windows.first()
+        .and_then(|window| window.executable_path.as_deref()) {
         ui.add(Label::new(RichText::new(path).small().weak()).truncate());
         ui.add_space(4.0);
     }
-    for window in &group.windows {
+    for window in &section.windows {
         ui.push_id(window.handle.address(), |ui| {
-            window_row(ui, window, group.allow_resize, group.default_size, &mut actions);
+            window_row(ui, window, rule, &mut actions);
         });
     }
     actions
@@ -171,12 +184,11 @@ fn group_body(ui: &mut Ui, group: &WindowGroup<WindowInfo>) -> Vec<Action> {
 fn window_row(
     ui: &mut Ui,
     window: &WindowInfo,
-    allow_resize: bool,
-    default_size: Option<WindowSize>,
+    rule: &RuntimeRule,
     actions: &mut Vec<Action>) {
     let available = Vec2::new(ui.available_width(), ui.spacing().interact_size.y);
     ui.allocate_ui_with_layout(available, Layout::right_to_left(Align::Center), |ui| {
-        window_controls(ui, window, allow_resize, default_size, actions);
+        window_controls(ui, window, rule, actions);
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             let state = match window.state {
                 WindowState::Normal => "",
@@ -189,6 +201,132 @@ fn window_row(
             ui.add(Label::new(&window.window_title).truncate());
         });
     });
+    window_metadata(ui, window, false);
+    ui.add_space(4.0);
+}
+
+fn window_controls(
+    ui: &mut Ui,
+    window: &WindowInfo,
+    rule: &RuntimeRule,
+    actions: &mut Vec<Action>) {
+    if rule.r#move == RuntimeMove::Center {
+        match window.is_centered {
+            Some(true) => {
+                ui.label(RichText::new("CENTERED").small().color(color::GREEN));
+            },
+            Some(false) | None => {
+                if ui.button("CENTER").clicked() {
+                    actions.push(Action::Center {
+                        windows: vec![window.handle],
+                    });
+                }
+            },
+        }
+    }
+
+    if !rule.resize.enabled {
+        return;
+    }
+    let Some(primary_size) = rule.resize.primary_size() else {
+        if let Some(size) = resize_menu_button(ui, "RESIZE", rule.resize) {
+            actions.push(Action::Resize {
+                windows: vec![window.handle],
+                size,
+            });
+        }
+        return;
+    };
+    if ui.button("RESIZE")
+        .on_hover_text(format!(
+            "Resize to {}x{}",
+            primary_size.width,
+            primary_size.height))
+        .clicked() {
+        actions.push(Action::Resize {
+            windows: vec![window.handle],
+            size: primary_size,
+        });
+    }
+    if let Some(size) = resize_menu_button(ui, "\u{25bc}", rule.resize) {
+        actions.push(Action::Resize {
+            windows: vec![window.handle],
+            size,
+        });
+    }
+}
+
+fn resize_menu_button(
+    ui: &mut Ui,
+    label: &str,
+    resize: RuntimeResize) -> Option<Size2D<i32>> {
+    ui.menu_button(label, |ui| resize_menu(ui, resize)).inner.flatten()
+}
+
+fn resize_menu(ui: &mut Ui, resize: RuntimeResize) -> Option<Size2D<i32>> {
+    let mut selected = None;
+    let mut available = false;
+    for &(name, resolutions) in WINDOW_SIZE_MANIFEST {
+        let resolutions = resolutions.iter()
+            .copied()
+            .filter(|&size| resize.allows_selector_size(size));
+        let mut heading_shown = false;
+        for size in resolutions {
+            available = true;
+            if !heading_shown {
+                ui.label(RichText::new(name).small().weak());
+                heading_shown = true;
+            }
+            if ui.button(format!("{} x {}", size.width, size.height)).clicked() {
+                selected = Some(size);
+                ui.close();
+            }
+        }
+    }
+    if !available {
+        ui.label(RichText::new("No sizes within configured limits").weak());
+    }
+    selected
+}
+
+fn diagnostics_page(ui: &mut Ui, windows: &SectionedWindows) {
+    if windows.diagnostic_count() == 0 {
+        Card::default().show(ui, |ui| {
+            ui.label(RichText::new("No unmatched windows found").weak());
+        });
+        return;
+    }
+    diagnostic_list(
+        ui,
+        "Unmatched windows",
+        "These windows have executable paths but match no rule.",
+        &windows.unmatched_windows);
+    diagnostic_list(
+        ui,
+        "Executable path unavailable",
+        "These windows are intentionally excluded from rule matching.",
+        &windows.unknown_windows);
+}
+
+fn diagnostic_list(ui: &mut Ui, title: &str, explanation: &str, windows: &[WindowInfo]) {
+    if windows.is_empty() {
+        return;
+    }
+    Card::default().show(ui, |ui| {
+        ui.label(RichText::new(title).heading());
+        ui.label(RichText::new(explanation).small().weak());
+        ui.add_space(6.0);
+        for window in windows {
+            ui.push_id(("diagnostic-window", window.handle.address()), |ui| {
+                ui.add(Label::new(&window.window_title).truncate());
+                window_metadata(ui, window, true);
+                ui.add_space(4.0);
+            });
+        }
+    });
+}
+
+fn window_metadata(ui: &mut Ui, window: &WindowInfo, show_path: bool) {
     ui.horizontal(|ui| {
         ui.add_space(4.0);
         ui.label(RichText::new(format!("PID {}", window.process_id)).small().weak());
@@ -197,102 +335,15 @@ fn window_row(
         }
         if let Some(size) = window.client_size {
             let text = RichText::new(format!("{}x{}", size.width, size.height)).small();
-            ui.label(if is_known_resolution(size) {
+            ui.label(if is_known_window_size(size) {
                 text.color(color::GREEN)
             } else {
                 text.weak()
             });
         }
     });
-    ui.add_space(4.0);
-}
-
-fn window_controls(
-    ui: &mut Ui,
-    window: &WindowInfo,
-    allow_resize: bool,
-    default_size: Option<WindowSize>,
-    actions: &mut Vec<Action>) {
-    match window.is_centered {
-        Some(true) => {
-            ui.label(RichText::new("CENTERED").small().color(color::GREEN));
-        },
-        Some(false) | None => {
-            if ui.button("CENTER").clicked() {
-                actions.push(Action::Center {
-                    windows: vec![window.handle],
-                });
-            }
-        },
-    }
-
-    if !allow_resize {
-        return;
-    }
-    let control = ResizeControl::new(default_size);
-    let Some(default_size) = control.target(ResizeSelection::Primary) else {
-        if let Some(size) = resize_menu_button(ui, "RESIZE") {
-            actions.push(Action::Resize {
-                windows: vec![window.handle],
-                size,
-            });
-        }
-        return;
-    };
-
-    if ui.button("RESIZE")
-        .on_hover_text(format!(
-            "Resize to {}x{}",
-            default_size.width,
-            default_size.height))
-        .clicked() {
-        actions.push(Action::Resize {
-            windows: vec![window.handle],
-            size: default_size,
-        });
-    }
-    if let Some(size) = resize_menu_button(ui, "\u{25bc}")
-        && let Some(target) = control.target(ResizeSelection::Alternative(size)) {
-        actions.push(Action::Resize {
-            windows: vec![window.handle],
-            size: target,
-        });
-    }
-}
-
-fn resize_menu_button(ui: &mut Ui, label: &str) -> Option<WindowSize> {
-    ui.menu_button(label, resize_menu).inner.flatten()
-}
-
-fn resize_menu(ui: &mut Ui) -> Option<WindowSize> {
-    let mut selected = None;
-    for &(name, resolutions) in RESOLUTION_GROUPS {
-        ui.label(RichText::new(name).small().weak());
-        for &size in resolutions {
-            if ui.button(format!("{} x {}", size.width, size.height)).clicked() {
-                selected = Some(size);
-                ui.close();
-            }
-        }
-    }
-    selected
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn alternative_resize_does_not_replace_configured_default() {
-        let default = WindowSize::new(1440, 900);
-        let alternative = WindowSize::new(1920, 1200);
-        let control = ResizeControl::new(Some(default));
-
-        assert_eq!(
-            (
-                control.target(ResizeSelection::Alternative(alternative)),
-                control.target(ResizeSelection::Primary),
-            ),
-            (Some(alternative), Some(default)));
+    if show_path {
+        let path = window.executable_path.as_deref().unwrap_or("Executable path unavailable");
+        ui.add(Label::new(RichText::new(path).small().weak()).truncate());
     }
 }

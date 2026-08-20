@@ -1,154 +1,161 @@
 # M1 Plan
 
-## Proposal of Change v4
-
-### Configuration model
+## Configuration contract
 
 TurboZone is rule-driven. There is no configurable or runtime group abstraction, and rules do
-not inherit from other rules.
+not inherit from other rules. M1 accepts the complete `Rule` and `StringMatcher` formats in
+`docs/M1-Plan-config.d.ts`; only `StringMatcherV2` regex and glob forms remain reserved.
 
-The complete planned configuration shape is documented by `docs/config.d.ts`. M1 implements
-only its `SimpleRule` subset:
+The example configuration is `docs/M1-Plan-config.toml`.
 
-```ts
-interface SimpleRule {
-    name: string;
-    description?: string;
-    move?: false | "center";
-    resize?: false | [number, number];
-    match?: {
-        priority?: number;
-        executable?: {
-            path?: string;
-            name?: string;
-        };
-        window?: {
-            title?: string;
-            min_size?: [number, number];
-            max_size?: [number, number];
-        };
-    };
-}
+Each rule contains:
+
+- A required unique `name`.
+- An optional display `description`.
+- Independent move and resize permissions.
+- Optional executable, title, and client-size constraints.
+- A matching priority which defaults to zero.
+
+Rule names remain plain strings at runtime. Loading validates them as lowercase TOML-style
+dotted bare keys:
+
+```regex
+^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$
 ```
 
-Every value accepted by `SimpleRule` has the same meaning in the complete `Rule` format. M1
-rejects complete-only action objects and advanced string matchers rather than ignoring them.
-This allows the format to expand later without changing the meaning of an existing M1 file.
+Names are neither trimmed nor normalized. Descriptions are trimmed but otherwise accepted,
+including an empty trimmed value.
 
-An M1 rule can be written as:
+Unknown properties and unsupported matcher forms are rejected instead of ignored. No
+compatibility or migration logic for the previous named-container configuration is included.
 
-```toml
-[[rules]]
-name = "vscode.main"
-description = "VS Code (Main Projects)"
-move = "center"
-resize = [1440, 900]
+## Action shorthand
 
-match.priority = 10
-match.executable.name = "Code.exe"
-match.window.min_size = [640, 480]
-match.window.max_size = [7680, 4320]
-```
+Move behavior:
 
-Configuration semantics:
+- Omitted `move` and `move = false` disable move controls.
+- `move = true` and `move = "center"` enable centering.
+- Centering is the only M1 move target.
 
-- `name` is a required, non-empty, unique, stable rule identifier.
-- `description` is the optional user-facing section name; `name` is displayed when it is absent.
-- Missing or explicit `false` actions are disabled.
-- A rule with no enabled actions remains useful as an intentional read-only match.
-- Missing match fields are unconstrained, so a rule without `match` is a catch-all.
-- Bare strings are always exact matches.
-- The complete format may later add action objects, partial resize targets, resize-selector
-  limits, regexes, globs, and component string matchers.
-- No compatibility or migration logic for the previous configuration model is included.
+Resize behavior:
 
-This is a whitelist safety model: windows receive native actions only through an explicitly
-matched rule whose corresponding action is enabled.
+- Omitted `resize` and `resize = false` disable resize controls.
+- `resize = true` enables the built-in size selector without a primary target.
+- `resize = [width, height]` enables resizing and configures the primary target.
+- A resize object preserves its `enabled`, target, and selector-limit properties.
+- Target dimensions are used only when both width and height are present.
+- Exactly one target dimension emits a warning and both runtime target dimensions are ignored.
+- Every provided dimension must be positive.
+- Each selector minimum must not exceed its corresponding maximum.
+- Selector limits filter built-in choices but do not constrain the configured primary target.
 
-### Rule selection
+Move and resize permissions are independent. A matched rule with neither action enabled remains
+useful as an intentional read-only section.
 
-Every rule constraint is ANDed. Each window is assigned to at most one rule:
+This is a whitelist safety model: a window receives native controls only through a matched rule
+whose corresponding action is enabled.
 
-1. Rules with higher `match.priority` are tested first.
-2. The default priority is zero.
-3. Source order breaks ties between equal priorities.
-4. The first matching rule wins.
+## String matching
 
-Priority affects matching only. Source order determines section display order on the normal
-page, followed by deterministic executable ordering within each rule.
+A bare string and `{ exact = "..." }` both require an exact match. The component form supports
+`starts_with`, `ends_with`, and `contains`; every supplied component is ANDed. It must contain at
+least one non-empty component.
 
-Executable paths and filenames compare case-insensitively. Window titles remain
-case-sensitive. In M1, all three are exact string matches.
+Executable paths and filenames compare case-insensitively. Their configured patterns are
+lowercased once during loading, while each native candidate is lowercased once per snapshot.
+Window titles remain case-sensitive.
 
-### Window-size matching
+Each runtime string predicate is represented directly by an owned pattern and a function
+pointer selected during loading. No regex, glob, trait object, or dynamic matcher allocation is
+included in M1.
 
-`match.window.min_size` and `match.window.max_size` filter which windows a rule accepts. They
-are distinct from the complete format's `resize.min_*` and `resize.max_*` properties, which
-filter the choices offered by the resize-size selector.
+## Rule selection
 
-M1 window-size matching uses these semantics:
+`RuntimeConfig` stores one source-order `Vec<RuntimeRule>`. There is no secondary priority or
+match-order structure.
+
+For each eligible window:
+
+1. Scan every runtime rule in source order.
+2. AND every configured constraint within the rule.
+3. Keep a matching rule only when its priority is strictly higher than the current winner.
+4. The first rule therefore wins among equal priorities.
+
+Scanning every rule keeps runtime editing and UI ordering direct. The expected number of rules
+and windows makes this work negligible at the 100 ms logic interval; optimization requires
+measurement rather than an additional indexing structure.
+
+## Window-size matching
+
+`match.window.min_size` and `match.window.max_size` filter rule eligibility. They are separate
+from `resize.min_*` and `resize.max_*`, which filter selector choices.
 
 - Bounds describe the controllable client area in physical pixels.
 - Normal windows use their live client size.
 - Maximized and minimized windows use their restored client size.
-- Minimum and maximum comparisons are inclusive on both dimensions.
-- `min_size = [width, height]` requires both actual dimensions to be at least the bound.
-- `max_size = [width, height]` requires both actual dimensions to be at most the bound.
-- Omitted bounds are unconstrained; sentinel values such as `[0, 0]` are not used.
+- Comparisons are inclusive on both dimensions.
+- Omitted bounds are unconstrained.
 - Every configured dimension must be positive.
-- Each minimum dimension must not exceed the corresponding maximum dimension.
+- Each minimum dimension must not exceed its corresponding maximum dimension.
 - A window whose client size cannot be queried does not match a size-constrained rule.
 
-Matching is reevaluated from each native snapshot. A move or resize may therefore cause a
-window to enter a different section or become unmatched on the next logic tick. This is
-intentional and supports both protective filters and corrective rules.
+Matching is reevaluated from every native snapshot. Moving or resizing may therefore change a
+window's winning rule on the next logic tick.
 
-### UI sections
+## Window classification and sections
 
-The normal page contains one section for each resolved `(rule name, executable identity)` pair.
-There is no additional named container:
+Every native snapshot moves into exactly one destination:
 
 ```text
-window
-    -> highest-priority matching rule
-    -> (rule name, executable identity)
-    -> UI section
+WindowInfo
+    path unavailable -> unknown_windows
+    path available, no winning rule -> unmatched_windows
+    path available, winning rule -> (rule, path) section
 ```
 
-The normalized executable path is the primary executable identity. Paths differing only in
-case resolve to the same section. If Windows cannot provide a path, the process ID is used as a
-safe fallback so unrelated inaccessible executables do not collapse into one section.
+`SectionedWindows` owns:
+
+- Source-ordered matched sections.
+- Known-path unmatched windows.
+- Path-unavailable unknown windows.
+
+A normal UI section is identified persistently by `(rule.name, normalized lowercase executable
+path)`. The section stores a snapshot-local rule index for direct access to the complete
+`RuntimeRule`; the index is never persistent and sections must be rebuilt together with any
+runtime rule edit.
 
 Consequences:
 
 - Windows from the same executable which match the same rule share a section.
-- The same rule matching different executable paths produces separate sections.
+- One rule matching different executable paths produces separate sections.
 - Different rules matching the same executable path produce separate sections.
-- A section uses its rule's description, action availability, and configured resize target.
-- A matched rule with no enabled actions produces a read-only section.
+- Rule source order determines section order; path order is deterministic within each rule.
+- A matched actionless rule creates a read-only normal section.
+- Missing executable paths never use a filename or process-ID fallback and never reach matching.
 
-The persistent section identity uses the stable rule name and executable identity, never the
-display description.
+Section construction consumes `Vec<WindowInfo>`. It borrows fields while matching and then moves
+each complete snapshot into its destination. The previous generic candidate wrapper and its
+duplicated metadata are removed; no `WindowInfo` clone is required.
 
-### Unmatched-windows page
+## Diagnostic replacement page
 
-Windows which match no rule are collected separately. They do not receive a synthetic default
-rule and do not appear below the matched sections.
+The UI has a normal sections page and a diagnostic replacement page. The diagnostic page shows:
 
-The UI exposes them on a dedicated page which replaces the normal matched-sections page while
-open. This page is diagnostic and provides no move, resize, or other native action. It displays
-the metadata needed to author a rule, including title, normalized executable path, executable
-name, process ID, and controllable client size when available.
+- `unmatched_windows`, which have executable paths but match no rule.
+- `unknown_windows`, which lack executable paths and were rejected from matching.
 
-An unmatched window is semantically different from a window matched by an actionless rule:
-the latter appears as an intentional read-only section on the normal page.
+Both categories show the metadata needed to author a rule and expose no native actions. They do
+not appear beneath matched sections.
 
-### Path normalization
+An unmatched window remains semantically different from a window matched by an actionless rule:
+the latter appears intentionally on the normal page.
 
-Only paths originating from Win32 are normalized. Configuration values are consumed exactly as
+## Native path handling
+
+Only paths originating from Win32 are normalized. Configuration patterns are consumed exactly as
 written.
 
-The native-path pipeline is:
+The native pipeline is:
 
 ```rust
 path
@@ -157,131 +164,61 @@ path
     .replace('\\', "/")
 ```
 
-This intentionally:
+This resolves lexical `.` and `..` components without filesystem access, converts native
+separators, accepts lossy conversion for unusual non-Unicode paths, and preserves the casing
+reported by Windows. Matching and section identity perform case conversion separately.
 
-- Resolves lexical `.` and `..` components.
-- Avoids filesystem access and canonicalization.
-- Converts Win32 backslashes to config-style slashes.
-- Accepts lossy conversion for unusual non-Unicode executable paths.
-- Preserves the casing returned by Win32; comparison handles case insensitivity.
+A backslash in any configured executable-path pattern is a validation error.
 
-Configured paths are not normalized or silently corrected. A backslash in
-`match.executable.path` is a validation error, making the forward-slash contract visible.
+## Native actions
 
-### Move behavior
+Centering preserves window size, activation, z-order, and normal/maximized/minimized state.
+Resizing preserves the window center and visual state and targets the controllable client area.
 
-- Missing `move` and `move = false` disable move controls.
-- `move = "center"` enables centering for the section and its individual windows.
-- Centering preserves window size, activation, z-order, and normal/maximized/minimized state.
-- The complete format reserves an explicit move object for future targets; M1 rejects it.
+Section-level actions capture the handles from the currently rendered snapshot. Individual
+actions capture one handle. Side effects remain queued until the next logic tick.
 
-### Resize behavior
+If native enumeration fails, matched and diagnostic snapshot state is cleared so stale handles
+do not remain actionable. Resize history remains out of scope.
 
-- Missing `resize` and `resize = false` disable resize controls.
-- `resize = [width, height]` enables resizing and configures the primary client-area target.
-- Both target dimensions must be positive.
-- The built-in size selector remains available as a one-shot alternative.
-- Selecting an alternative size does not mutate the configured primary target.
-- M1 does not support resize-without-a-primary-target, partial target dimensions, or selector
-  limits. Those are reserved by the complete format.
-- Resizing preserves the window center and normal/maximized/minimized state.
+## Source layout
 
-Resize history remains out of scope. No history file is created or read in M1.
+### `turbozone-core`
 
-### Runtime representation
+- `data.rs`: serialized configuration and validated runtime rule types.
+- `config.rs`: validation, normalization, matcher compilation, and typed `thiserror` failures.
+- `manifest.rs`: Euclid geometry choices used by the resize selector.
+- Source-order rule selection and platform-neutral matching.
 
-Configuration is validated and compiled once during loading:
+### `turbozone-windows`
 
-```text
-serialized rules     -> Vec<SimpleRule>
-compiled rules       -> Vec<CompiledRule>
-matched sections     -> ordered Vec<WindowSection<T>>
-unmatched windows    -> Vec<T>
-```
+- Concrete `WindowInfo`, `WindowHandle`, and `WindowState` snapshots.
+- Win32 enumeration and manipulation.
+- Native executable-path normalization and display metadata.
+- Centering and resizing.
 
-String comparison preparation and rule-priority ordering happen during compilation rather than
-on every logic tick. Section construction retains source order for UI presentation while using
-the stable `(rule name, executable identity)` key for aggregation and persistent UI state.
+### `turbozone`
 
-### Euclid in `turbozone-core`
+- `configuration.rs`: executable-relative config discovery, TOML parsing, and error presentation.
+- `data.rs`: concrete `WindowSection`, `SectionedWindows`, and page state.
+- `app.rs`: snapshot timing and queued native actions.
+- `ui/view.rs`: matched sections and the diagnostic replacement page.
 
-`turbozone-core` uses euclid for all geometry:
+## Validation and verification
 
-```rust
-pub type Size2D<i32> = euclid::default::Size2D<i32>;
-```
+Tests cover:
 
-TOML sizes remain two-element arrays:
-
-```toml
-resize = [1440, 900]
-match.window.min_size = [640, 480]
-```
-
-A small serde adapter converts `[i32; 2]` to and from `Size2D<i32>`. Configuration validation
-rejects invalid geometry before it becomes runtime state.
-
-### Crate responsibilities
-
-- `turbozone-core`
-  - Euclid geometry.
-  - Serialized, validated, and compiled rule types.
-  - Rule validation, priority ordering, and exact matching.
-  - Platform-neutral section construction and unmatched-window classification.
-  - Generic `WindowSection<T>`.
-  - No native calls or Windows types.
-
-- `turbozone-windows`
-  - Win32 enumeration and manipulation.
-  - Native path normalization.
-  - Executable metadata and fallback executable identity.
-  - HWND/PID snapshots.
-  - Centering and resizing.
-
-- `turbozone`
-  - `TurboZone.exe`.
-  - `<exeName>.config.toml` discovery.
-  - TOML loading and error presentation.
-  - Matched-sections page and replacement unmatched-windows page.
-  - Queued native actions.
-
-### Important tests
-
-The core and app test suites will cover:
-
-- Empty and duplicate rule names.
-- Omitted and explicit-false actions defaulting to disabled.
-- Valid move and resize shorthand forms.
-- Rejection of complete-only forms during M1.
-- Catch-all rules and actionless read-only rules.
+- Rule-name grammar, uniqueness, and description trimming.
+- Boolean, string, tuple, and complete action forms.
+- Incomplete resize-target normalization.
+- Positive dimensions and ordered bounds.
+- Bare, exact, and component matchers.
+- Matcher AND semantics and executable/title case behavior.
+- Rejection of backslashes, empty components, unknown properties, regexes, and globs.
 - Higher-priority selection and source-order tie breaking.
-- Rule fields being ANDed.
-- Case-insensitive exact path and filename matching.
-- Case-sensitive exact title matching.
-- Backslash rejection in configured paths.
-- Win32 path normalization, including `.` and `..`.
-- Inclusive minimum and maximum client-size matching.
-- Size-query failure preventing size-constrained matches.
-- Invalid dimensions and minimum-greater-than-maximum bounds.
-- Same-rule/same-executable section aggregation.
-- Same-rule/different-executable section separation.
-- Different-rule/same-executable section separation.
-- Process-ID fallback when the executable path is unavailable.
-- Unmatched windows remaining outside normal sections and exposing no actions.
-- Matched actionless windows appearing as read-only normal sections.
-- Alternative UI sizes not changing the configured resize target.
-- Section membership updating after a size-changing action.
+- Inclusive window-size matching and missing-size behavior.
+- Selector-limit filtering.
+- Native path normalization.
 
-### Implementation order
-
-1. Replace the named-container and executable-policy configuration with `SimpleRule` parsing and
-   validation.
-2. Compile defaults, priority order, exact matchers, and client-size bounds into `CompiledRule`.
-3. Replace the old runtime aggregation with section construction keyed by rule name and
-   executable identity.
-4. Separate unmatched windows from normal sections and implement the replacement diagnostic page.
-5. Connect rule-scoped move and resize controls to existing queued native actions.
-6. Update configuration errors and UI text to use rule/section terminology consistently.
-7. Add the specified core, Windows, and UI tests.
-8. Run release-mode workspace tests and Clippy, then perform visual QA without automated
-   formatting.
+Final verification uses release-mode workspace tests and Clippy with warnings denied. Automated
+formatters are not run; source is formatted manually to the project style.
