@@ -1,9 +1,9 @@
 use eframe::egui::*;
+use euclid::default::Size2D;
 use turbozone_core::{
-    is_known_window_size, RuntimeMove, RuntimeResize, RuntimeRule, Size2D,
-    WINDOW_SIZE_MANIFEST,
+    is_known_window_size, ResizeLimits, RuntimeRule, WindowInfo, WindowState, WINDOW_SIZE_MANIFEST,
 };
-use turbozone_windows::{WindowHandle, WindowInfo, WindowState};
+use turbozone_windows::WindowHandle;
 
 use crate::app::Action;
 use crate::configuration::ConfigState;
@@ -38,12 +38,13 @@ pub fn app_ui(
                         WindowPage::Sections => {
                             sections_page(ui, windows, config, pending_actions);
                         },
-                        WindowPage::Unmatched => diagnostics_page(ui, windows),
+                        WindowPage::Diagnostics => diagnostics_page(ui, windows),
                     }
                 });
         });
 }
 
+/// Renders page navigation and the active configuration path.
 fn app_heading(
     ui: &mut Ui,
     config: &ConfigState,
@@ -54,8 +55,8 @@ fn app_heading(
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.selectable_value(
                 page,
-                WindowPage::Unmatched,
-                format!("UNMATCHED ({diagnostic_count})"));
+                WindowPage::Diagnostics,
+                format!("DIAGNOSTICS ({diagnostic_count})"));
             ui.selectable_value(page, WindowPage::Sections, "SECTIONS");
         });
     });
@@ -67,6 +68,7 @@ fn app_heading(
     ui.add_space(8.0);
 }
 
+/// Shows a top-level failure without hiding the remaining application state.
 fn error_card(ui: &mut Ui, title: &str, error: &str) {
     Card::default().show(ui, |ui| {
         ui.label(RichText::new(title).strong().color(color::RED));
@@ -74,6 +76,7 @@ fn error_card(ui: &mut Ui, title: &str, error: &str) {
     });
 }
 
+/// Renders successfully classified windows in configuration order.
 fn sections_page(
     ui: &mut Ui,
     windows: &SectionedWindows,
@@ -93,6 +96,7 @@ fn sections_page(
     }
 }
 
+/// Keeps collapse state keyed by the stable rule and executable identity.
 fn section_card(
     ui: &mut Ui,
     section: &WindowSection,
@@ -107,24 +111,24 @@ fn section_card(
     pending_actions.extend(body_actions.unwrap_or_default());
 }
 
+/// Offers section actions only for handles with complete snapshot details.
 fn section_header(ui: &mut Ui, section: &WindowSection, rule: &RuntimeRule) -> Vec<Action> {
     let mut actions = Vec::new();
     let available = Vec2::new(ui.available_width(), ui.spacing().interact_size.y);
     ui.allocate_ui_with_layout(available, Layout::right_to_left(Align::Center), |ui| {
         let handles = || {
             section.windows.iter()
+                .filter(|window| window.detail.is_ok())
                 .map(|window| window.handle)
                 .collect::<Vec<_>>()
         };
-        if rule.r#move == RuntimeMove::Center && ui.button("CENTER ALL").clicked() {
+        if rule.relocate && ui.button("CENTER ALL").clicked() {
             actions.push(Action::Center {
                 windows: handles(),
             });
         }
-        if rule.resize.enabled {
-            section_resize_controls(ui, rule.resize, handles, &mut actions);
-        }
-        if rule.r#move == RuntimeMove::Disabled && !rule.resize.enabled {
+        section_resize_controls(ui, rule, handles, &mut actions);
+        if !rule.relocate && rule.resize_exact.is_none() && rule.resize_limits.is_none() {
             ui.label(RichText::new("READ ONLY").small().weak());
         }
 
@@ -137,13 +141,17 @@ fn section_header(ui: &mut Ui, section: &WindowSection, rule: &RuntimeRule) -> V
     actions
 }
 
+/// Renders exact-only, selector-only, or primary-plus-selector resize controls.
 fn section_resize_controls(
     ui: &mut Ui,
-    resize: RuntimeResize,
+    rule: &RuntimeRule,
     handles: impl Fn() -> Vec<WindowHandle>,
     actions: &mut Vec<Action>) {
-    let Some(primary_size) = resize.primary_size() else {
-        if let Some(size) = resize_menu_button(ui, "RESIZE", resize) {
+    let primary_size = rule.resize_exact
+        .or_else(|| rule.resize_limits.as_ref()?.default);
+    let Some(primary_size) = primary_size else {
+        if let Some(size) = rule.resize_limits.as_ref()
+            .and_then(|limits| resize_menu_button(ui, "RESIZE", limits)) {
             actions.push(Action::Resize {
                 windows: handles(),
                 size,
@@ -158,7 +166,8 @@ fn section_resize_controls(
             size: primary_size,
         });
     }
-    if let Some(size) = resize_menu_button(ui, "\u{25bc}", resize) {
+    if let Some(size) = rule.resize_limits.as_ref()
+        .and_then(|limits| resize_menu_button(ui, "\u{25bc}", limits)) {
         actions.push(Action::Resize {
             windows: handles(),
             size,
@@ -166,11 +175,12 @@ fn section_resize_controls(
     }
 }
 
+/// Shows the executable path and independently actionable window rows.
 fn section_body(ui: &mut Ui, section: &WindowSection, rule: &RuntimeRule) -> Vec<Action> {
     let mut actions = Vec::new();
-    if let Some(path) = section.windows.first()
-        .and_then(|window| window.executable_path.as_deref()) {
-        ui.add(Label::new(RichText::new(path).small().weak()).truncate());
+    if let Some(detail) = section.windows.first()
+        .and_then(|window| window.detail.as_ref().ok()) {
+        ui.add(Label::new(RichText::new(&detail.executable_path).small().weak()).truncate());
         ui.add_space(4.0);
     }
     for window in &section.windows {
@@ -181,9 +191,10 @@ fn section_body(ui: &mut Ui, section: &WindowSection, rule: &RuntimeRule) -> Vec
     actions
 }
 
+/// Renders a window title, visual state, controls, and detail status.
 fn window_row(
     ui: &mut Ui,
-    window: &WindowInfo,
+    window: &WindowInfo<WindowHandle>,
     rule: &RuntimeRule,
     actions: &mut Vec<Action>) {
     let available = Vec2::new(ui.available_width(), ui.spacing().interact_size.y);
@@ -198,38 +209,41 @@ fn window_row(
             if !state.is_empty() {
                 ui.label(RichText::new(state).small().weak());
             }
-            ui.add(Label::new(&window.window_title).truncate());
+            ui.add(Label::new(&window.title).truncate());
         });
     });
     window_metadata(ui, window, false);
     ui.add_space(4.0);
 }
 
+/// Appends actions only when details are complete and the rule enables them.
 fn window_controls(
     ui: &mut Ui,
-    window: &WindowInfo,
+    window: &WindowInfo<WindowHandle>,
     rule: &RuntimeRule,
     actions: &mut Vec<Action>) {
-    if rule.r#move == RuntimeMove::Center {
-        match window.is_centered {
-            Some(true) => {
-                ui.label(RichText::new("CENTERED").small().color(color::GREEN));
-            },
-            Some(false) | None => {
-                if ui.button("CENTER").clicked() {
-                    actions.push(Action::Center {
-                        windows: vec![window.handle],
-                    });
-                }
-            },
+    // Never expose actions for an incomplete snapshot, even if passed a matching rule.
+    let Ok(ref detail) = window.detail else {
+        return;
+    };
+    if rule.relocate {
+        if detail.is_centered() {
+            ui.label(RichText::new("CENTERED").small().color(color::GREEN));
+        } else {
+            let response = ui.button("CENTER");
+            if response.clicked() {
+                actions.push(Action::Center {
+                    windows: vec![window.handle],
+                });
+            }
         }
     }
 
-    if !rule.resize.enabled {
-        return;
-    }
-    let Some(primary_size) = rule.resize.primary_size() else {
-        if let Some(size) = resize_menu_button(ui, "RESIZE", rule.resize) {
+    let primary_size = rule.resize_exact
+        .or_else(|| rule.resize_limits.as_ref()?.default);
+    let Some(primary_size) = primary_size else {
+        if let Some(size) = rule.resize_limits.as_ref()
+            .and_then(|limits| resize_menu_button(ui, "RESIZE", limits)) {
             actions.push(Action::Resize {
                 windows: vec![window.handle],
                 size,
@@ -248,7 +262,8 @@ fn window_controls(
             size: primary_size,
         });
     }
-    if let Some(size) = resize_menu_button(ui, "\u{25bc}", rule.resize) {
+    if let Some(size) = rule.resize_limits.as_ref()
+        .and_then(|limits| resize_menu_button(ui, "\u{25bc}", limits)) {
         actions.push(Action::Resize {
             windows: vec![window.handle],
             size,
@@ -256,20 +271,22 @@ fn window_controls(
     }
 }
 
+/// Returns a selected size without performing native work during rendering.
 fn resize_menu_button(
     ui: &mut Ui,
     label: &str,
-    resize: RuntimeResize) -> Option<Size2D<i32>> {
+    resize: &ResizeLimits) -> Option<Size2D<i32>> {
     ui.menu_button(label, |ui| resize_menu(ui, resize)).inner.flatten()
 }
 
-fn resize_menu(ui: &mut Ui, resize: RuntimeResize) -> Option<Size2D<i32>> {
+/// Filters manifest choices through inclusive selector bounds.
+fn resize_menu(ui: &mut Ui, resize: &ResizeLimits) -> Option<Size2D<i32>> {
     let mut selected = None;
     let mut available = false;
     for &(name, resolutions) in WINDOW_SIZE_MANIFEST {
         let resolutions = resolutions.iter()
             .copied()
-            .filter(|&size| resize.allows_selector_size(size));
+            .filter(|&size| resize.allows_size(size));
         let mut heading_shown = false;
         for size in resolutions {
             available = true;
@@ -289,26 +306,28 @@ fn resize_menu(ui: &mut Ui, resize: RuntimeResize) -> Option<Size2D<i32>> {
     selected
 }
 
+/// Separates complete unmatched windows from failed-detail snapshots.
 fn diagnostics_page(ui: &mut Ui, windows: &SectionedWindows) {
     if windows.diagnostic_count() == 0 {
         Card::default().show(ui, |ui| {
-            ui.label(RichText::new("No unmatched windows found").weak());
+            ui.label(RichText::new("No window diagnostics").weak());
         });
         return;
     }
     diagnostic_list(
         ui,
         "Unmatched windows",
-        "These windows have executable paths but match no rule.",
+        "These windows have complete details but match no rule.",
         &windows.unmatched_windows);
     diagnostic_list(
         ui,
-        "Executable path unavailable",
-        "These windows are intentionally excluded from rule matching.",
-        &windows.unknown_windows);
+        "Details unavailable",
+        "These windows could not be fully queried. Matching and controls are unavailable until a refresh succeeds.",
+        &windows.failed_windows);
 }
 
-fn diagnostic_list(ui: &mut Ui, title: &str, explanation: &str, windows: &[WindowInfo]) {
+/// Shows retained identity and diagnostics without exposing native actions.
+fn diagnostic_list(ui: &mut Ui, title: &str, explanation: &str, windows: &[WindowInfo<WindowHandle>]) {
     if windows.is_empty() {
         return;
     }
@@ -318,7 +337,9 @@ fn diagnostic_list(ui: &mut Ui, title: &str, explanation: &str, windows: &[Windo
         ui.add_space(6.0);
         for window in windows {
             ui.push_id(("diagnostic-window", window.handle.address()), |ui| {
-                ui.add(Label::new(&window.window_title).truncate());
+                ui.add(Label::new(&window.title).truncate());
+                ui.label(RichText::new(format!(
+                    "{:?} | HWND 0x{:x}", window.state, window.handle.address())).small().weak());
                 window_metadata(ui, window, true);
                 ui.add_space(4.0);
             });
@@ -326,24 +347,139 @@ fn diagnostic_list(ui: &mut Ui, title: &str, explanation: &str, windows: &[Windo
     });
 }
 
-fn window_metadata(ui: &mut Ui, window: &WindowInfo, show_path: bool) {
+/// Shows complete metadata or contextual failure messages, never fabricated values.
+fn window_metadata(ui: &mut Ui, window: &WindowInfo<WindowHandle>, show_path: bool) {
+    let detail = match window.detail {
+        Ok(ref detail) => detail,
+        Err(ref errors) => {
+            ui.label(RichText::new("DETAILS UNAVAILABLE").small().color(color::RED));
+            for error in errors {
+                ui.label(RichText::new(error).small());
+            }
+            return;
+        },
+    };
     ui.horizontal(|ui| {
         ui.add_space(4.0);
-        ui.label(RichText::new(format!("PID {}", window.process_id)).small().weak());
-        if let Some(ref name) = window.executable_name {
-            ui.label(RichText::new(name).small().weak());
-        }
-        if let Some(size) = window.client_size {
-            let text = RichText::new(format!("{}x{}", size.width, size.height)).small();
-            ui.label(if is_known_window_size(size) {
-                text.color(color::GREEN)
-            } else {
-                text.weak()
-            });
-        }
+        ui.label(RichText::new(format!("PID {}", detail.process_id)).small().weak());
+        ui.label(RichText::new(&detail.executable_name).small().weak());
+        let size = detail.content_rect.size;
+        let text = RichText::new(format!("{}x{}", size.width, size.height)).small();
+        ui.label(if is_known_window_size(size) {
+            text.color(color::GREEN)
+        } else {
+            text.weak()
+        });
     });
     if show_path {
-        let path = window.executable_path.as_deref().unwrap_or("Executable path unavailable");
-        ui.add(Label::new(RichText::new(path).small().weak()).truncate());
+        ui.add(Label::new(RichText::new(&detail.executable_path).small().weak()).truncate());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use euclid::default::{Point2D, Rect as PixelRect};
+    use turbozone_core::{Config, ConfigRule, ResizeRule, WindowDetail};
+
+    use super::*;
+
+    /// Captures text emitted by a headless UI pass; no native windows or actions are needed.
+    fn rendered_text(mut render: impl FnMut(&mut Ui)) -> Vec<String> {
+        let mut output = Context::default().run_ui(RawInput::default(), |ui| render(ui));
+        // Headless tests inspect shapes without a renderer to consume texture uploads.
+        output.textures_delta.clear();
+        output.shapes.into_iter().filter_map(|shape| match shape.shape {
+            Shape::Text(text) => Some(text.galley.text().to_owned()),
+            _ => None,
+        }).collect()
+    }
+
+    /// Builds a validated action rule for a single rendering test.
+    fn rule(resize: ResizeRule) -> RuntimeRule {
+        Config { rules: vec![ConfigRule {
+            name: "app".to_owned(),
+            relocate: true,
+            resize,
+            ..Default::default()
+        }] }.validate().unwrap().rules.remove(0)
+    }
+
+    /// Constructs a complete snapshot whose handle is never sent to the OS.
+    fn window() -> WindowInfo<WindowHandle> {
+        WindowInfo {
+            handle: WindowHandle::default(),
+            title: "App".to_owned(),
+            state: WindowState::Normal,
+            detail: Ok(WindowDetail {
+                monitor_rect: PixelRect::new(Point2D::zero(), Size2D::new(1920, 1080)),
+                content_rect: PixelRect::new(Point2D::zero(), Size2D::new(640, 480)),
+                process_id: 42,
+                executable_path: "C:/Apps/App.exe".to_owned(),
+                executable_name: "App.exe".to_owned(),
+            }),
+        }
+    }
+
+    #[test]
+    fn failed_details_render_errors_without_fabricated_metadata() {
+        let mut window = window();
+        window.detail = Err(vec!["Monitor query failed".to_owned(), "Executable access denied".to_owned()]);
+        let text = rendered_text(|ui| window_metadata(ui, &window, true));
+        assert_eq!(text, ["DETAILS UNAVAILABLE", "Monitor query failed", "Executable access denied"]);
+    }
+
+    #[test]
+    fn complete_details_render_executable_and_size() {
+        let text = rendered_text(|ui| window_metadata(ui, &window(), true));
+        assert_eq!(text, ["PID 42", "App.exe", "640x480", "C:/Apps/App.exe"]);
+    }
+
+    #[test]
+    fn failed_details_offer_no_native_controls() {
+        let mut window = window();
+        window.detail = Err(vec!["Client query failed".to_owned()]);
+        let rule = rule(ResizeRule::Boolean(true));
+        let mut actions = Vec::new();
+        let text = rendered_text(|ui| window_controls(ui, &window, &rule, &mut actions));
+        assert!(text.is_empty() && actions.is_empty());
+    }
+
+    #[test]
+    fn exact_resize_offers_only_a_primary_button() {
+        let rule = rule(ResizeRule::Exact { exact: Size2D::new(1280, 720) });
+        let text = rendered_text(|ui| {
+            section_resize_controls(ui, &rule, Vec::new, &mut Vec::new());
+        });
+        assert_eq!(text, ["RESIZE 1280x720"]);
+    }
+
+    #[test]
+    fn selector_default_offers_a_primary_button_and_menu() {
+        let rule = rule(ResizeRule::Selector(ResizeLimits {
+            default: Some(Size2D::new(1280, 720)),
+            ..Default::default()
+        }));
+        let text = rendered_text(|ui| {
+            section_resize_controls(ui, &rule, Vec::new, &mut Vec::new());
+        });
+        assert_eq!(text, ["RESIZE 1280x720", "\u{25bc}"]);
+    }
+
+    #[test]
+    fn disabled_resize_offers_no_controls() {
+        let rule = rule(ResizeRule::Boolean(false));
+        let text = rendered_text(|ui| {
+            section_resize_controls(ui, &rule, Vec::new, &mut Vec::new());
+        });
+        assert_eq!(text, Vec::<String>::new());
+    }
+
+    #[test]
+    fn unbounded_resize_offers_only_a_selector() {
+        let rule = rule(ResizeRule::Boolean(true));
+        let text = rendered_text(|ui| {
+            section_resize_controls(ui, &rule, Vec::new, &mut Vec::new());
+        });
+        assert_eq!(text, ["RESIZE"]);
     }
 }

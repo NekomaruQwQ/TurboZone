@@ -1,8 +1,8 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui::{Context, Ui};
-use turbozone_core::Size2D;
-use turbozone_windows::{WindowHandle, WindowSnapshotter};
+use euclid::default::Size2D;
+use turbozone_windows::{WindowHandle, WindowEnumerator};
 
 use crate::configuration::ConfigState;
 use crate::data::{SectionedWindows, WindowPage};
@@ -31,7 +31,7 @@ pub enum Action {
 /// TurboZone application state shared by the logic and UI phases.
 pub struct App {
     config: ConfigState,
-    snapshotter: WindowSnapshotter,
+    snapshotter: WindowEnumerator,
     windows: SectionedWindows,
     page: WindowPage,
     pending_actions: Vec<Action>,
@@ -44,7 +44,7 @@ impl App {
     pub fn new() -> Self {
         Self {
             config: ConfigState::load(),
-            snapshotter: WindowSnapshotter::default(),
+            snapshotter: WindowEnumerator::default(),
             windows: SectionedWindows::default(),
             page: WindowPage::default(),
             pending_actions: Vec::new(),

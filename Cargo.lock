@@ -574,6 +574,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
 dependencies = [
  "num-traits",
+ "serde",
 ]
 
 [[package]]
@@ -2098,6 +2099,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "eframe",
+ "euclid",
  "log",
  "pretty_env_logger",
  "toml",
@@ -2110,7 +2112,6 @@ name = "turbozone-core"
 version = "0.1.0"
 dependencies = [
  "euclid",
- "log",
  "serde",
  "thiserror 2.0.20",
  "toml",
@@ -2122,7 +2123,6 @@ version = "0.1.0"
 dependencies = [
  "euclid",
  "turbozone-core",
- "win32-version-info",
  "windows",
 ]
 
@@ -2395,15 +2395,6 @@ name = "weezl"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
-
-[[package]]
-name = "win32-version-info"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09d6aa4fa4f0affd222285ff3a2512b1d1dbd9bdca940f6a1ba77c61c65f9578"
-dependencies = [
- "windows",
-]
 
 [[package]]
 name = "winapi-util"

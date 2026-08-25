@@ -6,14 +6,13 @@ use euclid::default::Size2D;
 use thiserror::Error;
 
 use crate::{
-    ComponentStringMatcher, Config, ConfigSize, ExecutableMatch, MoveConfig, MoveTarget,
-    ResizeConfig, ResizeSettings, Rule, RuleMatch, RuntimeConfig, RuntimeExecutableMatch,
-    RuntimeMove, RuntimeResize, RuntimeRule, RuntimeRuleMatch, RuntimeStringMatcher,
-    RuntimeWindowMatch, StringMatcher, WindowMatch,
+    Config, ConfigRule, ExecutableConstraint, Pattern, PatternMatcher, ResizeLimits,
+    ResizeRule, RuntimeConfig, RuntimeRule, WindowConstraint,
 };
 
 impl Config {
     /// Validates serialized rules and compiles them into runtime state.
+    /// Returns the first invalid name, pattern, dimension, or pair of bounds.
     pub fn validate(self) -> Result<RuntimeConfig, ConfigError> {
         let mut names = BTreeSet::new();
         let mut rules = Vec::with_capacity(self.rules.len());
@@ -61,19 +60,11 @@ pub enum ConfigError {
         /// Duplicate configured name.
         name: String,
     },
-    /// A component matcher contained no predicates.
+    /// A partial matcher contained no predicates.
     #[error("{field} must contain starts_with, ends_with, or contains")]
-    EmptyComponentMatcher {
+    EmptyPartialMatcher {
         /// Configuration field containing the invalid matcher.
         field: String,
-    },
-    /// A component matcher contained an empty predicate value.
-    #[error("{field}.{component} must not be empty")]
-    EmptyComponentValue {
-        /// Configuration field containing the invalid matcher.
-        field: String,
-        /// Empty component property.
-        component: &'static str,
     },
     /// A configured executable-path pattern used a backslash.
     #[error("{field} must use forward slashes; backslashes are not accepted")]
@@ -99,231 +90,148 @@ pub enum ConfigError {
     },
 }
 
-fn compile_rule(index: usize, rule: Rule) -> Result<RuntimeRule, ConfigError> {
+/// Resolves defaults and compiles one rule, retaining source-order diagnostics.
+fn compile_rule(index: usize, rule: ConfigRule) -> Result<RuntimeRule, ConfigError> {
     let prefix = format!("rules[{index}]");
-    let description = rule.description.map(|description| description.trim().to_owned());
-    let move_action = match rule.r#move {
-        None | Some(MoveConfig::Boolean(false)) => RuntimeMove::Disabled,
-        Some(MoveConfig::Boolean(true) | MoveConfig::Target(MoveTarget::Center)) => {
-            RuntimeMove::Center
-        },
-    };
-    let resize = compile_resize(rule.resize, &rule.name, &prefix)?;
-    let matcher = compile_rule_match(rule.r#match.unwrap_or_default(), &prefix)?;
+    let description = rule.description.trim().to_owned();
+    let description = (!description.is_empty()).then_some(description);
+    let (resize_exact, resize_limits) = compile_resize(rule.resize, &prefix)?;
+    let executable_constraints = compile_executable_match(rule.executable, &prefix)?;
+    let window_constraints = compile_window_match(rule.window, &prefix)?;
 
     Ok(RuntimeRule {
         name: rule.name,
         description,
-        r#move: move_action,
-        resize,
-        r#match: matcher,
+        relocate: rule.relocate,
+        resize_exact,
+        resize_limits,
+        executable_constraints,
+        window_constraints,
+        priority: rule.priority,
     })
 }
 
+/// Separates exact-only actions from selectors; a missing selector means disabled.
 fn compile_resize(
-    resize: Option<ResizeConfig>,
-    rule_name: &str,
-    prefix: &str) -> Result<RuntimeResize, ConfigError> {
+    resize: ResizeRule,
+    prefix: &str) -> Result<(Option<Size2D<i32>>, Option<ResizeLimits>), ConfigError> {
     match resize {
-        None | Some(ResizeConfig::Boolean(false)) => Ok(RuntimeResize::default()),
-        Some(ResizeConfig::Boolean(true)) => Ok(RuntimeResize {
-            enabled: true,
-            ..RuntimeResize::default()
-        }),
-        Some(ResizeConfig::Size(size)) => {
-            let size = validate_size(size, &format!("{prefix}.resize"))?;
-            Ok(RuntimeResize {
-                enabled: true,
-                target_width: Some(size.width),
-                target_height: Some(size.height),
-                ..RuntimeResize::default()
-            })
+        ResizeRule::Boolean(false) => Ok((None, None)),
+        ResizeRule::Boolean(true) => Ok((None, Some(ResizeLimits::default()))),
+        ResizeRule::Exact { exact } => {
+            validate_size(exact, &format!("{prefix}.resize.exact"))?;
+            Ok((Some(exact), None))
         },
-        Some(ResizeConfig::Settings(settings)) => {
-            compile_resize_settings(&settings, rule_name, prefix)
+        ResizeRule::Selector(limits) => {
+            if let Some(size) = limits.default {
+                validate_size(size, &format!("{prefix}.resize.default"))?;
+            }
+            validate_size_bounds(limits.min, limits.max, &format!("{prefix}.resize"))?;
+            Ok((None, Some(limits)))
         },
     }
 }
 
-fn compile_resize_settings(
-    settings: &ResizeSettings,
-    rule_name: &str,
-    prefix: &str) -> Result<RuntimeResize, ConfigError> {
-    validate_optional_dimension(settings.target_width, &format!("{prefix}.resize.target_width"))?;
-    validate_optional_dimension(settings.target_height, &format!("{prefix}.resize.target_height"))?;
-    validate_optional_dimension(settings.min_width, &format!("{prefix}.resize.min_width"))?;
-    validate_optional_dimension(settings.min_height, &format!("{prefix}.resize.min_height"))?;
-    validate_optional_dimension(settings.max_width, &format!("{prefix}.resize.max_width"))?;
-    validate_optional_dimension(settings.max_height, &format!("{prefix}.resize.max_height"))?;
-    validate_optional_bounds(
-        settings.min_width,
-        settings.max_width,
-        &format!("{prefix}.resize.min_width"),
-        &format!("{prefix}.resize.max_width"))?;
-    validate_optional_bounds(
-        settings.min_height,
-        settings.max_height,
-        &format!("{prefix}.resize.min_height"),
-        &format!("{prefix}.resize.max_height"))?;
-
-    let (target_width, target_height) = match (settings.target_width, settings.target_height) {
-        (Some(width), Some(height)) => (Some(width), Some(height)),
-        (None, None) => (None, None),
-        (Some(_), None) | (None, Some(_)) => {
-            log::warn!(
-                "rule '{rule_name}' has an incomplete resize target; ignoring both target dimensions");
-            (None, None)
-        },
-    };
-
-    Ok(RuntimeResize {
-        enabled: settings.enabled,
-        target_width,
-        target_height,
-        min_width: settings.min_width,
-        min_height: settings.min_height,
-        max_width: settings.max_width,
-        max_height: settings.max_height,
-    })
-}
-
-fn compile_rule_match(
-    matcher: RuleMatch,
-    prefix: &str) -> Result<RuntimeRuleMatch, ConfigError> {
-    Ok(RuntimeRuleMatch {
-        priority: matcher.priority,
-        executable: matcher.executable
-            .map(|matcher| compile_executable_match(matcher, prefix))
-            .transpose()?
-            .filter(|matcher| !matcher.name.is_empty() || !matcher.path.is_empty()),
-        window: matcher.window
-            .map(|matcher| compile_window_match(matcher, prefix))
-            .transpose()?
-            .filter(|matcher| {
-                !matcher.title.is_empty()
-                    || matcher.min_size.is_some()
-                    || matcher.max_size.is_some()
-            }),
-    })
-}
-
+/// Compiles case-insensitive executable patterns without normalizing config paths.
 fn compile_executable_match(
-    matcher: ExecutableMatch,
-    prefix: &str) -> Result<RuntimeExecutableMatch, ConfigError> {
+    matcher: ExecutableConstraint<Pattern>,
+    prefix: &str) -> Result<ExecutableConstraint<Vec<PatternMatcher>>, ConfigError> {
     let name = matcher.name
         .map(|matcher| compile_string_matcher(
             matcher,
-            &format!("{prefix}.match.executable.name"),
+            &format!("{prefix}.executable.name"),
             false,
             false))
-        .transpose()?
-        .unwrap_or_default();
+        .transpose()?;
     let path = matcher.path
         .map(|matcher| compile_string_matcher(
             matcher,
-            &format!("{prefix}.match.executable.path"),
+            &format!("{prefix}.executable.path"),
             false,
             true))
-        .transpose()?
-        .unwrap_or_default();
-    Ok(RuntimeExecutableMatch { name, path })
+        .transpose()?;
+    Ok(ExecutableConstraint { name, path })
 }
 
+/// Compiles case-sensitive title patterns and validates inclusive size bounds.
 fn compile_window_match(
-    matcher: WindowMatch,
-    prefix: &str) -> Result<RuntimeWindowMatch, ConfigError> {
+    matcher: WindowConstraint<Pattern>,
+    prefix: &str) -> Result<WindowConstraint<Vec<PatternMatcher>>, ConfigError> {
     let title = matcher.title
         .map(|matcher| compile_string_matcher(
             matcher,
-            &format!("{prefix}.match.window.title"),
+            &format!("{prefix}.window.title"),
             true,
             false))
-        .transpose()?
-        .unwrap_or_default();
-    let min_size = matcher.min_size
-        .map(|size| validate_size(size, &format!("{prefix}.match.window.min_size")))
         .transpose()?;
-    let max_size = matcher.max_size
-        .map(|size| validate_size(size, &format!("{prefix}.match.window.max_size")))
-        .transpose()?;
-    if let (Some(minimum), Some(maximum)) = (min_size, max_size) {
-        if minimum.width > maximum.width {
-            return Err(ConfigError::InvalidBounds {
-                minimum_field: format!("{prefix}.match.window.min_size[0]"),
-                maximum_field: format!("{prefix}.match.window.max_size[0]"),
-            });
-        }
-        if minimum.height > maximum.height {
-            return Err(ConfigError::InvalidBounds {
-                minimum_field: format!("{prefix}.match.window.min_size[1]"),
-                maximum_field: format!("{prefix}.match.window.max_size[1]"),
-            });
-        }
-    }
-    Ok(RuntimeWindowMatch {
+    validate_size_bounds(matcher.min, matcher.max, &format!("{prefix}.window"))?;
+    Ok(WindowConstraint {
         title,
-        min_size,
-        max_size,
+        min: matcher.min,
+        max: matcher.max,
     })
 }
 
+/// Selects exact or ANDed partial predicates, rejecting empty partial patterns.
 fn compile_string_matcher(
-    matcher: StringMatcher,
+    matcher: Pattern,
     field: &str,
     case_sensitive: bool,
-    is_path: bool) -> Result<Vec<RuntimeStringMatcher>, ConfigError> {
+    is_path: bool) -> Result<Vec<PatternMatcher>, ConfigError> {
     match matcher {
-        StringMatcher::Bare(pattern) => Ok(vec![compile_string_predicate(
+        Pattern::Exact(pattern) => Ok(vec![compile_string_predicate(
             pattern,
             field,
             case_sensitive,
             is_path,
             string_equals)?]),
-        StringMatcher::Exact(matcher) => Ok(vec![compile_string_predicate(
-            matcher.exact,
+        Pattern::Partial {
+            starts_with,
+            ends_with,
+            contains,
+        } => compile_partial_matcher(
+            starts_with,
+            ends_with,
+            contains,
             field,
             case_sensitive,
-            is_path,
-            string_equals)?]),
-        StringMatcher::Components(matcher) => {
-            compile_component_matcher(matcher, field, case_sensitive, is_path)
-        },
+            is_path),
     }
 }
 
-fn compile_component_matcher(
-    matcher: ComponentStringMatcher,
+/// Ignores empty components but requires at least one effective predicate.
+fn compile_partial_matcher(
+    starts_with: String,
+    ends_with: String,
+    contains: String,
     field: &str,
     case_sensitive: bool,
-    is_path: bool) -> Result<Vec<RuntimeStringMatcher>, ConfigError> {
-    if matcher.starts_with.is_none() && matcher.ends_with.is_none() && matcher.contains.is_none() {
-        return Err(ConfigError::EmptyComponentMatcher {
+    is_path: bool) -> Result<Vec<PatternMatcher>, ConfigError> {
+    if starts_with.is_empty() && ends_with.is_empty() && contains.is_empty() {
+        return Err(ConfigError::EmptyPartialMatcher {
             field: field.to_owned(),
         });
     }
     let mut predicates = Vec::with_capacity(3);
-    if let Some(pattern) = matcher.starts_with {
-        validate_component_value(&pattern, field, "starts_with")?;
+    if !starts_with.is_empty() {
         predicates.push(compile_string_predicate(
-            pattern,
+            starts_with,
             &format!("{field}.starts_with"),
             case_sensitive,
             is_path,
             string_starts_with)?);
     }
-    if let Some(pattern) = matcher.ends_with {
-        validate_component_value(&pattern, field, "ends_with")?;
+    if !ends_with.is_empty() {
         predicates.push(compile_string_predicate(
-            pattern,
+            ends_with,
             &format!("{field}.ends_with"),
             case_sensitive,
             is_path,
             string_ends_with)?);
     }
-    if let Some(pattern) = matcher.contains {
-        validate_component_value(&pattern, field, "contains")?;
+    if !contains.is_empty() {
         predicates.push(compile_string_predicate(
-            pattern,
+            contains,
             &format!("{field}.contains"),
             case_sensitive,
             is_path,
@@ -332,48 +240,53 @@ fn compile_component_matcher(
     Ok(predicates)
 }
 
+/// Validates path separators and folds only case-insensitive patterns at load time.
 fn compile_string_predicate(
     pattern: String,
     field: &str,
     case_sensitive: bool,
     is_path: bool,
-    predicate: fn(input: &str, pattern: &str) -> bool) -> Result<RuntimeStringMatcher, ConfigError> {
+    predicate: fn(input: &str, pattern: &str) -> bool) -> Result<PatternMatcher, ConfigError> {
     if is_path && pattern.contains('\\') {
         return Err(ConfigError::BackslashInExecutablePath {
             field: field.to_owned(),
         });
     }
     let pattern = if case_sensitive { pattern } else { pattern.to_lowercase() };
-    Ok(RuntimeStringMatcher::new(pattern, predicate))
+    Ok(PatternMatcher::new(pattern, predicate))
 }
 
-fn validate_component_value(
-    value: &str,
-    field: &str,
-    component: &'static str) -> Result<(), ConfigError> {
-    if value.is_empty() {
-        Err(ConfigError::EmptyComponentValue {
-            field: field.to_owned(),
-            component,
-        })
-    } else {
-        Ok(())
+/// Validates both tuple-serialized dimensions using their configuration indices.
+fn validate_size(size: Size2D<i32>, field: &str) -> Result<(), ConfigError> {
+    validate_dimension(size.width, &format!("{field}[0]"))?;
+    validate_dimension(size.height, &format!("{field}[1]"))
+}
+
+/// Checks positive bounds and rejects inverted axes when both bounds are present.
+fn validate_size_bounds(
+    min: Option<Size2D<i32>>,
+    max: Option<Size2D<i32>>,
+    prefix: &str) -> Result<(), ConfigError> {
+    if let Some(size) = min {
+        validate_size(size, &format!("{prefix}.min"))?;
     }
-}
-
-fn validate_size(size: ConfigSize, field: &str) -> Result<Size2D<i32>, ConfigError> {
-    validate_dimension(size.0, &format!("{field}[0]"))?;
-    validate_dimension(size.1, &format!("{field}[1]"))?;
-    Ok(Size2D::new(size.0, size.1))
-}
-
-fn validate_optional_dimension(value: Option<i32>, field: &str) -> Result<(), ConfigError> {
-    if let Some(value) = value {
-        validate_dimension(value, field)?;
+    if let Some(size) = max {
+        validate_size(size, &format!("{prefix}.max"))?;
+    }
+    if let (Some(min), Some(max)) = (min, max) {
+        for (axis, minimum, maximum) in [(0, min.width, max.width), (1, min.height, max.height)] {
+            if minimum > maximum {
+                return Err(ConfigError::InvalidBounds {
+                    minimum_field: format!("{prefix}.min[{axis}]"),
+                    maximum_field: format!("{prefix}.max[{axis}]"),
+                });
+            }
+        }
     }
     Ok(())
 }
 
+/// Rejects zero and negative physical-pixel dimensions.
 fn validate_dimension(value: i32, field: &str) -> Result<(), ConfigError> {
     if value <= 0 {
         Err(ConfigError::InvalidDimension {
@@ -385,36 +298,17 @@ fn validate_dimension(value: i32, field: &str) -> Result<(), ConfigError> {
     }
 }
 
-fn validate_optional_bounds(
-    minimum: Option<i32>,
-    maximum: Option<i32>,
-    minimum_field: &str,
-    maximum_field: &str) -> Result<(), ConfigError> {
-    if minimum.zip(maximum).is_some_and(|(minimum, maximum)| minimum > maximum) {
-        Err(ConfigError::InvalidBounds {
-            minimum_field: minimum_field.to_owned(),
-            maximum_field: maximum_field.to_owned(),
-        })
-    } else {
-        Ok(())
-    }
-}
+/// Matches the full string.
+fn string_equals(input: &str, pattern: &str) -> bool { input == pattern }
 
-fn string_equals(input: &str, pattern: &str) -> bool {
-    input == pattern
-}
+/// Matches a literal prefix.
+fn string_starts_with(input: &str, pattern: &str) -> bool { input.starts_with(pattern) }
 
-fn string_starts_with(input: &str, pattern: &str) -> bool {
-    input.starts_with(pattern)
-}
+/// Matches a literal suffix.
+fn string_ends_with(input: &str, pattern: &str) -> bool { input.ends_with(pattern) }
 
-fn string_ends_with(input: &str, pattern: &str) -> bool {
-    input.ends_with(pattern)
-}
-
-fn string_contains(input: &str, pattern: &str) -> bool {
-    input.contains(pattern)
-}
+/// Matches a literal substring.
+fn string_contains(input: &str, pattern: &str) -> bool { input.contains(pattern) }
 
 #[cfg(test)]
 mod tests {
@@ -454,52 +348,65 @@ mod tests {
     }
 
     #[test]
-    fn boolean_true_enables_default_actions() {
+    fn explicit_action_fields_enable_controls() {
         let runtime = parse(r#"
             [[rules]]
             name = "app"
-            move = true
+            relocate = true
             resize = true
-        "#).validate().expect("Boolean action shorthands must validate");
+        "#).validate().expect("explicit action fields must validate");
         let rule = &runtime.rules[0];
 
-        assert_eq!((rule.r#move, rule.resize.enabled), (RuntimeMove::Center, true));
+        assert_eq!((rule.relocate, rule.resize_limits.is_some()), (true, true));
     }
 
     #[test]
-    fn resize_size_compiles_to_primary_target() {
+    fn omitted_action_fields_disable_controls() {
         let runtime = parse(r#"
             [[rules]]
             name = "app"
-            resize = [1440, 900]
-        "#).validate().expect("resize tuple must validate");
+        "#).validate().expect("omitted action fields must use defaults");
+        let rule = &runtime.rules[0];
+
+        assert_eq!((rule.relocate, rule.resize_exact, rule.resize_limits.as_ref()), (false, None, None));
+    }
+
+    #[test]
+    fn exact_resize_disables_selector() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "app"
+            resize.exact = [1440, 900]
+        "#).validate().expect("resize target must validate");
 
         assert_eq!(
-            runtime.rules[0].resize.primary_size(),
+            (runtime.rules[0].resize_exact, runtime.rules[0].resize_limits.as_ref()),
+            (Some(Size2D::new(1440, 900)), None));
+    }
+
+    #[test]
+    fn selector_default_is_independent_of_selector_bounds() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "app"
+            resize.default = [1440, 900]
+            resize.max = [1280, 800]
+        "#).validate().expect("default target need not be in selector bounds");
+
+        assert_eq!(
+            runtime.rules[0].resize_limits.as_ref().and_then(|limits| limits.default),
             Some(Size2D::new(1440, 900)));
     }
 
     #[test]
-    fn incomplete_resize_target_is_ignored() {
-        let runtime = parse(r#"
-            [[rules]]
-            name = "app"
-            resize.enabled = true
-            resize.target_width = 1440
-        "#).validate().expect("incomplete target is a warning, not an error");
-
-        assert_eq!(runtime.rules[0].resize.primary_size(), None);
-    }
-
-    #[test]
-    fn description_is_trimmed_without_empty_validation() {
+    fn empty_trimmed_description_uses_rule_name_fallback() {
         let runtime = parse(r#"
             [[rules]]
             name = "app"
             description = "   "
-        "#).validate().expect("empty trimmed description remains valid");
+        "#).validate().expect("empty trimmed description must remain valid");
 
-        assert_eq!(runtime.rules[0].description.as_deref(), Some(""));
+        assert_eq!(runtime.rules[0].description, None);
     }
 
     #[test]
@@ -507,56 +414,78 @@ mod tests {
         let runtime = parse(r#"
             [[rules]]
             name = "app"
-            resize.enabled = true
-            resize.min_width = 1400
-            resize.max_height = 1000
+            resize.min = [1400, 1]
+            resize.max = [3840, 1000]
         "#).validate().expect("selector limits must validate");
-        let resize = runtime.rules[0].resize;
+        let resize = runtime.rules[0].resize_limits.as_ref().expect("selector must be enabled");
 
         assert_eq!(
             (
-                resize.allows_selector_size(Size2D::new(1440, 900)),
-                resize.allows_selector_size(Size2D::new(1280, 800))),
+                resize.allows_size(Size2D::new(1440, 900)),
+                resize.allows_size(Size2D::new(1280, 800))),
             (true, false));
     }
 
     #[test]
-    fn component_matcher_ands_every_predicate() {
+    fn partial_matcher_ands_every_predicate() {
         let runtime = parse(r#"
             [[rules]]
             name = "tool"
-            match.window.title.starts_with = "Tool"
-            match.window.title.ends_with = "Ready"
-            match.window.title.contains = " - "
-        "#).validate().expect("component matcher must validate");
+            window.title.starts_with = "Tool"
+            window.title.ends_with = "Ready"
+            window.title.contains = " - "
+        "#).validate().expect("partial matcher must validate");
         let rule = &runtime.rules[0];
 
         assert!(rule.matches(None, "c:/tool.exe", "Tool - Ready", None));
     }
 
     #[test]
-    fn bare_string_matcher_is_exact() {
+    fn partial_matcher_ignores_empty_components() {
         let runtime = parse(r#"
             [[rules]]
             name = "tool"
-            match.window.title = "Tool"
+            window.title.starts_with = ""
+            window.title.ends_with = "Ready"
+        "#).validate().expect("empty partial components must behave as omitted");
+
+        assert!(runtime.rules[0].matches(None, "c:/tool.exe", "Tool Ready", None));
+    }
+
+    #[test]
+    fn string_matcher_is_exact() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "tool"
+            window.title = "Tool"
         "#).validate().expect("bare matcher must validate");
 
         assert!(!runtime.rules[0].matches(None, "c:/tool.exe", "Tool Window", None));
     }
 
     #[test]
-    fn empty_component_matcher_is_rejected() {
+    fn explicit_exact_matcher_is_rejected_by_deserialization() {
+        let result = toml::from_str::<Config>(r#"
+            [[rules]]
+            name = "tool"
+            window.title.exact = "Tool"
+        "#);
+
+        result.expect_err("the former explicit exact matcher must not deserialize");
+    }
+
+    #[test]
+    fn empty_partial_matcher_is_rejected() {
         let config = parse(r#"
             [[rules]]
             name = "tool"
-            match.window.title = {}
+            window.title = {}
         "#);
 
         assert_eq!(
-            config.validate().expect_err("empty component matcher must fail"),
-            ConfigError::EmptyComponentMatcher {
-                field: "rules[0].match.window.title".to_owned(),
+            config.validate().expect_err("empty partial matcher must fail"),
+            ConfigError::EmptyPartialMatcher {
+                field: "rules[0].window.title".to_owned(),
             });
     }
 
@@ -565,8 +494,8 @@ mod tests {
         let runtime = parse(r#"
             [[rules]]
             name = "tool"
-            match.executable.name = "TOOL.EXE"
-            match.executable.path.ends_with = "/TOOL.EXE"
+            executable.name = "TOOL.EXE"
+            executable.path.ends_with = "/TOOL.EXE"
         "#).validate().expect("executable matcher must validate");
 
         assert!(runtime.rules[0].matches(
@@ -581,13 +510,13 @@ mod tests {
         let config = parse(r#"
             [[rules]]
             name = "tool"
-            match.executable.path = 'C:\Apps\tool.exe'
+            executable.path = 'C:\Apps\tool.exe'
         "#);
 
         assert_eq!(
             config.validate().expect_err("backslash path must fail"),
             ConfigError::BackslashInExecutablePath {
-                field: "rules[0].match.executable.path".to_owned(),
+                field: "rules[0].executable.path".to_owned(),
             });
     }
 
@@ -596,7 +525,7 @@ mod tests {
         let runtime = parse(r#"
             [[rules]]
             name = "tool"
-            match.window.title = "Tool"
+            window.title = "Tool"
         "#).validate().expect("title matcher must validate");
 
         assert!(!runtime.rules[0].matches(None, "c:/tool.exe", "tool", None));
@@ -607,11 +536,11 @@ mod tests {
         let runtime = parse(r#"
             [[rules]]
             name = "first"
-            match.priority = 0
+            priority = 0
 
             [[rules]]
             name = "second"
-            match.priority = 10
+            priority = 10
         "#).validate().expect("rules must validate");
 
         assert_eq!(runtime.matching_rule_index(None, "c:/app.exe", "App", None), Some(1));
@@ -622,11 +551,11 @@ mod tests {
         let runtime = parse(r#"
             [[rules]]
             name = "first"
-            match.priority = 10
+            priority = 10
 
             [[rules]]
             name = "second"
-            match.priority = 10
+            priority = 10
         "#).validate().expect("rules must validate");
 
         assert_eq!(runtime.matching_rule_index(None, "c:/app.exe", "App", None), Some(0));
@@ -637,7 +566,7 @@ mod tests {
         let runtime = parse(r#"
             [[rules]]
             name = "large"
-            match.window.min_size = [640, 480]
+            window.min = [640, 480]
         "#).validate().expect("size matcher must validate");
 
         assert_eq!(runtime.matching_rule_index(None, "c:/app.exe", "App", None), None);
@@ -648,8 +577,8 @@ mod tests {
         let runtime = parse(r#"
             [[rules]]
             name = "bounded"
-            match.window.min_size = [640, 480]
-            match.window.max_size = [640, 480]
+            window.min = [640, 480]
+            window.max = [640, 480]
         "#).validate().expect("equal inclusive bounds must validate");
 
         assert_eq!(
@@ -666,15 +595,15 @@ mod tests {
         let config = parse(r#"
             [[rules]]
             name = "bounded"
-            match.window.min_size = [800, 480]
-            match.window.max_size = [640, 1080]
+            window.min = [800, 480]
+            window.max = [640, 1080]
         "#);
 
         assert_eq!(
             config.validate().expect_err("reversed bounds must fail"),
             ConfigError::InvalidBounds {
-                minimum_field: "rules[0].match.window.min_size[0]".to_owned(),
-                maximum_field: "rules[0].match.window.max_size[0]".to_owned(),
+                minimum_field: "rules[0].window.min[0]".to_owned(),
+                maximum_field: "rules[0].window.max[0]".to_owned(),
             });
     }
 
@@ -683,7 +612,7 @@ mod tests {
         let result = toml::from_str::<Config>(r#"
             [[rules]]
             name = "future"
-            match.window.title.regex = ".*"
+            window.title.regex = ".*"
         "#);
 
         result.expect_err("future matcher form must not deserialize");
@@ -694,7 +623,7 @@ mod tests {
         let result = toml::from_str::<Config>(r#"
             [[rules]]
             name = "future"
-            match.executable.name.glob = "*.exe"
+            executable.name.glob = "*.exe"
         "#);
 
         result.expect_err("future matcher form must not deserialize");
@@ -717,5 +646,97 @@ mod tests {
             .expect("documented M1 example must deserialize");
 
         config.validate().expect("documented M1 example must validate");
+    }
+
+    #[test]
+    fn explicit_false_disables_all_resize_controls() {
+        let runtime = parse("[[rules]]\nname = 'app'\nresize = false").validate().unwrap();
+        let rule = &runtime.rules[0];
+        assert_eq!((rule.resize_exact, rule.resize_limits.as_ref()), (None, None));
+    }
+
+    #[test]
+    fn empty_selector_is_enabled_and_unbounded() {
+        let runtime = parse("[[rules]]\nname = 'app'\nresize = {}").validate().unwrap();
+        assert_eq!(runtime.rules[0].resize_limits, Some(ResizeLimits::default()));
+    }
+
+    #[test]
+    fn resize_rejects_nonpositive_dimensions_in_every_variant() {
+        for field in ["exact", "default", "min", "max"] {
+            for size in ["[0, 900]", "[1440, -1]"] {
+                let source = format!("[[rules]]\nname = 'app'\nresize.{field} = {size}");
+                assert!(matches!(parse(&source).validate(), Err(ConfigError::InvalidDimension { .. })));
+            }
+        }
+    }
+
+    #[test]
+    fn resize_rejects_reversed_selector_bounds() {
+        let config = parse("[[rules]]\nname = 'app'\nresize.min = [640, 900]\nresize.max = [1280, 800]");
+        assert_eq!(config.validate().unwrap_err(), ConfigError::InvalidBounds {
+            minimum_field: "rules[0].resize.min[1]".to_owned(),
+            maximum_field: "rules[0].resize.max[1]".to_owned(),
+        });
+    }
+
+    #[test]
+    fn resize_rejects_mixed_variants_unknown_fields_and_incomplete_sizes() {
+        for resize in [
+            "{ exact = [640, 480], min = [320, 240] }",
+            "{ exact = [640, 480], default = [800, 600] }",
+            "{ enabled = true }",
+            "{ default = [640] }",
+            "{ min = [640, 480, 1] }",
+            "{ exact = [640.5, 480] }",
+        ] {
+            let source = format!("[[rules]]\nname = 'app'\nresize = {resize}");
+            assert!(toml::from_str::<Config>(&source).is_err(), "must reject {resize}");
+        }
+    }
+
+    #[test]
+    fn config_round_trip_preserves_all_resize_modes_and_generic_constraints() {
+        let config = parse(r#"
+            [[rules]]
+            name = "disabled"
+            [[rules]]
+            name = "unbounded"
+            resize = true
+            executable.name = "APP.EXE"
+            [[rules]]
+            name = "exact"
+            resize.exact = [640, 480]
+            [[rules]]
+            name = "selector"
+            resize.default = [1440, 900]
+            resize.min = [640, 480]
+            window.title.contains = "App"
+        "#);
+        let serialized = toml::to_string(&config).unwrap();
+        let round_trip = parse(&serialized);
+        assert_eq!(
+            config.rules.iter().map(|rule| &rule.resize).collect::<Vec<_>>(),
+            round_trip.rules.iter().map(|rule| &rule.resize).collect::<Vec<_>>());
+        round_trip.validate().unwrap();
+    }
+
+    #[test]
+    fn partial_matcher_rejects_a_candidate_missing_any_predicate() {
+        let runtime = parse(r#"
+            [[rules]]
+            name = "tool"
+            window.title = { starts_with = "Tool", ends_with = "Ready", contains = " - " }
+        "#).validate().unwrap();
+        assert!(!runtime.rules[0].matches(None, "c:/tool.exe", "Tool Ready", None));
+    }
+
+    #[test]
+    fn absent_constraints_remain_absent_after_compilation() {
+        let runtime = parse("[[rules]]\nname = 'app'").validate().unwrap();
+        let rule = &runtime.rules[0];
+        assert!(rule.executable_constraints.name.is_none()
+            && rule.executable_constraints.path.is_none()
+            && rule.window_constraints.title.is_none());
     }
 }

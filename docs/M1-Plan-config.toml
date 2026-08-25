@@ -1,51 +1,55 @@
-# M1 accepts the full Rule and StringMatcher shapes documented in
-# M1-Plan-config.d.ts. Bare strings are exact and all configured constraints
-# within one rule are ANDed.
+# M1 accepts ConfigRule and Pattern from M1-Plan-config.d.ts.
+# Strings are exact; all constraints within one rule are ANDed.
+# Sizes are [width, height] arrays of positive physical-pixel integers.
 
 [[rules]]
 name = "vscode.main"
 description = "  VS Code (Main Projects)  " # trimmed while loading
 
-move = true # equivalent to "center"
+relocate = true
+# Selector mode: a primary target plus independently bounded menu choices.
+resize.default = [1440, 900]
+resize.min = [960, 540]
+resize.max = [3840, 2400]
 
-# Complete resize settings enable a primary action and filter selector choices.
-resize.enabled = true
-resize.target_width = 1440
-resize.target_height = 900
-resize.min_width = 960
-resize.min_height = 540
-resize.max_width = 3840
-resize.max_height = 2400
-
-match.priority = 10
-match.executable.name = "Code.exe" # exact and case-insensitive
-match.window.title.ends_with = "Visual Studio Code"
-match.window.min_size = [640, 480]
-match.window.max_size = [7680, 4320]
+priority = 10
+executable.name = "Code.exe" # exact and case-insensitive
+window.title.ends_with = "Visual Studio Code"
+window.min = [640, 480]
+window.max = [7680, 4320]
 
 [[rules]]
 name = "tool.selector-only"
 description = "Tool Windows"
 
-move = "center"
-resize = true # selector enabled without a configured primary target
+relocate = true
+resize = true # unbounded selector, without a primary target; {} is equivalent
 
-match.priority = 20
-match.executable.path.exact = "C:/Apps/Tool/tool.exe"
-match.window.title.starts_with = "Tool"
-match.window.title.contains = "Properties"
+priority = 20
+executable.path = "C:/Apps/Tool/tool.exe"
+window.title.starts_with = "Tool"
+window.title.contains = "Properties"
+
+[[rules]]
+name = "tool.exact"
+description = "Tool Preview"
+
+# Exact mode offers only this target, with no size selector.
+resize.exact = [1280, 720]
+priority = 25
+executable.name = "tool.exe"
+window.title = "Tool Preview"
 
 [[rules]]
 name = "tool.read-only"
 description = "Tool Window (Read Only)"
 
-# Omitted actions make this an intentional read-only section.
-match.priority = 30
-match.executable.name = "tool.exe"
-match.window.title = "Tool Diagnostics"
+# Both actions default to false. This is still an intentional matched section.
+relocate = false
+resize = false
+priority = 30
+executable.name = "tool.exe"
+window.title = "Tool Diagnostics"
 
-# An object may keep selector limits while resizing is disabled.
-# An incomplete target_width/target_height pair produces a warning and both
-# target dimensions are ignored.
-#
-# StringMatcherV2 regex and glob objects remain reserved and are rejected by M1.
+# Exact and selector properties cannot be mixed.
+# Regex/glob objects, old match_* keys, set_position, and set_size are rejected.

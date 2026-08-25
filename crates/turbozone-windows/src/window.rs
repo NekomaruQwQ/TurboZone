@@ -2,153 +2,172 @@
 
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
-use std::path::Path;
 
-use euclid::default::{Box2D, Point2D};
-use turbozone_core::Size2D;
-use win32_version_info::VersionInfo;
+use euclid::default::{Point2D, Rect, Size2D, Vector2D};
+use turbozone_core::{normalize_native_path, WindowDetail, WindowInfo, WindowState};
 use windows::core::{Error, Result};
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Foundation::{E_INVALIDARG, HWND, RECT};
+use windows::Win32::Graphics::Gdi::{HMONITOR, MONITORINFO};
 
 use crate::native;
-use crate::normalize_native_path;
 
-/// An opaque native window handle captured in a snapshot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A borrowed native window identity; the default is a null, non-actionable handle.
+///
+/// Windows may destroy or reuse a handle after a snapshot, so native actions remain fallible.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WindowHandle(HWND);
 
 impl WindowHandle {
-    /// Returns the raw address for diagnostic logging only.
-    pub fn address(self) -> usize {
-        self.0.0.addr()
-    }
+    /// Returns the native identity for UI keys and diagnostics, without dereferencing it.
+    pub fn address(self) -> usize { self.0.0.addr() }
 }
 
 impl Hash for WindowHandle {
-    fn hash<H>(&self, state: &mut H)
-    where
-        H: Hasher {
-        self.address().hash(state);
-    }
+    fn hash<H: Hasher>(&self, state: &mut H) { self.address().hash(state); }
 }
 
-/// The current visual state of a native window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WindowState {
-    /// The live window uses its normal rectangle.
-    Normal,
-    /// The live window is maximized and controls operate on its restored rectangle.
-    Maximized,
-    /// The live window is minimized and controls operate on its restored rectangle.
-    Minimized,
-}
-
-/// An immutable native window snapshot used by classification and rendering.
-#[derive(Debug, PartialEq, Eq)]
-pub struct WindowInfo {
-    /// Native handle identifying the exact enumerated window.
-    pub handle: WindowHandle,
-    /// Owning process identifier, or zero when Windows could not provide one.
-    pub process_id: u32,
-    /// Case-sensitive window title.
-    pub window_title: String,
-    /// Current normal, maximized, or minimized state.
-    pub state: WindowState,
-    /// Controllable client-area size in physical pixels.
-    pub client_size: Option<Size2D<i32>>,
-    /// Whether the live or restored window rectangle is centered.
-    pub is_centered: Option<bool>,
-    /// Lexically normalized native executable path with forward slashes.
-    pub executable_path: Option<String>,
-    /// Executable filename used by configuration matching.
-    pub executable_name: Option<String>,
-    /// Friendly version-resource description used for display.
-    pub executable_display_name: Option<String>,
-}
-
-/// Enumerates application windows while caching executable version metadata.
+/// Enumerates application windows, sharing monitor queries within each snapshot.
 #[derive(Debug, Default)]
-pub struct WindowSnapshotter {
-    display_name_cache: BTreeMap<String, String>,
+pub struct WindowEnumerator {
+    /// Both successful queries and failures expire before the next enumeration.
+    monitor_info_cache: BTreeMap<usize, Result<MONITORINFO>>,
 }
 
-impl WindowSnapshotter {
+impl WindowEnumerator {
     /// Captures relevant top-level application windows.
     ///
-    /// A top-level enumeration failure is returned to the caller. Per-window
-    /// metadata failures are represented by optional fields so other windows
-    /// remain available.
-    pub fn snapshot(&mut self) -> Result<Vec<WindowInfo>> {
+    /// Only a top-level enumeration failure is returned to the caller. Per-window
+    /// detail failures remain visible as nonempty error lists on the snapshot.
+    pub fn snapshot(&mut self) -> Result<Vec<WindowInfo<WindowHandle>>> {
+        // Work areas and monitor handles can change between logic ticks.
+        self.monitor_info_cache.clear();
         Ok(native::enumerate_windows()?
             .into_iter()
             .filter(|&handle| native::is_app_window(handle))
             .map(|handle| self.snapshot_window(handle))
-            .filter(|window| !window.window_title.is_empty())
+            .filter(|window| !window.title.is_empty())
             .filter(|window| !(
-                window.window_title == "Program Manager"
-                && window.executable_name.as_deref() == Some("explorer.exe")))
+                window.title == "Program Manager"
+                && window.detail.as_ref().is_ok_and(|detail| {
+                    detail.executable_name.eq_ignore_ascii_case("explorer.exe")
+                })))
             .collect())
     }
 
-    fn snapshot_window(&mut self, handle: HWND) -> WindowInfo {
+    /// Memoizes one query per monitor, including failures, for the current refresh.
+    fn monitor_info(
+        &mut self,
+        monitor: HMONITOR,
+        query: impl FnOnce(HMONITOR) -> Result<MONITORINFO>) -> Result<MONITORINFO> {
+        self.monitor_info_cache.entry(monitor.0.addr())
+            .or_insert_with(|| query(monitor))
+            .clone()
+    }
+
+    /// Retains basic identity even when independent detail queries fail.
+    fn snapshot_window(&mut self, handle: HWND) -> WindowInfo<WindowHandle> {
+        let title = native::get_window_text(handle);
         let state = window_state(handle);
-        let (client_size, is_centered) = match state {
-            WindowState::Normal => (
-                native::get_client_size(handle).ok(),
-                is_centered_raw(handle)),
-            WindowState::Maximized | WindowState::Minimized => (
-                native::get_restored_client_size(handle).ok(),
-                is_restored_centered_raw(handle)),
+        let mut errors = Vec::new();
+        let monitor = record_failure(
+            self.monitor_info(native::get_monitor(handle), native::get_monitor_info),
+            "Monitor geometry",
+            &mut errors);
+        let content_rect = match state {
+            WindowState::Normal => record_failure(
+                native::get_content_rect(handle), "Client geometry", &mut errors),
+            WindowState::Maximized | WindowState::Minimized => {
+                let placement = record_failure(
+                    native::get_window_placement(handle), "Restored placement", &mut errors);
+                let frame = record_failure(
+                    native::get_normal_frame(handle), "Restored frame", &mut errors);
+                let offset = monitor.as_ref().and_then(|monitor| record_failure(
+                    native::get_placement_offset(handle, monitor), "Placement coordinates", &mut errors));
+                placement.zip(frame).zip(offset).and_then(|((placement, frame), offset)| {
+                    record_failure(
+                        restored_content_rect(&placement.rcNormalPosition, &frame, offset),
+                        "Restored client geometry",
+                        &mut errors)
+                })
+            },
         };
-        let process_id = native::get_process_id(handle);
-        let native_path = native::get_executable_path(process_id);
-        let executable_path = native_path.as_deref().map(normalize_native_path);
+        let process_id = record_failure(
+            native::get_process_id(handle), "Owning process", &mut errors);
+        // Do not report dependent executable failures when the process query already failed.
+        let native_path = process_id.and_then(|process_id| record_failure(
+            native::get_executable_path(process_id), "Executable path", &mut errors));
         let executable_name = native_path.as_deref().and_then(|path| {
-            path.file_name().map(|name| name.to_string_lossy().into_owned())
+            let Some(name) = path.file_name() else {
+                errors.push("Executable path has no filename".to_owned());
+                return None;
+            };
+            Some(name.to_string_lossy().into_owned())
         });
-        let executable_display_name = native_path.as_deref().zip(executable_path.as_deref())
-            .map(|(path, cache_key)| {
-                self.display_name_cache.entry(cache_key.to_owned())
-                    .or_insert_with(|| executable_display_name(path))
-                    .clone()
-            });
-
-        WindowInfo {
-            handle: WindowHandle(handle),
-            process_id,
-            window_title: native::get_window_text(handle),
-            state,
-            client_size,
-            is_centered,
-            executable_path,
-            executable_name,
-            executable_display_name,
-        }
+        let executable_path = native_path.as_deref().map(normalize_native_path);
+        let detail = match (monitor, content_rect, process_id, executable_path, executable_name) {
+            (Some(monitor), Some(content_rect), Some(process_id), Some(executable_path), Some(executable_name)) => {
+                Ok(WindowDetail {
+                    monitor_rect: native::rect_from_native(&monitor.rcWork),
+                    content_rect,
+                    process_id,
+                    executable_path,
+                    executable_name,
+                })
+            },
+            _ => Err(errors),
+        };
+        WindowInfo { handle: WindowHandle(handle), title, state, detail }
     }
 }
 
-/// Returns whether the live or restored window rectangle is centered.
+/// Records contextual failures without allocating diagnostic strings on success.
+fn record_failure<T>(result: Result<T>, context: &str, errors: &mut Vec<String>) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            errors.push(format!("{context}: {error}"));
+            None
+        },
+    }
+}
+
+/// Returns whether the live or restored client area is centered, or none on query failure.
 pub fn is_centered(handle: WindowHandle) -> Option<bool> {
-    match window_state(handle.0) {
-        WindowState::Normal => is_centered_raw(handle.0),
-        WindowState::Maximized | WindowState::Minimized => {
-            is_restored_centered_raw(handle.0)
-        },
-    }
+    let monitor = native::get_monitor_info(native::get_monitor(handle.0)).ok()?;
+    let content = content_rect(handle.0, window_state(handle.0), &monitor).ok()?;
+    Some(content.center() == native::rect_from_native(&monitor.rcWork).center())
 }
 
-/// Centers a window without changing its current visual state.
+/// Centers the client area without changing size, activation, z-order, or visual state.
+///
+/// Returns a native error when geometry cannot be queried or the move fails.
 pub fn center_window(handle: WindowHandle) -> Result<()> {
-    match window_state(handle.0) {
-        WindowState::Normal => center_normal_window(handle.0),
+    let monitor = native::get_monitor_info(native::get_monitor(handle.0))?;
+    let state = window_state(handle.0);
+    let content = content_rect(handle.0, state, &monitor)?;
+    let delta = native::rect_from_native(&monitor.rcWork).center() - content.center();
+    match state {
+        WindowState::Normal => {
+            let outer = native::rect_from_native(&native::get_window_rect(handle.0)?);
+            native::set_window_position(handle.0, outer.origin + delta)
+        },
         WindowState::Maximized | WindowState::Minimized => {
-            center_restored_window(handle.0)
+            let mut placement = native::get_window_placement(handle.0)?;
+            // A translation is identical in workspace and screen coordinates.
+            placement.rcNormalPosition = rect_into_native(
+                native::rect_from_native(&placement.rcNormalPosition).translate(delta));
+            native::set_window_placement(handle.0, &placement)
         },
     }
 }
 
-/// Resizes a window client area without changing its current visual state.
+/// Resizes the client area around its center without changing the visual state.
+///
+/// Returns an error for nonpositive dimensions, unavailable geometry, or failed mutation.
 pub fn resize_window(handle: WindowHandle, size: Size2D<i32>) -> Result<()> {
+    if size.width <= 0 || size.height <= 0 {
+        return Err(Error::new(E_INVALIDARG, "Client dimensions must be positive"));
+    }
     match window_state(handle.0) {
         WindowState::Normal => native::resize_client(handle.0, size),
         WindowState::Maximized | WindowState::Minimized => {
@@ -157,15 +176,7 @@ pub fn resize_window(handle: WindowHandle, size: Size2D<i32>) -> Result<()> {
     }
 }
 
-fn executable_display_name(path: &Path) -> String {
-    VersionInfo::from_file(path)
-        .map(|info| info.file_description)
-        .ok()
-        .filter(|name| !name.is_empty())
-        .or_else(|| path.file_name().map(|name| name.to_string_lossy().into_owned()))
-        .unwrap_or_else(|| "Unknown executable".to_owned())
-}
-
+/// Reads the visual state without changing it.
 fn window_state(handle: HWND) -> WindowState {
     if native::is_minimized(handle) {
         WindowState::Minimized
@@ -176,64 +187,164 @@ fn window_state(handle: HWND) -> WindowState {
     }
 }
 
-const fn box2d_from_rect(rect: &RECT) -> Box2D<i32> {
-    Box2D::new(
-        Point2D::new(rect.left, rect.top),
-        Point2D::new(rect.right, rect.bottom))
-}
-
-const fn box2d_into_rect(box2d: &Box2D<i32>) -> RECT {
-    RECT {
-        left: box2d.min.x,
-        top: box2d.min.y,
-        right: box2d.max.x,
-        bottom: box2d.max.y,
+/// Queries live geometry or derives restored geometry using standard frame offsets.
+fn content_rect(handle: HWND, state: WindowState, monitor: &MONITORINFO) -> Result<Rect<i32>> {
+    match state {
+        WindowState::Normal => native::get_content_rect(handle),
+        WindowState::Maximized | WindowState::Minimized => {
+            restored_content_rect(
+                &native::get_window_placement(handle)?.rcNormalPosition,
+                &native::get_normal_frame(handle)?,
+                native::get_placement_offset(handle, monitor)?)
+        },
     }
 }
 
-fn is_centered_raw(handle: HWND) -> Option<bool> {
-    let monitor_info = native::get_monitor_info_from_window(handle)?;
-    let window_rect = native::get_window_rect(handle).ok()?;
-    Some(box2d_from_rect(&monitor_info.rcWork).center() == box2d_from_rect(&window_rect).center())
+/// Removes standard frame offsets and converts workspace placement to screen coordinates.
+///
+/// Returns an error when the inferred frame is larger than the restored outer rectangle.
+fn restored_content_rect(
+    outer: &RECT,
+    frame: &RECT,
+    offset: Vector2D<i32>) -> Result<Rect<i32>> {
+    let size = native::rect_from_native(outer).size - native::rect_from_native(frame).size;
+    if size.width < 0 || size.height < 0 {
+        return Err(Error::new(E_INVALIDARG, "Restored frame exceeds the window size"));
+    }
+    Ok(Rect::new(
+        Point2D::new(outer.left - frame.left, outer.top - frame.top) + offset,
+        size))
 }
 
-fn is_restored_centered_raw(handle: HWND) -> Option<bool> {
-    let monitor_info = native::get_monitor_info_from_window(handle)?;
-    let placement = native::get_window_placement(handle).ok()?;
-    Some(
-        box2d_from_rect(&monitor_info.rcWork).center()
-            == box2d_from_rect(&placement.rcNormalPosition).center())
+/// Converts Euclid geometry back to a native rectangle in the same coordinate space.
+fn rect_into_native(rect: Rect<i32>) -> RECT {
+    RECT { left: rect.min_x(), top: rect.min_y(), right: rect.max_x(), bottom: rect.max_y() }
 }
 
-fn center_normal_window(handle: HWND) -> Result<()> {
-    let monitor_info = native::get_monitor_info_from_window(handle).ok_or(Error::empty())?;
-    let screen_center = box2d_from_rect(&monitor_info.rcWork).center();
-    let window_size = box2d_from_rect(&native::get_window_rect(handle)?).size();
-    native::set_window_position(handle, screen_center - window_size.to_vector() / 2)
-}
-
-fn center_restored_window(handle: HWND) -> Result<()> {
-    let monitor_info = native::get_monitor_info_from_window(handle).ok_or(Error::empty())?;
-    let mut placement = native::get_window_placement(handle)?;
-    let window_size = box2d_from_rect(&placement.rcNormalPosition).size();
-    let screen_center = box2d_from_rect(&monitor_info.rcWork).center();
-
-    // Deriving max from min preserves exact dimensions for odd window sizes.
-    let new_min = screen_center - window_size.to_vector() / 2;
-    let new_max = new_min + window_size.to_vector();
-    placement.rcNormalPosition = box2d_into_rect(&Box2D::new(new_min, new_max));
-    native::set_window_placement(handle, &placement)
-}
-
+/// Updates restored placement only, preserving the current show command and flags.
 fn resize_restored_window(handle: HWND, size: Size2D<i32>) -> Result<()> {
     let mut placement = native::get_window_placement(handle)?;
     let frame = native::get_normal_frame(handle)?;
-    let old_center = box2d_from_rect(&placement.rcNormalPosition).center();
-    let new_window_size = size + frame;
-
-    // Deriving max from min preserves exact dimensions for odd window sizes.
-    let new_min = old_center - new_window_size.to_vector() / 2;
-    let new_max = new_min + new_window_size.to_vector();
-    placement.rcNormalPosition = box2d_into_rect(&Box2D::new(new_min, new_max));
+    let content = restored_content_rect(&placement.rcNormalPosition, &frame, Vector2D::zero())?;
+    let resized = native::resize_rect(content, size)?;
+    let outer_size = native::checked_size_sum(size, native::rect_from_native(&frame).size)?;
+    placement.rcNormalPosition = rect_into_native(Rect::new(
+        resized.origin + Vector2D::new(frame.left, frame.top), outer_size));
     native::set_window_placement(handle, &placement)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use windows::core::w;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WS_OVERLAPPEDWINDOW,
+    };
+
+    use super::*;
+
+    /// Owns an invisible test window; no existing desktop windows are touched.
+    struct TestWindow(HWND);
+
+    impl TestWindow {
+        /// Uses the predefined STATIC class so no global class registration is needed.
+        fn new() -> Self {
+            // SAFETY: Both strings are static and the predefined class needs no instance or user data.
+            let handle = unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE::default(), w!("STATIC"), w!("TurboZone snapshot test"),
+                    WS_OVERLAPPEDWINDOW, 100, 100, 800, 600, None, None, None, None)
+            }.unwrap();
+            Self(handle)
+        }
+    }
+
+    impl Drop for TestWindow {
+        fn drop(&mut self) {
+            // SAFETY: This fixture owns the window and drops on its creating thread.
+            let _ = unsafe { DestroyWindow(self.0) };
+        }
+    }
+
+    #[test]
+    fn successful_capture_and_actions_use_the_same_client_geometry() {
+        let window = TestWindow::new();
+        let handle = WindowHandle(window.0);
+        let mut enumerator = WindowEnumerator::default();
+        let before = enumerator.snapshot_window(window.0).detail.unwrap();
+        resize_window(handle, Size2D::new(641, 481)).unwrap();
+        let resized = enumerator.snapshot_window(window.0).detail.unwrap();
+        assert_eq!(resized.content_rect.size, Size2D::new(641, 481));
+        assert_eq!(resized.content_rect.center(), before.content_rect.center());
+        center_window(handle).unwrap();
+        let centered = enumerator.snapshot_window(window.0).detail.unwrap();
+        assert!(centered.is_centered());
+        assert_eq!(centered.content_rect.size, resized.content_rect.size);
+        assert!(!centered.executable_path.is_empty() && !centered.executable_name.is_empty());
+    }
+
+    #[test]
+    fn monitor_query_is_cached_until_the_next_refresh() {
+        let mut enumerator = WindowEnumerator::default();
+        let calls = Cell::new(0);
+        let query = |_| {
+            calls.set(calls.get() + 1);
+            Ok(MONITORINFO::default())
+        };
+        enumerator.monitor_info(HMONITOR::default(), query).unwrap();
+        enumerator.monitor_info(HMONITOR::default(), query).unwrap();
+        assert_eq!(calls.get(), 1);
+        enumerator.monitor_info_cache.clear();
+        enumerator.monitor_info(HMONITOR::default(), query).unwrap();
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn failed_monitor_query_is_shared_within_the_refresh() {
+        let mut enumerator = WindowEnumerator::default();
+        enumerator.monitor_info(HMONITOR::default(), |_| {
+            Err(Error::new(E_INVALIDARG, "monitor disappeared"))
+        }).unwrap_err();
+        let error = enumerator.monitor_info(HMONITOR::default(), |_| {
+            panic!("failed query must also be cached");
+        }).unwrap_err();
+        assert!(error.to_string().contains("monitor disappeared"));
+    }
+
+    #[test]
+    fn invalid_window_retains_identity_and_independent_errors() {
+        let mut enumerator = WindowEnumerator::default();
+        let window = enumerator.snapshot_window(HWND::default());
+        assert_eq!(window.handle, WindowHandle::default());
+        let errors = window.detail.unwrap_err();
+        assert!(errors.iter().any(|error| error.starts_with("Client geometry:")));
+        assert!(errors.iter().any(|error| error.starts_with("Owning process:")));
+        assert!(!errors.iter().any(|error| error.starts_with("Executable path:")));
+    }
+
+    #[test]
+    fn restored_content_uses_frame_and_workspace_offsets() {
+        let outer = RECT { left: -1900, top: 20, right: -1220, bottom: 550 };
+        let frame = RECT { left: -8, top: -31, right: 8, bottom: 8 };
+        let content = restored_content_rect(&outer, &frame, Vector2D::new(0, 40)).unwrap();
+        assert_eq!(content, Rect::new(Point2D::new(-1892, 91), Size2D::new(664, 491)));
+    }
+
+    #[test]
+    fn restored_content_rejects_impossible_frame_geometry() {
+        let outer = RECT { left: 0, top: 0, right: 10, bottom: 10 };
+        let frame = RECT { left: -8, top: -31, right: 8, bottom: 8 };
+        assert_eq!(restored_content_rect(&outer, &frame, Vector2D::zero()).unwrap_err().code(), E_INVALIDARG);
+    }
+
+    #[test]
+    fn failed_query_does_not_hide_other_query_results() {
+        let mut errors = Vec::new();
+        let failed = record_failure::<u32>(
+            Err(Error::new(E_INVALIDARG, "unavailable")), "Monitor", &mut errors);
+        let successful = record_failure(Ok(42), "Process", &mut errors);
+        assert_eq!((failed, successful), (None, Some(42)));
+        assert_eq!(errors.len(), 1);
+    }
 }

@@ -1,161 +1,120 @@
-/** A client-area size in physical pixels. */
+/** Positive integer client-area dimensions in physical pixels. */
 export type Size = [width: number, height: number];
 
 /**
  * A lowercase TOML-style dotted bare key.
- *
  * Runtime validation applies: /^[a-z0-9_-]+(?:\.[a-z0-9_-]+)*$/
  */
 export type RuleName = string;
 
-/** The complete top-level configuration shape accepted by M1. */
+/** Complete configuration accepted by M1; omitted rules means an empty list. */
 export interface Config {
     /** Rules retained in declaration order. */
-    rules: Rule[];
+    rules?: ConfigRule[];
 }
 
-/** One complete rule accepted by M1. */
-export interface Rule {
-    /** A required unique identifier used in persistent UI section identity. */
+/** One rule pairing constraints with enabled native actions. */
+export interface ConfigRule {
+    /** Required unique identifier, also used in persistent UI section identity. */
     name: RuleName;
-    /** An optional user-facing section name, trimmed while loading. */
+    /** Trimmed display name; omitted or blank values fall back to name. */
     description?: string;
-
-    /**
-     * Moving is disabled when omitted or false. `true` and `"center"` both
-     * enable centering.
-     */
-    move?: boolean | "center";
-
-    /**
-     * Resizing is disabled when omitted or false. `true` enables the built-in
-     * selector without a primary target. A size enables resizing and supplies
-     * the primary target.
-     */
-    resize?:
-        | boolean
-        | Size
-        | {
-            /** Whether resize controls are available. */
-            enabled: boolean;
-            /** An optional target width, used only when target_height is also present. */
-            target_width?: number;
-            /** An optional target height, used only when target_width is also present. */
-            target_height?: number;
-
-            /** An optional minimum width offered by the resize-size selector. */
-            min_width?: number;
-            /** An optional minimum height offered by the resize-size selector. */
-            min_height?: number;
-            /** An optional maximum width offered by the resize-size selector. */
-            max_width?: number;
-            /** An optional maximum height offered by the resize-size selector. */
-            max_height?: number;
-        };
-
-    /** Constraints used to select the one winning rule for a window. */
-    match?: {
-        /** Higher priorities win; zero is used when omitted. */
-        priority?: number;
-        /** Optional executable constraints, ANDed when both are present. */
-        executable?: {
-            /** A normalized executable-path matcher. */
-            path?: StringMatcher;
-            /** A case-insensitive executable-filename matcher. */
-            name?: StringMatcher;
-        };
-        /** Optional window constraints, ANDed when several are present. */
-        window?: {
-            /** A case-sensitive window-title matcher. */
-            title?: StringMatcher;
-            /** Inclusive minimum client-area size required to match. */
-            min_size?: Size;
-            /** Inclusive maximum client-area size required to match. */
-            max_size?: Size;
-        };
-    };
+    /** Case-insensitive executable constraints; all supplied constraints are ANDed. */
+    executable?: ExecutableConstraint<Pattern>;
+    /** Case-sensitive title and inclusive client-size constraints. */
+    window?: WindowConstraint<Pattern>;
+    /** Higher priorities win; defaults to zero, with declaration order breaking ties. */
+    priority?: number;
+    /** Enables client-area centering; defaults to false. */
+    relocate?: boolean;
+    /** Disabled when omitted or false; true enables an unbounded selector. */
+    resize?: ResizeRule;
 }
 
-/**
- * The string-matcher shape accepted by M1. A bare string is always exact. The
- * component form ANDs every supplied component and requires at least one
- * non-empty component.
- */
-export type StringMatcher =
-    | string
-    | { exact: string }
+/** Exact-only resizing or a selector with optional default and bounds. */
+export type ResizeRule =
+    | boolean
     | {
+        /** Sole resize target; no selector is offered. */
+        exact: Size;
+        default?: never;
+        min?: never;
+        max?: never;
+    }
+    | (ResizeLimits & { exact?: never });
+
+/** Selector settings; an empty object enables an unbounded selector. */
+export interface ResizeLimits {
+    /** Primary target, independent of min/max and not required to be a manifest size. */
+    default?: Size;
+    /** Inclusive minimum menu choice. */
+    min?: Size;
+    /** Inclusive maximum menu choice; neither axis may be smaller than min. */
+    max?: Size;
+}
+
+/** Generic serialized or compiled executable constraints. */
+export interface ExecutableConstraint<S> {
+    /** Case-insensitive executable filename. */
+    name?: S;
+    /** Case-insensitive executable path; configured patterns must use forward slashes. */
+    path?: S;
+}
+
+/** Generic serialized or compiled window constraints. */
+export interface WindowConstraint<S> {
+    /** Case-sensitive title. */
+    title?: S;
+    /** Inclusive minimum controllable client-area size required to match. */
+    min?: Size;
+    /** Inclusive maximum controllable client-area size required to match. */
+    max?: Size;
+}
+
+/** Strings match exactly; partial objects AND every nonempty component. */
+export type Pattern =
+    | string
+    | {
+        /** Literal prefix; empty means omitted. */
         starts_with?: string;
+        /** Literal suffix; empty means omitted. */
         ends_with?: string;
+        /** Literal substring; empty means omitted. */
         contains?: string;
     };
 
-/** Future matcher extensions which are deliberately not accepted by M1. */
-export type StringMatcherV2 =
-    | StringMatcher
-    | { regex: string }
-    | { glob: string };
+// Partial patterns require at least one nonempty component.
+// Regexes, globs, exact-string objects, and unknown properties are rejected.
 
-// === Validated runtime shape ===
+// === Conceptual runtime shape (not serialized configuration) ===
 
-/** A string pattern paired with the predicate selected while loading. */
-export interface RuntimeStringMatcher {
+/** Owned pattern plus the predicate selected during validated compilation. */
+export interface PatternMatcher {
     pattern: string;
     predicate: (input: string, pattern: string) => boolean;
 }
 
-/** A validated rule with defaults resolved and string matchers compiled. */
+/** A validated rule with defaults resolved and patterns compiled. */
 export interface RuntimeRule {
-    /** The unchanged stable rule identifier. */
+    /** Stable rule identifier. */
     name: RuleName;
-    /** The optional trimmed user-facing section name. */
+    /** Trimmed display name, absent if blank. */
     description?: string;
-
-    /** Fully resolved move behavior. */
-    move: false | "center";
-
-    /** Fully resolved resize behavior. */
-    resize: {
-        /** Whether resize controls are available. */
-        enabled: boolean;
-        /** A fixed target width, present only together with target_height. */
-        target_width?: number;
-        /** A fixed target height, present only together with target_width. */
-        target_height?: number;
-        /** An optional lower bound for offered widths. */
-        min_width?: number;
-        /** An optional lower bound for offered heights. */
-        min_height?: number;
-        /** An optional upper bound for offered widths. */
-        max_width?: number;
-        /** An optional upper bound for offered heights. */
-        max_height?: number;
-    };
-
-    /** Fully resolved matching behavior. */
-    match: {
-        /** The explicit or default matching priority. */
-        priority: number;
-        /** Optional case-insensitive executable predicates. */
-        executable?: {
-            /** Name predicates which must all succeed. */
-            name: RuntimeStringMatcher[];
-            /** Path predicates which must all succeed. */
-            path: RuntimeStringMatcher[];
-        };
-        /** Optional case-sensitive window predicates and inclusive size bounds. */
-        window?: {
-            /** Title predicates which must all succeed. */
-            title: RuntimeStringMatcher[];
-            /** Inclusive minimum client-area size. */
-            min_size?: Size;
-            /** Inclusive maximum client-area size. */
-            max_size?: Size;
-        };
-    };
+    /** Compiled executable predicates; every predicate must succeed. */
+    executable_constraints: ExecutableConstraint<PatternMatcher[]>;
+    /** Compiled title predicates and validated client-size bounds. */
+    window_constraints: WindowConstraint<PatternMatcher[]>;
+    /** Explicit or default matching priority. */
+    priority: number;
+    /** Whether centering controls are available. */
+    relocate: boolean;
+    /** Exact-only target, mutually exclusive with resize_limits. */
+    resize_exact?: Size;
+    /** Selector settings; absent for disabled and exact-only modes. */
+    resize_limits?: ResizeLimits;
 }
 
-/** Runtime rules remain in source order; no secondary match-order structure exists. */
+/** Rules stay in source order, without a separate priority index. */
 export interface RuntimeConfig {
     rules: RuntimeRule[];
 }
@@ -163,19 +122,14 @@ export interface RuntimeConfig {
 /*
 Matching and UI semantics:
 
-- M1 accepts the complete Rule and StringMatcher formats above.
-- StringMatcherV2 remains reserved for a future implementation.
-- Bare matcher strings and explicit exact matchers are exact.
-- Executable paths and names compare case-insensitively; titles compare case-sensitively.
-- Every configured constraint in a rule is ANDed.
-- Every window with an executable path is checked against every rule.
-- The highest-priority matching rule wins; source order breaks equal-priority ties.
-- Source order also determines normal-page section display order.
-- Each matched UI section is identified by (rule.name, normalized lowercase path).
-- A matched rule with no enabled actions still produces a read-only section.
-- A window with a path but no matching rule becomes unmatched.
-- A window without an executable path becomes unknown and is never matched.
-- Unmatched and unknown windows appear on one dedicated replacement page with no actions.
-- An incomplete one-dimensional resize target emits a warning and is ignored.
-- There is no configurable section abstraction and no rule inheritance.
+1. Only snapshots with Ok(WindowDetail) participate in matching and native actions.
+2. All constraints in a rule are ANDed; highest priority wins, then source order.
+3. Executable candidates are normalized and lowercased once per snapshot.
+4. Titles retain their original case; native path normalization preserves display casing.
+5. A matched section is identified by (rule.name, normalized lowercase executable path).
+6. An actionless matched rule remains an intentional read-only section.
+7. Complete unmatched windows and failed-detail windows have separate diagnostic categories.
+8. Failed-detail snapshots retain handle, title, state, and errors; the next refresh retries.
+9. Size tuples must contain exactly two positive integers; no partial target is accepted.
+10. No configurable section abstraction, inheritance, or legacy schema aliases exist.
 */

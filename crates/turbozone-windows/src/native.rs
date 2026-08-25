@@ -4,12 +4,13 @@ use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt as _;
 use std::path::PathBuf;
 
-use euclid::default::{Point2D, Size2D};
-use windows::core::{BOOL, PWSTR, Result};
+use euclid::default::{Point2D, Rect, Size2D, Vector2D};
+use windows::core::{BOOL, Error, PWSTR, Result};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::Threading::*;
+use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 /// Enumerates every top-level desktop window handle.
@@ -91,10 +92,18 @@ fn get_client_rect(hwnd: HWND) -> Result<RECT> {
     Ok(rect)
 }
 
-/// Reads the live client-area size in physical pixels.
-pub fn get_client_size(hwnd: HWND) -> Result<Size2D<i32>> {
+/// Reads live client geometry in screen coordinates, failing if either query fails.
+pub fn get_content_rect(hwnd: HWND) -> Result<Rect<i32>> {
     let rect = get_client_rect(hwnd)?;
-    Ok(Size2D::new(rect.right - rect.left, rect.bottom - rect.top))
+    let mut origin = POINT { x: rect.left, y: rect.top };
+    // SAFETY: The output point is valid and no pointer is retained.
+    if !unsafe { ClientToScreen(hwnd, &raw mut origin) }.as_bool() {
+        // ClientToScreen does not document GetLastError; do not report a stale code.
+        return Err(Error::new(E_FAIL, "ClientToScreen failed"));
+    }
+    Ok(Rect::new(
+        Point2D::new(origin.x, origin.y),
+        Size2D::new(rect.right - rect.left, rect.bottom - rect.top)))
 }
 
 /// Reads a lossy UTF-8 window title, returning an empty string on query failure.
@@ -110,24 +119,24 @@ pub fn get_window_text(hwnd: HWND) -> String {
         .into_owned()
 }
 
-/// Reads the owning process ID, returning zero on query failure.
-pub fn get_process_id(hwnd: HWND) -> u32 {
+/// Reads the owning process ID, returning the native error if the window is gone.
+pub fn get_process_id(hwnd: HWND) -> Result<u32> {
     let mut process_id = 0;
     // SAFETY: The output process ID remains valid for the call.
-    unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut process_id)); }
-    process_id
+    if unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut process_id)) } == 0 {
+        return Err(Error::from_thread());
+    }
+    Ok(process_id)
 }
 
 /// Reads a process executable path when limited-information access is available.
-pub fn get_executable_path(process_id: u32) -> Option<PathBuf> {
+/// Returns access or query errors without discarding the native diagnostic.
+pub fn get_executable_path(process_id: u32) -> Result<PathBuf> {
     // SAFETY: OpenProcess receives a PID returned by Windows. The query buffer
     // remains valid, and every successfully opened handle is closed.
     #[expect(clippy::multiple_unsafe_ops_per_block, reason = "one Win32 handle lifetime")]
     unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id).ok()?;
-        if handle.is_invalid() {
-            return None;
-        }
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id)?;
 
         // QueryFullProcessImageNameW supports long paths; this is the documented
         // maximum Win32 path length including the terminator.
@@ -139,25 +148,30 @@ pub fn get_executable_path(process_id: u32) -> Option<PathBuf> {
             PWSTR(buffer.as_mut_ptr()),
             &raw mut length);
         let _ = CloseHandle(handle);
-        result.ok()?;
+        result?;
 
-        Some(PathBuf::from(OsString::from_wide(&buffer[..length as usize])))
+        Ok(PathBuf::from(OsString::from_wide(&buffer[..length as usize])))
     }
 }
 
-/// Reads the nearest monitor work area, falling back to the primary monitor.
-pub fn get_monitor_info_from_window(hwnd: HWND) -> Option<MONITORINFO> {
-    // SAFETY: MONITOR_DEFAULTTOPRIMARY guarantees a fallback monitor.
-    let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY) };
+/// Finds the most-overlapped monitor, falling back to the primary when off-screen.
+pub fn get_monitor(hwnd: HWND) -> HMONITOR {
+    // SAFETY: MonitorFromWindow only queries the handle and retains no pointers.
+    unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY) }
+}
+
+/// Reads monitor geometry. Failure has no documented extended Win32 error code.
+pub fn get_monitor_info(monitor: HMONITOR) -> Result<MONITORINFO> {
     let mut info = MONITORINFO {
         cbSize: size_of::<MONITORINFO>() as u32,
         ..Default::default()
     };
 
     // SAFETY: cbSize is initialized and the output pointer remains valid.
-    unsafe { GetMonitorInfoW(monitor, &raw mut info) }
-        .as_bool()
-        .then_some(info)
+    if !unsafe { GetMonitorInfoW(monitor, &raw mut info) }.as_bool() {
+        return Err(Error::new(E_FAIL, "GetMonitorInfoW failed"));
+    }
+    Ok(info)
 }
 
 /// Reads live and restored window-placement state.
@@ -179,30 +193,57 @@ pub fn set_window_placement(
     unsafe { SetWindowPlacement(hwnd, placement) }
 }
 
-/// Computes normal-state frame overhead from the window styles.
-pub fn get_normal_frame(hwnd: HWND) -> Result<Size2D<i32>> {
-    // SAFETY: GetWindowLongW only queries the supplied handle.
-    #[expect(clippy::multiple_unsafe_ops_per_block, reason = "paired style queries")]
-    let (style, extended_style) = unsafe {(
-        WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32),
-        WINDOW_EX_STYLE(GetWindowLongW(hwnd, GWL_EXSTYLE) as u32),
-    )};
+/// Queries a style word, distinguishing a valid zero from native failure.
+fn get_window_style(hwnd: HWND, index: WINDOW_LONG_PTR_INDEX) -> Result<u32> {
+    // SAFETY: These calls use only thread-local error state and query the handle.
+    #[expect(clippy::multiple_unsafe_ops_per_block, reason = "one last-error transaction")]
+    unsafe {
+        SetLastError(ERROR_SUCCESS);
+        let value = GetWindowLongW(hwnd, index);
+        if value == 0 && GetLastError() != ERROR_SUCCESS {
+            return Err(Error::from_thread());
+        }
+        Ok(value as u32)
+    }
+}
+
+/// Computes standard restored-frame offsets around a zero-sized client rectangle.
+/// Custom non-client layouts and wrapped menus cannot be inferred from styles.
+pub fn get_normal_frame(hwnd: HWND) -> Result<RECT> {
+    let style = WINDOW_STYLE(get_window_style(hwnd, GWL_STYLE)?) & !(WS_MINIMIZE | WS_MAXIMIZE);
+    let extended_style = WINDOW_EX_STYLE(get_window_style(hwnd, GWL_EXSTYLE)?);
     // SAFETY: GetMenu only queries the supplied handle.
     let has_menu = unsafe { !GetMenu(hwnd).is_invalid() };
+    // SAFETY: GetDpiForWindow only queries the supplied handle.
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    if dpi == 0 {
+        return Err(Error::new(E_FAIL, "GetDpiForWindow failed"));
+    }
     let mut rect = RECT::default();
 
     // SAFETY: The output RECT is valid, and styles came from the same window.
-    unsafe { AdjustWindowRectEx(&raw mut rect, style, has_menu, extended_style) }?;
-    Ok(Size2D::new(rect.right - rect.left, rect.bottom - rect.top))
+    unsafe { AdjustWindowRectExForDpi(&raw mut rect, style, has_menu, extended_style, dpi) }?;
+    Ok(rect)
 }
 
-/// Computes restored client size from placement and normal frame overhead.
-pub fn get_restored_client_size(hwnd: HWND) -> Result<Size2D<i32>> {
-    let placement = get_window_placement(hwnd)?;
-    let frame = get_normal_frame(hwnd)?;
-    let rect = placement.rcNormalPosition;
-    let window_size = Size2D::new(rect.right - rect.left, rect.bottom - rect.top);
-    Ok(window_size - frame)
+/// Returns the offset from workspace placement coordinates to screen coordinates.
+/// Tool windows already use screen coordinates and need no offset.
+pub fn get_placement_offset(hwnd: HWND, monitor: &MONITORINFO) -> Result<Vector2D<i32>> {
+    let style = WINDOW_EX_STYLE(get_window_style(hwnd, GWL_EXSTYLE)?);
+    Ok(if style.contains(WS_EX_TOOLWINDOW) {
+        Vector2D::zero()
+    } else {
+        Vector2D::new(
+            monitor.rcWork.left - monitor.rcMonitor.left,
+            monitor.rcWork.top - monitor.rcMonitor.top)
+    })
+}
+
+/// Converts a native rectangle without changing its coordinate space.
+pub const fn rect_from_native(rect: &RECT) -> Rect<i32> {
+    Rect::new(
+        Point2D::new(rect.left, rect.top),
+        Size2D::new(rect.right - rect.left, rect.bottom - rect.top))
 }
 
 /// Moves a live window without resizing, activating, or changing z-order.
@@ -222,17 +263,11 @@ pub fn set_window_position(hwnd: HWND, position: Point2D<i32>) -> Result<()> {
 
 /// Resizes a live client area around its existing center.
 pub fn resize_client(hwnd: HWND, size: Size2D<i32>) -> Result<()> {
-    let window_rect = get_window_rect(hwnd)?;
-    let client_rect = get_client_rect(hwnd)?;
-    let old_position = Point2D::new(window_rect.left, window_rect.top);
-    let old_window_size = Size2D::new(
-        window_rect.right - window_rect.left,
-        window_rect.bottom - window_rect.top);
-    let old_client_size = Size2D::new(
-        client_rect.right - client_rect.left,
-        client_rect.bottom - client_rect.top);
-    let new_window_size = old_window_size + size - old_client_size;
-    let new_position = old_position - (new_window_size - old_window_size).to_vector() / 2;
+    let outer = rect_from_native(&get_window_rect(hwnd)?);
+    let content = get_content_rect(hwnd)?;
+    let resized = resize_rect(content, size)?;
+    let new_window_size = checked_size_sum(size, outer.size - content.size)?;
+    let new_position = resized.origin + (outer.origin - content.origin);
 
     // SAFETY: Geometry is derived from successful Win32 queries; no pointers
     // are retained and the flags preserve activation and z-order.
@@ -245,5 +280,52 @@ pub fn resize_client(hwnd: HWND, size: Size2D<i32>) -> Result<()> {
             new_window_size.width,
             new_window_size.height,
             SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER)
+    }
+}
+
+/// Adds frame overhead without allowing a large configured target to wrap.
+pub fn checked_size_sum(size: Size2D<i32>, overhead: Size2D<i32>) -> Result<Size2D<i32>> {
+    let width = size.width.checked_add(overhead.width);
+    let height = size.height.checked_add(overhead.height);
+    match (width, height) {
+        (Some(width), Some(height)) if width > 0 && height > 0 => Ok(Size2D::new(width, height)),
+        _ => Err(Error::new(E_INVALIDARG, "Window dimensions exceed the native coordinate range")),
+    }
+}
+
+/// Resizes around the integer center, preserving odd sizes and rejecting coordinate overflow.
+pub fn resize_rect(rect: Rect<i32>, size: Size2D<i32>) -> Result<Rect<i32>> {
+    let x = i64::from(rect.origin.x) + i64::from(rect.size.width / 2) - i64::from(size.width / 2);
+    let y = i64::from(rect.origin.y) + i64::from(rect.size.height / 2) - i64::from(size.height / 2);
+    if size.width <= 0 || size.height <= 0
+        || x < i64::from(i32::MIN) || x + i64::from(size.width) > i64::from(i32::MAX)
+        || y < i64::from(i32::MIN) || y + i64::from(size.height) > i64::from(i32::MAX) {
+        return Err(Error::new(E_INVALIDARG, "Client rectangle exceeds the native coordinate range"));
+    }
+    Ok(Rect::new(Point2D::new(x as i32, y as i32), size))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resize_preserves_integer_center_across_odd_dimensions() {
+        let old = Rect::new(Point2D::new(-1000, 123), Size2D::new(641, 481));
+        let new = resize_rect(old, Size2D::new(800, 600)).unwrap();
+        assert_eq!((new.center(), new.size), (old.center(), Size2D::new(800, 600)));
+    }
+
+    #[test]
+    fn resize_rejects_coordinate_overflow() {
+        let old = Rect::new(Point2D::new(i32::MAX - 10, 0), Size2D::new(10, 10));
+        assert_eq!(resize_rect(old, Size2D::new(100, 100)).unwrap_err().code(), E_INVALIDARG);
+    }
+
+    #[test]
+    fn frame_overhead_cannot_overflow_a_large_resize_target() {
+        assert_eq!(
+            checked_size_sum(Size2D::new(i32::MAX, 100), Size2D::new(16, 39)).unwrap_err().code(),
+            E_INVALIDARG);
     }
 }

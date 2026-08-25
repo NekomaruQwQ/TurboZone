@@ -10,8 +10,7 @@ edition = { workspace = true }
 license = { workspace = true }
 
 [dependencies]
-euclid = { workspace = true }
-log = { workspace = true }
+euclid = { workspace = true, features = ["serde"] }
 serde = { workspace = true }
 thiserror = { workspace = true }
 

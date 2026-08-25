@@ -13,5 +13,4 @@ license = { workspace = true }
 turbozone-core = { workspace = true }
 
 euclid = { workspace = true }
-win32-version-info = { workspace = true }
 windows = { workspace = true }
