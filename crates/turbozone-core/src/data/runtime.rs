@@ -10,13 +10,13 @@ pub struct RuntimeRule {
     /// Trimmed user-facing section name, when nonempty.
     pub description: Option<String>,
 
-    // --- Constraints ----
+    // --- Filters ----
     /// Predicates applied to program metadata.
-    pub program_constraints:
-        ProgramConstraint<Vec<PatternMatcher>>,
+    pub program_filters:
+        ProgramFilter<Vec<PatternMatcher>>,
     /// Predicates applied to window metadata.
-    pub window_constraints:
-        WindowConstraint<Vec<PatternMatcher>>,
+    pub window_filters:
+        WindowFilter<Vec<PatternMatcher>>,
     /// Explicit or default matching priority.
     pub priority: i64,
 
@@ -30,7 +30,7 @@ pub struct RuntimeRule {
 }
 
 impl RuntimeRule {
-    /// Returns whether every configured constraint accepts the supplied window data.
+    /// Returns whether every configured filter accepts the supplied window data.
     ///
     /// Program names and paths must already be lowercased. Window titles remain
     /// case-sensitive and must retain their native casing.
@@ -45,7 +45,7 @@ impl RuntimeRule {
     }
 
     fn matches_program(&self, name: Option<&str>, path: &str) -> bool {
-        let matcher = &self.program_constraints;
+        let matcher = &self.program_filters;
         let name_matches = matcher.name.as_ref().is_none_or(|predicates| {
             name.is_some_and(|name| predicates.iter().all(|predicate| predicate.matches(name)))
         });
@@ -55,7 +55,7 @@ impl RuntimeRule {
     }
 
     fn matches_window(&self, title: &str, size: Option<Size2D<i32>>) -> bool {
-        let matcher = &self.window_constraints;
+        let matcher = &self.window_filters;
         if !matcher.title.as_ref().is_none_or(|predicates| {
             predicates.iter().all(|predicate| predicate.matches(title))
         }) {

@@ -13,16 +13,16 @@ export interface Config {
     rules?: ConfigRule[];
 }
 
-/** One rule pairing constraints with enabled native actions. */
+/** One rule pairing filters with enabled native actions. */
 export interface ConfigRule {
     /** Required unique identifier, also used in persistent UI section identity. */
     name: RuleName;
     /** Trimmed display name; omitted or blank values fall back to name. */
     description?: string;
-    /** Case-insensitive program constraints; all supplied constraints are ANDed. */
-    program?: ProgramConstraint<Pattern>;
-    /** Case-sensitive title and inclusive client-size constraints. */
-    window?: WindowConstraint<Pattern>;
+    /** Case-insensitive program filters; all supplied filters are ANDed. */
+    program?: ProgramFilter<Pattern>;
+    /** Case-sensitive title and inclusive client-size filters. */
+    window?: WindowFilter<Pattern>;
     /** Higher priorities win; defaults to zero, with declaration order breaking ties. */
     priority?: number;
     /** Enables client-area centering; defaults to false. */
@@ -53,16 +53,16 @@ export interface ResizeLimits {
     max?: Size;
 }
 
-/** Generic serialized or compiled program constraints. */
-export interface ProgramConstraint<S> {
+/** Generic serialized or compiled program filters. */
+export interface ProgramFilter<S> {
     /** Case-insensitive program filename. */
     name?: S;
     /** Case-insensitive program path; configured patterns must use forward slashes. */
     path?: S;
 }
 
-/** Generic serialized or compiled window constraints. */
-export interface WindowConstraint<S> {
+/** Generic serialized or compiled window filters. */
+export interface WindowFilter<S> {
     /** Case-sensitive title. */
     title?: S;
     /** Inclusive minimum controllable client-area size required to match. */
@@ -101,9 +101,9 @@ export interface RuntimeRule {
     /** Trimmed display name, absent if blank. */
     description?: string;
     /** Compiled program predicates; every predicate must succeed. */
-    program_constraints: ProgramConstraint<PatternMatcher[]>;
+    program_filters: ProgramFilter<PatternMatcher[]>;
     /** Compiled title predicates and validated client-size bounds. */
-    window_constraints: WindowConstraint<PatternMatcher[]>;
+    window_filters: WindowFilter<PatternMatcher[]>;
     /** Explicit or default matching priority. */
     priority: number;
     /** Whether centering controls are available. */
@@ -123,7 +123,7 @@ export interface RuntimeConfig {
 Matching and UI semantics:
 
 1. Only snapshots with Ok(WindowDetail) participate in matching and native actions.
-2. All constraints in a rule are ANDed; highest priority wins, then source order.
+2. All filters in a rule are ANDed; highest priority wins, then source order.
 3. Program candidates are normalized and lowercased once per snapshot.
 4. Titles retain their original case; native path normalization preserves display casing.
 5. A matched section is identified by (rule.name, normalized lowercase program path).

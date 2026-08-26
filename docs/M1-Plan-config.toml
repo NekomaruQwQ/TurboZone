@@ -1,5 +1,5 @@
 # M1 accepts ConfigRule and Pattern from M1-Plan-config.d.ts.
-# Strings are exact; all constraints within one rule are ANDed.
+# Strings are exact; all filters within one rule are ANDed.
 # Sizes are [width, height] arrays of positive physical-pixel integers.
 
 [[rules]]

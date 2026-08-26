@@ -6,8 +6,8 @@ use euclid::default::Size2D;
 use thiserror::Error;
 
 use crate::{
-    Config, ConfigRule, Pattern, PatternMatcher, ProgramConstraint, ResizeLimits,
-    ResizeRule, RuntimeConfig, RuntimeRule, WindowConstraint,
+    Config, ConfigRule, Pattern, PatternMatcher, ProgramFilter, ResizeLimits,
+    ResizeRule, RuntimeConfig, RuntimeRule, WindowFilter,
 };
 
 impl Config {
@@ -96,8 +96,8 @@ fn compile_rule(index: usize, rule: ConfigRule) -> Result<RuntimeRule, ConfigErr
     let description = rule.description.trim().to_owned();
     let description = (!description.is_empty()).then_some(description);
     let (resize_exact, resize_limits) = compile_resize(rule.resize, &prefix)?;
-    let program_constraints = compile_program_match(rule.program, &prefix)?;
-    let window_constraints = compile_window_match(rule.window, &prefix)?;
+    let program_filters = compile_program_match(rule.program, &prefix)?;
+    let window_filters = compile_window_match(rule.window, &prefix)?;
 
     Ok(RuntimeRule {
         name: rule.name,
@@ -105,8 +105,8 @@ fn compile_rule(index: usize, rule: ConfigRule) -> Result<RuntimeRule, ConfigErr
         relocate: rule.relocate,
         resize_exact,
         resize_limits,
-        program_constraints,
-        window_constraints,
+        program_filters,
+        window_filters,
         priority: rule.priority,
     })
 }
@@ -134,8 +134,8 @@ fn compile_resize(
 
 /// Compiles case-insensitive program patterns without normalizing config paths.
 fn compile_program_match(
-    matcher: ProgramConstraint<Pattern>,
-    prefix: &str) -> Result<ProgramConstraint<Vec<PatternMatcher>>, ConfigError> {
+    matcher: ProgramFilter<Pattern>,
+    prefix: &str) -> Result<ProgramFilter<Vec<PatternMatcher>>, ConfigError> {
     let name = matcher.name
         .map(|matcher| compile_string_matcher(
             matcher,
@@ -150,13 +150,13 @@ fn compile_program_match(
             false,
             true))
         .transpose()?;
-    Ok(ProgramConstraint { name, path })
+    Ok(ProgramFilter { name, path })
 }
 
 /// Compiles case-sensitive title patterns and validates inclusive size bounds.
 fn compile_window_match(
-    matcher: WindowConstraint<Pattern>,
-    prefix: &str) -> Result<WindowConstraint<Vec<PatternMatcher>>, ConfigError> {
+    matcher: WindowFilter<Pattern>,
+    prefix: &str) -> Result<WindowFilter<Vec<PatternMatcher>>, ConfigError> {
     let title = matcher.title
         .map(|matcher| compile_string_matcher(
             matcher,
@@ -165,7 +165,7 @@ fn compile_window_match(
             false))
         .transpose()?;
     validate_size_bounds(matcher.min, matcher.max, &format!("{prefix}.window"))?;
-    Ok(WindowConstraint {
+    Ok(WindowFilter {
         title,
         min: matcher.min,
         max: matcher.max,
@@ -562,7 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn size_constrained_rule_rejects_missing_client_size() {
+    fn size_filtered_rule_rejects_missing_client_size() {
         let runtime = parse(r#"
             [[rules]]
             name = "large"
@@ -696,7 +696,7 @@ mod tests {
     }
 
     #[test]
-    fn config_round_trip_preserves_all_resize_modes_and_generic_constraints() {
+    fn config_round_trip_preserves_all_resize_modes_and_generic_filters() {
         let config = parse(r#"
             [[rules]]
             name = "disabled"
@@ -732,11 +732,11 @@ mod tests {
     }
 
     #[test]
-    fn absent_constraints_remain_absent_after_compilation() {
+    fn absent_filters_remain_absent_after_compilation() {
         let runtime = parse("[[rules]]\nname = 'app'").validate().unwrap();
         let rule = &runtime.rules[0];
-        assert!(rule.program_constraints.name.is_none()
-            && rule.program_constraints.path.is_none()
-            && rule.window_constraints.title.is_none());
+        assert!(rule.program_filters.name.is_none()
+            && rule.program_filters.path.is_none()
+            && rule.window_filters.title.is_none());
     }
 }

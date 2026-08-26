@@ -54,7 +54,7 @@ impl Card {
     }
 }
 
-/// One-pixel separator constrained to the current card width.
+/// One-pixel separator limited to the current card width.
 pub struct Separator;
 
 impl Widget for Separator {

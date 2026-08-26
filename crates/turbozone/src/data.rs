@@ -88,7 +88,7 @@ impl SectionedWindows {
 #[cfg(test)]
 mod tests {
     use euclid::default::{Point2D, Rect, Size2D};
-    use turbozone_core::{Config, ConfigRule, Pattern, WindowConstraint, WindowDetail, WindowState};
+    use turbozone_core::{Config, ConfigRule, Pattern, WindowDetail, WindowFilter, WindowState};
 
     use super::*;
 
@@ -112,7 +112,7 @@ mod tests {
     fn classification_keeps_matched_unmatched_and_failed_windows_disjoint() {
         let config = Config { rules: vec![ConfigRule {
             name: "app".to_owned(),
-            window: WindowConstraint { title: Some(Pattern::Exact("Matched".to_owned())), ..Default::default() },
+            window: WindowFilter { title: Some(Pattern::Exact("Matched".to_owned())), ..Default::default() },
             ..Default::default()
         }] }.validate().unwrap();
         let mut failed = window("Failed");
@@ -129,7 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_details_never_match_even_an_unconstrained_rule() {
+    fn failed_details_never_match_even_an_unfiltered_rule() {
         let config = Config { rules: vec![ConfigRule { name: "all".to_owned(), ..Default::default() }] }
             .validate().unwrap();
         let mut failed = window("App");

@@ -10,7 +10,7 @@ Each `ConfigRule` contains:
 
 1. A required unique `name`.
 2. An optional display `description`, trimmed while loading; blank uses the rule name.
-3. Generic `program` and `window` constraints containing serialized `Pattern` values.
+3. Generic `program` and `window` filters containing serialized `Pattern` values.
 4. A `priority` that defaults to zero.
 5. A `relocate` centering permission that defaults to false.
 6. A `resize` rule that defaults to false.
@@ -60,14 +60,14 @@ objects, regexes, and globs are not accepted.
 
 Program paths and names compare case-insensitively. Configured patterns are lowercased once
 during validation; native candidates are lowercased once per snapshot. Titles stay case-sensitive.
-Runtime `ProgramConstraint<Vec<PatternMatcher>>` and `WindowConstraint<Vec<PatternMatcher>>`
-retain absent constraints as `None`. Each matcher pairs an owned string with a function pointer.
+Runtime `ProgramFilter<Vec<PatternMatcher>>` and `WindowFilter<Vec<PatternMatcher>>`
+retain absent filters as `None`. Each matcher pairs an owned string with a function pointer.
 There are no regex engines, trait objects, or duplicate unchecked compilation paths.
 
 `RuntimeConfig` keeps one source-order vector. For each window with complete details:
 
 1. Scan all rules in source order.
-2. AND all configured constraints.
+2. AND all configured filters.
 3. Replace the winner only when a matching rule has strictly greater priority.
 4. Equal priority therefore favors the first rule.
 
@@ -107,14 +107,14 @@ snapshot. The cache clears before each new enumeration, so work-area changes and
 removal are not carried across refreshes. Native actions query current geometry separately.
 Failed details are retried by the next scheduled snapshot, without extra retry loops.
 
-## Size constraints
+## Size filters
 
 `window.min` and `window.max` filter rule eligibility using `content_rect.size`.
 They are independent of `resize.min` and `resize.max`, which filter selector choices.
 
 Bounds are inclusive on both axes, positive when present, and otherwise unrestricted. Normal
 windows use live client size; minimized/maximized windows use restored client size. Any
-detail-query failure excludes the whole snapshot from matching, even for unconstrained rules.
+detail-query failure excludes the whole snapshot from matching, even for unfiltered rules.
 
 Matching is reevaluated on every snapshot, so moving, resizing, or query recovery may change a
 window's winning rule.
@@ -167,7 +167,7 @@ enumeration error is shown. Per-window detail failures do not invalidate other w
 
 ## Source layout
 
-1. `turbozone-core/data/`: serialized config, generic patterns/constraints, runtime rules,
+1. `turbozone-core/data/`: serialized config, generic patterns/filters, runtime rules,
    platform-independent window snapshots, and native-path normalization.
 2. `turbozone-core/config.rs`: validated compilation and typed configuration errors.
 3. `turbozone-core/manifest.rs`: built-in Euclid resize choices.
@@ -180,7 +180,7 @@ enumeration error is shown. Per-window detail failures do not invalidate other w
 ## Verification
 
 Tests cover schema validation/serialization, all resize modes, selector bounds, exact and partial
-matching, case sensitivity, priority ties, size constraints, path normalization, complete/failed
+matching, case sensitivity, priority ties, size filters, path normalization, complete/failed
 classification, recovery, monitor caching, restored geometry, and action availability.
 
 The TOML example is parsed and validated by a core regression test. Verification uses release-mode

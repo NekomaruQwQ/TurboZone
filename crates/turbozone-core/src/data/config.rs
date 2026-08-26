@@ -12,7 +12,7 @@ pub struct Config {
     pub rules: Vec<ConfigRule>,
 }
 
-/// One serialized rule pairing window constraints with the actions they enable.
+/// One serialized rule pairing window filters with the actions they enable.
 #[derive(Debug, Clone)]
 #[derive(Default)]
 #[derive(Deserialize, Serialize)]
@@ -25,16 +25,16 @@ pub struct ConfigRule {
     #[serde(default, skip_serializing_if = "is_default")]
     pub description: String,
 
-    // ---- Constraints ----
-    /// Program constraints.
-    #[serde(default, skip_serializing_if = "is_default")]
-    pub program: ProgramConstraint<Pattern>,
-    /// Window constraints.
-    #[serde(default, skip_serializing_if = "is_default")]
-    pub window: WindowConstraint<Pattern>,
+    // ---- Filters ----
     /// Higher priorities take precedence; zero is the default.
     #[serde(default, skip_serializing_if = "is_default")]
     pub priority: i64,
+    /// Program filters.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub program: ProgramFilter<Pattern>,
+    /// Window filters.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub window: WindowFilter<Pattern>,
 
     // ---- Actions ----
     /// Relocation controls, currently only the "center" button.
@@ -51,7 +51,7 @@ pub struct ConfigRule {
 #[serde(deny_unknown_fields)]
 #[serde(untagged)]
 pub enum ResizeRule {
-    /// Resizing disabled or selector enabled without any size constraints.
+    /// Resizing disabled or selector enabled without any size filters.
     Boolean(bool),
     /// Exact target size. The selector is disabled in this mode.
     Exact {
@@ -86,18 +86,32 @@ pub struct ResizeLimits {
 
 impl ResizeLimits {
     /// Returns whether a positive size is within all configured selector bounds.
-    pub fn allows_size(&self, size: Size2D<i32>) -> bool {
-        size.width > 0 && size.height > 0
-            && self.min.is_none_or(|min| size.width >= min.width && size.height >= min.height)
-            && self.max.is_none_or(|max| size.width <= max.width && size.height <= max.height)
+    pub const fn allows_size(&self, size: Size2D<i32>) -> bool {
+        if size.width <= 0 || size.height <= 0 {
+            return false;
+        }
+
+        if let Some(min) = self.min && (
+            size.width < min.width ||
+            size.height < min.height) {
+            return false;
+        }
+
+        if let Some(max) = self.max && (
+            size.width > max.width ||
+            size.height > max.height) {
+            return false;
+        }
+
+        true
     }
 }
 
-/// Program constraints using serialized patterns or compiled predicates.
+/// Program filters using serialized patterns or compiled predicates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct ProgramConstraint<S> {
+pub struct ProgramFilter<S> {
     /// Optional case-insensitive program-name matcher.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<S>,
@@ -106,17 +120,17 @@ pub struct ProgramConstraint<S> {
     pub path: Option<S>,
 }
 
-impl<S> Default for ProgramConstraint<S> {
+impl<S> Default for ProgramFilter<S> {
     fn default() -> Self {
         Self { name: None, path: None }
     }
 }
 
-/// Window constraints using serialized patterns or compiled predicates.
+/// Window filters using serialized patterns or compiled predicates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct WindowConstraint<S> {
+pub struct WindowFilter<S> {
     /// Optional case-sensitive window-title matcher.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<S>,
@@ -128,7 +142,7 @@ pub struct WindowConstraint<S> {
     pub max: Option<Size2D<i32>>,
 }
 
-impl<S> Default for WindowConstraint<S> {
+impl<S> Default for WindowFilter<S> {
     fn default() -> Self {
         Self { title: None, min: None, max: None }
     }
