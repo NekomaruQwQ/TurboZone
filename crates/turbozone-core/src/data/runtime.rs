@@ -11,9 +11,9 @@ pub struct RuntimeRule {
     pub description: Option<String>,
 
     // --- Constraints ----
-    /// Predicates applied to executable metadata.
-    pub executable_constraints:
-        ExecutableConstraint<Vec<PatternMatcher>>,
+    /// Predicates applied to program metadata.
+    pub program_constraints:
+        ProgramConstraint<Vec<PatternMatcher>>,
     /// Predicates applied to window metadata.
     pub window_constraints:
         WindowConstraint<Vec<PatternMatcher>>,
@@ -32,20 +32,20 @@ pub struct RuntimeRule {
 impl RuntimeRule {
     /// Returns whether every configured constraint accepts the supplied window data.
     ///
-    /// Executable names and paths must already be lowercased. Window titles remain
+    /// Program names and paths must already be lowercased. Window titles remain
     /// case-sensitive and must retain their native casing.
     pub fn matches(
         &self,
-        executable_name: Option<&str>,
-        executable_path: &str,
+        program_name: Option<&str>,
+        program_path: &str,
         window_title: &str,
         client_size: Option<Size2D<i32>>) -> bool {
-        self.matches_executable(executable_name, executable_path)
+        self.matches_program(program_name, program_path)
             && self.matches_window(window_title, client_size)
     }
 
-    fn matches_executable(&self, name: Option<&str>, path: &str) -> bool {
-        let matcher = &self.executable_constraints;
+    fn matches_program(&self, name: Option<&str>, path: &str) -> bool {
+        let matcher = &self.program_constraints;
         let name_matches = matcher.name.as_ref().is_none_or(|predicates| {
             name.is_some_and(|name| predicates.iter().all(|predicate| predicate.matches(name)))
         });
@@ -85,19 +85,19 @@ pub struct RuntimeConfig {
 impl RuntimeConfig {
     /// Returns the winning rule index, preferring higher priority and then source order.
     ///
-    /// Executable names and paths must already be lowercased. Window titles remain
+    /// Program names and paths must already be lowercased. Window titles remain
     /// case-sensitive and must retain their native casing.
     pub fn matching_rule_index(
         &self,
-        executable_name: Option<&str>,
-        executable_path: &str,
+        program_name: Option<&str>,
+        program_path: &str,
         window_title: &str,
         client_size: Option<Size2D<i32>>) -> Option<usize> {
         let mut winner = None;
         for (index, rule) in self.rules.iter().enumerate() {
             if !rule.matches(
-                executable_name,
-                executable_path,
+                program_name,
+                program_path,
                 window_title,
                 client_size) {
                 continue;

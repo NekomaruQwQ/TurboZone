@@ -26,9 +26,9 @@ pub struct ConfigRule {
     pub description: String,
 
     // ---- Constraints ----
-    /// Executable constraints.
+    /// Program constraints.
     #[serde(default, skip_serializing_if = "is_default")]
-    pub executable: ExecutableConstraint<Pattern>,
+    pub program: ProgramConstraint<Pattern>,
     /// Window constraints.
     #[serde(default, skip_serializing_if = "is_default")]
     pub window: WindowConstraint<Pattern>,
@@ -37,7 +37,7 @@ pub struct ConfigRule {
     pub priority: i64,
 
     // ---- Actions ----
-    /// Whether centering controls are available.
+    /// Relocation controls, currently only the "center" button.
     #[serde(default, skip_serializing_if = "is_default")]
     pub relocate: bool,
     /// Resize controls, target, and selector limits.
@@ -93,12 +93,12 @@ impl ResizeLimits {
     }
 }
 
-/// Executable constraints using serialized patterns or compiled predicates.
+/// Program constraints using serialized patterns or compiled predicates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct ExecutableConstraint<S> {
-    /// Optional case-insensitive executable-name matcher.
+pub struct ProgramConstraint<S> {
+    /// Optional case-insensitive program-name matcher.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<S>,
     /// Optional case-insensitive normalized-path matcher.
@@ -106,7 +106,7 @@ pub struct ExecutableConstraint<S> {
     pub path: Option<S>,
 }
 
-impl<S> Default for ExecutableConstraint<S> {
+impl<S> Default for ProgramConstraint<S> {
     fn default() -> Self {
         Self { name: None, path: None }
     }

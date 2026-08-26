@@ -13,7 +13,7 @@ resize.min = [960, 540]
 resize.max = [3840, 2400]
 
 priority = 10
-executable.name = "Code.exe" # exact and case-insensitive
+program.name = "Code.exe" # exact and case-insensitive
 window.title.ends_with = "Visual Studio Code"
 window.min = [640, 480]
 window.max = [7680, 4320]
@@ -26,7 +26,7 @@ relocate = true
 resize = true # unbounded selector, without a primary target; {} is equivalent
 
 priority = 20
-executable.path = "C:/Apps/Tool/tool.exe"
+program.path = "C:/Apps/Tool/tool.exe"
 window.title.starts_with = "Tool"
 window.title.contains = "Properties"
 
@@ -37,7 +37,7 @@ description = "Tool Preview"
 # Exact mode offers only this target, with no size selector.
 resize.exact = [1280, 720]
 priority = 25
-executable.name = "tool.exe"
+program.name = "tool.exe"
 window.title = "Tool Preview"
 
 [[rules]]
@@ -48,7 +48,7 @@ description = "Tool Window (Read Only)"
 relocate = false
 resize = false
 priority = 30
-executable.name = "tool.exe"
+program.name = "tool.exe"
 window.title = "Tool Diagnostics"
 
 # Exact and selector properties cannot be mixed.

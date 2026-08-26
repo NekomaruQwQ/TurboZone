@@ -10,7 +10,7 @@ Each `ConfigRule` contains:
 
 1. A required unique `name`.
 2. An optional display `description`, trimmed while loading; blank uses the rule name.
-3. Generic `executable` and `window` constraints containing serialized `Pattern` values.
+3. Generic `program` and `window` constraints containing serialized `Pattern` values.
 4. A `priority` that defaults to zero.
 5. A `relocate` centering permission that defaults to false.
 6. A `resize` rule that defaults to false.
@@ -58,9 +58,9 @@ A pattern string matches exactly. A partial object supports `starts_with`, `ends
 `contains`; all nonempty components are ANDed, and at least one must be nonempty. Exact-string
 objects, regexes, and globs are not accepted.
 
-Executable paths and names compare case-insensitively. Configured patterns are lowercased once
+Program paths and names compare case-insensitively. Configured patterns are lowercased once
 during validation; native candidates are lowercased once per snapshot. Titles stay case-sensitive.
-Runtime `ExecutableConstraint<Vec<PatternMatcher>>` and `WindowConstraint<Vec<PatternMatcher>>`
+Runtime `ProgramConstraint<Vec<PatternMatcher>>` and `WindowConstraint<Vec<PatternMatcher>>`
 retain absent constraints as `None`. Each matcher pairs an owned string with a function pointer.
 There are no regex engines, trait objects, or duplicate unchecked compilation paths.
 
@@ -82,7 +82,7 @@ the concrete `WindowHandle` and returns `WindowInfo<WindowHandle>`.
 Every snapshot retains its handle, title, and visual state. Its `detail` is either:
 
 1. `Ok(WindowDetail)`: monitor work area, controllable client rectangle, process ID, normalized
-   executable path, and executable filename are all available.
+   program path, and program filename are all available.
 2. `Err(Vec<String>)`: a nonempty list of contextual query failures. Successful subsets of
    detail fields are not retained; this is an all-or-nothing detail boundary.
 
@@ -127,14 +127,14 @@ Every eligible snapshot moves into exactly one destination:
 WindowInfo
     Err(errors) -> failed_windows
     Ok(detail), no winning rule -> unmatched_windows
-    Ok(detail), winning rule -> (rule, executable path) section
+    Ok(detail), winning rule -> (rule, program path) section
 ```
 
 `SectionedWindows` owns the complete, disjoint classification without cloning snapshots.
-Sections are ordered by rule source order, then lowercase executable path. Persistent section
-identity is `(rule.name, normalized lowercase executable path)`; the rule index is snapshot-local.
+Sections are ordered by rule source order, then lowercase program path. Persistent section
+identity is `(rule.name, normalized lowercase program path)`; the rule index is snapshot-local.
 
-Windows from the same executable matching the same rule share a section. Different paths or
+Windows from the same program matching the same rule share a section. Different paths or
 winning rules form separate sections. Actionless matched rules still appear on the sections page.
 
 The separate diagnostics page has two categories, both without native controls:
@@ -142,7 +142,7 @@ The separate diagnostics page has two categories, both without native controls:
 1. **Unmatched windows:** complete metadata useful for authoring a rule.
 2. **Details unavailable:** retained title, handle, state, and explicit error messages.
 
-A geometry failure also removes executable identity from usable details, so that window moves
+A geometry failure also removes program identity from usable details, so that window moves
 out of its matched section until a later snapshot succeeds. Old details are never substituted.
 Diagnostic status uses text as well as color.
 
@@ -172,7 +172,7 @@ enumeration error is shown. Per-window detail failures do not invalidate other w
 2. `turbozone-core/config.rs`: validated compilation and typed configuration errors.
 3. `turbozone-core/manifest.rs`: built-in Euclid resize choices.
 4. `turbozone-windows/`: native handle, cached enumeration, geometry queries, and actions.
-5. `turbozone/configuration.rs`: executable-relative configuration loading and error presentation.
+5. `turbozone/configuration.rs`: program-relative configuration loading and error presentation.
 6. `turbozone/data.rs`: disjoint classification and page state.
 7. `turbozone/app.rs`: snapshot timing and queued native actions.
 8. `turbozone/ui/view.rs`: matched sections, action controls, and diagnostic rendering.

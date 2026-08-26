@@ -19,8 +19,8 @@ export interface ConfigRule {
     name: RuleName;
     /** Trimmed display name; omitted or blank values fall back to name. */
     description?: string;
-    /** Case-insensitive executable constraints; all supplied constraints are ANDed. */
-    executable?: ExecutableConstraint<Pattern>;
+    /** Case-insensitive program constraints; all supplied constraints are ANDed. */
+    program?: ProgramConstraint<Pattern>;
     /** Case-sensitive title and inclusive client-size constraints. */
     window?: WindowConstraint<Pattern>;
     /** Higher priorities win; defaults to zero, with declaration order breaking ties. */
@@ -53,11 +53,11 @@ export interface ResizeLimits {
     max?: Size;
 }
 
-/** Generic serialized or compiled executable constraints. */
-export interface ExecutableConstraint<S> {
-    /** Case-insensitive executable filename. */
+/** Generic serialized or compiled program constraints. */
+export interface ProgramConstraint<S> {
+    /** Case-insensitive program filename. */
     name?: S;
-    /** Case-insensitive executable path; configured patterns must use forward slashes. */
+    /** Case-insensitive program path; configured patterns must use forward slashes. */
     path?: S;
 }
 
@@ -100,8 +100,8 @@ export interface RuntimeRule {
     name: RuleName;
     /** Trimmed display name, absent if blank. */
     description?: string;
-    /** Compiled executable predicates; every predicate must succeed. */
-    executable_constraints: ExecutableConstraint<PatternMatcher[]>;
+    /** Compiled program predicates; every predicate must succeed. */
+    program_constraints: ProgramConstraint<PatternMatcher[]>;
     /** Compiled title predicates and validated client-size bounds. */
     window_constraints: WindowConstraint<PatternMatcher[]>;
     /** Explicit or default matching priority. */
@@ -124,9 +124,9 @@ Matching and UI semantics:
 
 1. Only snapshots with Ok(WindowDetail) participate in matching and native actions.
 2. All constraints in a rule are ANDed; highest priority wins, then source order.
-3. Executable candidates are normalized and lowercased once per snapshot.
+3. Program candidates are normalized and lowercased once per snapshot.
 4. Titles retain their original case; native path normalization preserves display casing.
-5. A matched section is identified by (rule.name, normalized lowercase executable path).
+5. A matched section is identified by (rule.name, normalized lowercase program path).
 6. An actionless matched rule remains an intentional read-only section.
 7. Complete unmatched windows and failed-detail windows have separate diagnostic categories.
 8. Failed-detail snapshots retain handle, title, state, and errors; the next refresh retries.

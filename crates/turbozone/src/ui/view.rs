@@ -96,7 +96,7 @@ fn sections_page(
     }
 }
 
-/// Keeps collapse state keyed by the stable rule and executable identity.
+/// Keeps collapse state keyed by the stable rule and program identity.
 fn section_card(
     ui: &mut Ui,
     section: &WindowSection,
@@ -104,7 +104,7 @@ fn section_card(
     pending_actions: &mut Vec<Action>) {
     let (header_actions, body_actions) = Card::default().show_collapsible(
         ui,
-        ("window-section", rule.name.as_str(), section.executable_path.as_str()),
+        ("window-section", rule.name.as_str(), section.program_path.as_str()),
         |ui| section_header(ui, section, rule),
         |ui| section_body(ui, section, rule));
     pending_actions.extend(header_actions);
@@ -175,12 +175,12 @@ fn section_resize_controls(
     }
 }
 
-/// Shows the executable path and independently actionable window rows.
+/// Shows the program path and independently actionable window rows.
 fn section_body(ui: &mut Ui, section: &WindowSection, rule: &RuntimeRule) -> Vec<Action> {
     let mut actions = Vec::new();
     if let Some(detail) = section.windows.first()
         .and_then(|window| window.detail.as_ref().ok()) {
-        ui.add(Label::new(RichText::new(&detail.executable_path).small().weak()).truncate());
+        ui.add(Label::new(RichText::new(&detail.program_path).small().weak()).truncate());
         ui.add_space(4.0);
     }
     for window in &section.windows {
@@ -362,7 +362,7 @@ fn window_metadata(ui: &mut Ui, window: &WindowInfo<WindowHandle>, show_path: bo
     ui.horizontal(|ui| {
         ui.add_space(4.0);
         ui.label(RichText::new(format!("PID {}", detail.process_id)).small().weak());
-        ui.label(RichText::new(&detail.executable_name).small().weak());
+        ui.label(RichText::new(&detail.program_name).small().weak());
         let size = detail.content_rect.size;
         let text = RichText::new(format!("{}x{}", size.width, size.height)).small();
         ui.label(if is_known_window_size(size) {
@@ -372,7 +372,7 @@ fn window_metadata(ui: &mut Ui, window: &WindowInfo<WindowHandle>, show_path: bo
         });
     });
     if show_path {
-        ui.add(Label::new(RichText::new(&detail.executable_path).small().weak()).truncate());
+        ui.add(Label::new(RichText::new(&detail.program_path).small().weak()).truncate());
     }
 }
 
@@ -414,8 +414,8 @@ mod tests {
                 monitor_rect: PixelRect::new(Point2D::zero(), Size2D::new(1920, 1080)),
                 content_rect: PixelRect::new(Point2D::zero(), Size2D::new(640, 480)),
                 process_id: 42,
-                executable_path: "C:/Apps/App.exe".to_owned(),
-                executable_name: "App.exe".to_owned(),
+                program_path: "C:/Apps/App.exe".to_owned(),
+                program_name: "App.exe".to_owned(),
             }),
         }
     }
@@ -423,13 +423,13 @@ mod tests {
     #[test]
     fn failed_details_render_errors_without_fabricated_metadata() {
         let mut window = window();
-        window.detail = Err(vec!["Monitor query failed".to_owned(), "Executable access denied".to_owned()]);
+        window.detail = Err(vec!["Monitor query failed".to_owned(), "Program access denied".to_owned()]);
         let text = rendered_text(|ui| window_metadata(ui, &window, true));
-        assert_eq!(text, ["DETAILS UNAVAILABLE", "Monitor query failed", "Executable access denied"]);
+        assert_eq!(text, ["DETAILS UNAVAILABLE", "Monitor query failed", "Program access denied"]);
     }
 
     #[test]
-    fn complete_details_render_executable_and_size() {
+    fn complete_details_render_program_and_size() {
         let text = rendered_text(|ui| window_metadata(ui, &window(), true));
         assert_eq!(text, ["PID 42", "App.exe", "640x480", "C:/Apps/App.exe"]);
     }

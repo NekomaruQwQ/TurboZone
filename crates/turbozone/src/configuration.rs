@@ -8,7 +8,7 @@ use turbozone_core::{Config, RuntimeConfig};
 
 /// Active validated configuration plus any load diagnostic shown by the UI.
 pub struct ConfigState {
-    /// Discovered TurboRnR.config.toml path, when executable discovery succeeded.
+    /// Discovered TurboRnR.config.toml path, when program discovery succeeded.
     pub path: Option<PathBuf>,
     /// Validated runtime state, or an empty fallback after a load failure.
     pub runtime: RuntimeConfig,
@@ -39,11 +39,11 @@ impl ConfigState {
 }
 
 fn discover_config_path() -> Result<PathBuf> {
-    let executable = env::current_exe().context("failed to locate TurboRnR executable")?;
-    let executable_name = executable.file_stem()
-        .context("TurboRnR executable has no filename")?
+    let program = env::current_exe().context("failed to locate TurboRnR program")?;
+    let program_name = program.file_stem()
+        .context("TurboRnR program has no filename")?
         .to_string_lossy();
-    Ok(executable.with_file_name(format!("{executable_name}.config.toml")))
+    Ok(program.with_file_name(format!("{program_name}.config.toml")))
 }
 
 fn load_config() -> Result<(PathBuf, RuntimeConfig)> {

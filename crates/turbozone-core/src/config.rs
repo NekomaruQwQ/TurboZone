@@ -6,7 +6,7 @@ use euclid::default::Size2D;
 use thiserror::Error;
 
 use crate::{
-    Config, ConfigRule, ExecutableConstraint, Pattern, PatternMatcher, ResizeLimits,
+    Config, ConfigRule, Pattern, PatternMatcher, ProgramConstraint, ResizeLimits,
     ResizeRule, RuntimeConfig, RuntimeRule, WindowConstraint,
 };
 
@@ -66,9 +66,9 @@ pub enum ConfigError {
         /// Configuration field containing the invalid matcher.
         field: String,
     },
-    /// A configured executable-path pattern used a backslash.
+    /// A configured program-path pattern used a backslash.
     #[error("{field} must use forward slashes; backslashes are not accepted")]
-    BackslashInExecutablePath {
+    BackslashInProgramPath {
         /// Configuration field containing the invalid path pattern.
         field: String,
     },
@@ -96,7 +96,7 @@ fn compile_rule(index: usize, rule: ConfigRule) -> Result<RuntimeRule, ConfigErr
     let description = rule.description.trim().to_owned();
     let description = (!description.is_empty()).then_some(description);
     let (resize_exact, resize_limits) = compile_resize(rule.resize, &prefix)?;
-    let executable_constraints = compile_executable_match(rule.executable, &prefix)?;
+    let program_constraints = compile_program_match(rule.program, &prefix)?;
     let window_constraints = compile_window_match(rule.window, &prefix)?;
 
     Ok(RuntimeRule {
@@ -105,7 +105,7 @@ fn compile_rule(index: usize, rule: ConfigRule) -> Result<RuntimeRule, ConfigErr
         relocate: rule.relocate,
         resize_exact,
         resize_limits,
-        executable_constraints,
+        program_constraints,
         window_constraints,
         priority: rule.priority,
     })
@@ -132,25 +132,25 @@ fn compile_resize(
     }
 }
 
-/// Compiles case-insensitive executable patterns without normalizing config paths.
-fn compile_executable_match(
-    matcher: ExecutableConstraint<Pattern>,
-    prefix: &str) -> Result<ExecutableConstraint<Vec<PatternMatcher>>, ConfigError> {
+/// Compiles case-insensitive program patterns without normalizing config paths.
+fn compile_program_match(
+    matcher: ProgramConstraint<Pattern>,
+    prefix: &str) -> Result<ProgramConstraint<Vec<PatternMatcher>>, ConfigError> {
     let name = matcher.name
         .map(|matcher| compile_string_matcher(
             matcher,
-            &format!("{prefix}.executable.name"),
+            &format!("{prefix}.program.name"),
             false,
             false))
         .transpose()?;
     let path = matcher.path
         .map(|matcher| compile_string_matcher(
             matcher,
-            &format!("{prefix}.executable.path"),
+            &format!("{prefix}.program.path"),
             false,
             true))
         .transpose()?;
-    Ok(ExecutableConstraint { name, path })
+    Ok(ProgramConstraint { name, path })
 }
 
 /// Compiles case-sensitive title patterns and validates inclusive size bounds.
@@ -248,7 +248,7 @@ fn compile_string_predicate(
     is_path: bool,
     predicate: fn(input: &str, pattern: &str) -> bool) -> Result<PatternMatcher, ConfigError> {
     if is_path && pattern.contains('\\') {
-        return Err(ConfigError::BackslashInExecutablePath {
+        return Err(ConfigError::BackslashInProgramPath {
             field: field.to_owned(),
         });
     }
@@ -490,13 +490,13 @@ mod tests {
     }
 
     #[test]
-    fn executable_matchers_are_case_insensitive() {
+    fn program_matchers_are_case_insensitive() {
         let runtime = parse(r#"
             [[rules]]
             name = "tool"
-            executable.name = "TOOL.EXE"
-            executable.path.ends_with = "/TOOL.EXE"
-        "#).validate().expect("executable matcher must validate");
+            program.name = "TOOL.EXE"
+            program.path.ends_with = "/TOOL.EXE"
+        "#).validate().expect("program matcher must validate");
 
         assert!(runtime.rules[0].matches(
             Some("tool.exe"),
@@ -506,17 +506,17 @@ mod tests {
     }
 
     #[test]
-    fn executable_path_matcher_rejects_backslashes() {
+    fn program_path_matcher_rejects_backslashes() {
         let config = parse(r#"
             [[rules]]
             name = "tool"
-            executable.path = 'C:\Apps\tool.exe'
+            program.path = 'C:\Apps\tool.exe'
         "#);
 
         assert_eq!(
             config.validate().expect_err("backslash path must fail"),
-            ConfigError::BackslashInExecutablePath {
-                field: "rules[0].executable.path".to_owned(),
+            ConfigError::BackslashInProgramPath {
+                field: "rules[0].program.path".to_owned(),
             });
     }
 
@@ -623,7 +623,7 @@ mod tests {
         let result = toml::from_str::<Config>(r#"
             [[rules]]
             name = "future"
-            executable.name.glob = "*.exe"
+            program.name.glob = "*.exe"
         "#);
 
         result.expect_err("future matcher form must not deserialize");
@@ -703,7 +703,7 @@ mod tests {
             [[rules]]
             name = "unbounded"
             resize = true
-            executable.name = "APP.EXE"
+            program.name = "APP.EXE"
             [[rules]]
             name = "exact"
             resize.exact = [640, 480]
@@ -735,8 +735,8 @@ mod tests {
     fn absent_constraints_remain_absent_after_compilation() {
         let runtime = parse("[[rules]]\nname = 'app'").validate().unwrap();
         let rule = &runtime.rules[0];
-        assert!(rule.executable_constraints.name.is_none()
-            && rule.executable_constraints.path.is_none()
+        assert!(rule.program_constraints.name.is_none()
+            && rule.program_constraints.path.is_none()
             && rule.window_constraints.title.is_none());
     }
 }

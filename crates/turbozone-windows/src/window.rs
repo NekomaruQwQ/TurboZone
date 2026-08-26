@@ -49,7 +49,7 @@ impl WindowEnumerator {
             .filter(|window| !(
                 window.title == "Program Manager"
                 && window.detail.as_ref().is_ok_and(|detail| {
-                    detail.executable_name.eq_ignore_ascii_case("explorer.exe")
+                    detail.program_name.eq_ignore_ascii_case("explorer.exe")
                 })))
             .collect())
     }
@@ -93,25 +93,25 @@ impl WindowEnumerator {
         };
         let process_id = record_failure(
             native::get_process_id(handle), "Owning process", &mut errors);
-        // Do not report dependent executable failures when the process query already failed.
+        // Do not report dependent program failures when the process query already failed.
         let native_path = process_id.and_then(|process_id| record_failure(
-            native::get_executable_path(process_id), "Executable path", &mut errors));
-        let executable_name = native_path.as_deref().and_then(|path| {
+            native::get_program_path(process_id), "Program path", &mut errors));
+        let program_name = native_path.as_deref().and_then(|path| {
             let Some(name) = path.file_name() else {
-                errors.push("Executable path has no filename".to_owned());
+                errors.push("Program path has no filename".to_owned());
                 return None;
             };
             Some(name.to_string_lossy().into_owned())
         });
-        let executable_path = native_path.as_deref().map(normalize_native_path);
-        let detail = match (monitor, content_rect, process_id, executable_path, executable_name) {
-            (Some(monitor), Some(content_rect), Some(process_id), Some(executable_path), Some(executable_name)) => {
+        let program_path = native_path.as_deref().map(normalize_native_path);
+        let detail = match (monitor, content_rect, process_id, program_path, program_name) {
+            (Some(monitor), Some(content_rect), Some(process_id), Some(program_path), Some(program_name)) => {
                 Ok(WindowDetail {
                     monitor_rect: native::rect_from_native(&monitor.rcWork),
                     content_rect,
                     process_id,
-                    executable_path,
-                    executable_name,
+                    program_path,
+                    program_name,
                 })
             },
             _ => Err(errors),
@@ -281,7 +281,7 @@ mod tests {
         let centered = enumerator.snapshot_window(window.0).detail.unwrap();
         assert!(centered.is_centered());
         assert_eq!(centered.content_rect.size, resized.content_rect.size);
-        assert!(!centered.executable_path.is_empty() && !centered.executable_name.is_empty());
+        assert!(!centered.program_path.is_empty() && !centered.program_name.is_empty());
     }
 
     #[test]
@@ -320,7 +320,7 @@ mod tests {
         let errors = window.detail.unwrap_err();
         assert!(errors.iter().any(|error| error.starts_with("Client geometry:")));
         assert!(errors.iter().any(|error| error.starts_with("Owning process:")));
-        assert!(!errors.iter().any(|error| error.starts_with("Executable path:")));
+        assert!(!errors.iter().any(|error| error.starts_with("Program path:")));
     }
 
     #[test]

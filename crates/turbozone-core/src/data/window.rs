@@ -29,7 +29,7 @@ pub struct WindowInfo<H> {
     pub detail: Result<WindowDetail, Vec<String>>,
 }
 
-/// Complete geometry and executable identity for matching and native controls.
+/// Complete geometry and program identity for matching and native controls.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowDetail {
     /// Current monitor work area in physical screen coordinates, excluding taskbars.
@@ -40,10 +40,10 @@ pub struct WindowDetail {
 
     /// Successfully queried owning process identifier.
     pub process_id: u32,
-    /// Lexically normalized native executable path with forward slashes.
-    pub executable_path: String,
-    /// Executable filename used by configuration matching.
-    pub executable_name: String,
+    /// Lexically normalized native program path with forward slashes.
+    pub program_path: String,
+    /// Program filename used by configuration matching.
+    pub program_name: String,
 }
 
 impl WindowDetail {
@@ -83,8 +83,8 @@ mod tests {
             monitor_rect: Rect::new(Point2D::new(-1920, 40), Size2D::new(1920, 1040)),
             content_rect: Rect::new(Point2D::new(-1280, 320), Size2D::new(641, 481)),
             process_id: 1,
-            executable_path: "C:/app.exe".to_owned(),
-            executable_name: "app.exe".to_owned(),
+            program_path: "C:/app.exe".to_owned(),
+            program_name: "app.exe".to_owned(),
         };
         assert!(detail.is_centered());
     }

@@ -8,20 +8,20 @@ use turbozone_windows::WindowHandle;
 /// The page currently replacing the application body.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WindowPage {
-    /// Matched rule-and-executable sections.
+    /// Matched rule-and-program sections.
     #[default]
     Sections,
     /// Unmatched windows and snapshots with unavailable details.
     Diagnostics,
 }
 
-/// Windows matched by one rule and sharing one executable identity.
+/// Windows matched by one rule and sharing one program identity.
 #[derive(Debug)]
 pub struct WindowSection {
     /// Source-order index into the runtime rule vector for this snapshot.
     pub rule_index: usize,
     /// Lowercased normalized path used in persistent section identity.
-    pub executable_path: String,
+    pub program_path: String,
     /// Owned native snapshots belonging to this section.
     pub windows: Vec<WindowInfo<WindowHandle>>,
 }
@@ -29,7 +29,7 @@ pub struct WindowSection {
 /// A complete, disjoint classification of one native window snapshot.
 #[derive(Debug, Default)]
 pub struct SectionedWindows {
-    /// Matched sections in rule source order and then executable-path order.
+    /// Matched sections in rule source order and then program-path order.
     pub sections: Vec<WindowSection>,
     /// Windows with complete details which matched no rule.
     pub unmatched_windows: Vec<WindowInfo<WindowHandle>>,
@@ -49,26 +49,26 @@ impl SectionedWindows {
                 failed_windows.push(window);
                 continue;
             };
-            let executable_path = detail.executable_path.to_lowercase();
-            let executable_name = detail.executable_name.to_lowercase();
+            let program_path = detail.program_path.to_lowercase();
+            let program_name = detail.program_name.to_lowercase();
             let rule_index = config.matching_rule_index(
-                Some(&executable_name),
-                &executable_path,
+                Some(&program_name),
+                &program_path,
                 &window.title,
                 Some(detail.content_rect.size));
             let Some(rule_index) = rule_index else {
                 unmatched_windows.push(window);
                 continue;
             };
-            matched.entry((rule_index, executable_path))
+            matched.entry((rule_index, program_path))
                 .or_default()
                 .push(window);
         }
 
         let sections = matched.into_iter()
-            .map(|((rule_index, executable_path), windows)| WindowSection {
+            .map(|((rule_index, program_path), windows)| WindowSection {
                 rule_index,
-                executable_path,
+                program_path,
                 windows,
             })
             .collect();
@@ -102,8 +102,8 @@ mod tests {
                 monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
                 content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
                 process_id: 1,
-                executable_path: "C:/Apps/App.exe".to_owned(),
-                executable_name: "App.exe".to_owned(),
+                program_path: "C:/Apps/App.exe".to_owned(),
+                program_name: "App.exe".to_owned(),
             }),
         }
     }
@@ -150,11 +150,11 @@ mod tests {
     }
 
     #[test]
-    fn executable_section_identity_is_case_insensitive() {
+    fn program_section_identity_is_case_insensitive() {
         let config = Config { rules: vec![ConfigRule { name: "all".to_owned(), ..Default::default() }] }
             .validate().unwrap();
         let mut other = window("Other");
-        other.detail.as_mut().unwrap().executable_path = "c:/apps/app.EXE".to_owned();
+        other.detail.as_mut().unwrap().program_path = "c:/apps/app.EXE".to_owned();
         let windows = SectionedWindows::from_windows(&config, vec![window("App"), other]);
         assert_eq!((windows.sections.len(), windows.sections[0].windows.len()), (1, 2));
     }

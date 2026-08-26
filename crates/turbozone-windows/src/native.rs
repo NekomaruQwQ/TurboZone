@@ -129,9 +129,9 @@ pub fn get_process_id(hwnd: HWND) -> Result<u32> {
     Ok(process_id)
 }
 
-/// Reads a process executable path when limited-information access is available.
+/// Reads a process program path when limited-information access is available.
 /// Returns access or query errors without discarding the native diagnostic.
-pub fn get_executable_path(process_id: u32) -> Result<PathBuf> {
+pub fn get_program_path(process_id: u32) -> Result<PathBuf> {
     // SAFETY: OpenProcess receives a PID returned by Windows. The query buffer
     // remains valid, and every successfully opened handle is closed.
     #[expect(clippy::multiple_unsafe_ops_per_block, reason = "one Win32 handle lifetime")]
