@@ -1,20 +1,42 @@
 # TOML editor support
 
-The checked-in [turbozone.schema.json](turbozone.schema.json) is generated from
-`turbozone_core::Config` and its nested types. Rust types, Serde attributes, and
-Rust doc comments supply field names, optionality, alternatives, and hover documentation.
+`turbozone_core::Config::schema()` generates the JSON Schema from Rust types, Serde attributes,
+and Rust doc comments. These supply field names, optionality, alternatives, and hover text.
 The TypeScript declarations in this directory are illustrative, not generator input.
+
+## Explicit config source
+
+Pass a file explicitly, or set `TURBOZONE_CONFIG`. The CLI wins when both are supplied:
+
+```sh
+cargo run --release -p turbozone -- --config D:/Private/TurboZone/local.config.toml
+```
+
+Relative paths use the current working directory. There is no executable-adjacent default or
+search path. This lets private config live in its own local versioned directory. Parent directories
+must already exist; the app creates only the config file itself when it is missing.
+
+On startup, the app first writes the current schema to `config_path.with_extension("schema.json")`.
+For `local.config.toml`, this is `local.config.schema.json` beside it. Schema-write failure is a
+warning and loading continues. The schema is replaceable generated data; it is not a checked-in
+artifact and no standalone generation feature or example is required.
 
 ## Use in an editor
 
 1. Enable a TOML language server with JSON Schema support, such as
    [Tombi](https://tombi-toml.github.io/tombi/docs/json-schema/) or
    [Taplo / Even Better TOML](https://taplo.tamasfe.dev/configuration/using-schemas.html).
-2. Place `turbozone.schema.json` beside your configuration, or adjust the relative path
-   in this comment at the beginning of the TOML file:
+2. A newly created config contains only its schema directive and is a valid empty configuration:
 
    ```toml
-   #:schema ./turbozone.schema.json
+   #:schema ./local.config.schema.json
+   ```
+
+3. Existing configs are never rewritten automatically. To enable schema support, add or update
+   the directive yourself, then add rules as needed:
+
+   ```toml
+   #:schema ./local.config.schema.json
 
    [[rules]]
    name = "vscode.main"
@@ -23,50 +45,40 @@ The TypeScript declarations in this directory are illustrative, not generator in
    resize.exact = [1440, 900]
    ```
 
-The path is relative to the TOML file, not the workspace. The
-[example configuration](M1-Plan-config.toml) already has the directive. A local schema
-works offline; keep the schema from the same revision as the app when distributing it.
-Do not add a `$schema` TOML key: unknown configuration fields are rejected by Serde.
+The schema path is relative to the TOML file. The [example configuration](M1-Plan-config.toml)
+already names its generated sibling. Local schemas work offline. Do not add a `$schema` TOML
+key: unknown top-level fields are fatal; `#:schema` is a comment understood by the editor.
 
-For a quick editor check, request completion inside `[[rules]]`, hover `move`, and
-try an unknown key or `resize.exact = [0, 900]` to check diagnostics. An exact resize
-cannot be combined with selector keys such as `min` or `default`.
+For an editor check, request completion inside `[[rules]]`, hover `move`, and try an unknown key
+or `resize.exact = [0, 900]`. An exact resize cannot be combined with selector fields such as
+`min` or `default`. Runtime warnings appear in the terminal rather than an in-app diagnostics UI.
 
-## Regenerate and verify
+## Schema and parser boundaries
 
-Run from the repository root:
+The schema uses JSON Schema Draft 7 with internal references, without additional downloads.
+It describes input structure, defaults, renamed keys, untagged alternatives, and rejected unknown
+fields. Sizes use `[i32; 2]`, serialized as `[width, height]` in physical pixels. Schemars derives the
+fixed array length; per-element annotations require positive integers no greater than `i32::MAX`.
+Optional Rust fields can include JSON `null` in the schema; TOML has no null, so omit them instead.
+
+`turbozone-core::parse_config()` parses the document and compiles rules independently. Invalid
+TOML and invalid top-level structure are fatal. Individual rule errors exclude only that rule;
+valid rules keep their relative order. Diagnostics use original zero-based rule indices. Only
+the first valid rule reserves its name, and later duplicates are skipped. Empty config is valid.
+
+The compiler checks rule-name grammar, duplicates, nonempty partial patterns, forward slashes
+in program paths, positive dimensions, and `min <= max`. `compile_config()` offers the same
+compiler for callers that already have a typed `Config`. Neither function performs I/O or logs;
+the executable reports diagnostics without TOML source excerpts. Editor checks do not replace
+runtime validation.
+
+## Verify
 
 ```sh
-cargo run --release -p turbozone-core --features schema --example config-schema
 cargo test --release --workspace --all-features --locked
 cargo clippy --release --workspace --all-targets --all-features --locked -- -D warnings
 ```
 
-The generator writes UTF-8 JSON directly to `docs/turbozone.schema.json`, independent
-of the shell's redirection encoding. Commit the regenerated file with config type or
-documentation changes. The freshness test compares parsed JSON, so platform line endings
-do not cause failures, but a stale schema does. Regeneration is explicit; normal builds
-do not rewrite source files.
-
-The optional `schema` feature enables Schemars derives and schema generation only.
-Normal application builds do not enable it. `serde_json` is a development dependency
-for the generator and tests. The output uses JSON Schema Draft 7 and internal references,
-without additional schemas to download. Schemars updates can change the generated output;
-review the diff when updating the lockfile.
-
-## Validation boundary
-
-The schema describes the input structure, including Serde defaults, renamed keys,
-untagged alternatives, and rejected unknown fields. Sizes use `[i32; 2]`, serialized
-as `[width, height]` in physical pixels. Schemars derives the fixed array length;
-per-element range annotations require positive integers no greater than `i32::MAX`.
-No geometry-specific schema adapter is needed.
-
-The TOML 1.1.4 reader currently ignores extra dimensions in `window.min` and `window.max`,
-as it did with Euclid sizes. The schema rejects those arrays; runtime validation cannot
-detect elements already discarded by deserialization.
-
-`Config::validate()` remains authoritative for rule-name grammar, duplicate names,
-nonempty partial patterns, forward slashes in program paths, and `min <= max` comparisons.
-Editor validation does not replace those checks. Optional Rust fields may include JSON
-`null` in the schema; TOML itself has no null value, so omit those fields instead.
+Tests compare generated JSON with serialization and runtime behavior, and verify that startup
+refreshes the sibling schema without changing existing config bytes. Schemars updates can alter
+the generated output; review schema behavior when updating the lockfile.

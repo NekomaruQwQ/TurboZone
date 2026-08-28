@@ -1,5 +1,5 @@
 use crate::prelude::*;
-use super::*;
+use crate::Pattern;
 
 use schemars::*;
 use schemars::generate::SchemaSettings;
@@ -21,7 +21,8 @@ impl Config {
     ///
     /// Draft 7 avoids requiring newer JSON Schema keywords in editor integrations.
     /// Rule-name grammar, duplicate names, nonempty partial patterns, path separators,
-    /// and comparisons between bounds remain the responsibility of `Config::validate`.
+    /// and comparisons between bounds are validated by [`crate::parse_config`] and
+    /// [`crate::compile_config`].
     pub fn schema() -> Schema {
         SchemaSettings::draft07()
             .for_deserialize()
@@ -80,8 +81,13 @@ pub enum ResizeRule {
         #[schemars(inner(range(min = 1, max = i32::MAX)))]
         exact: [i32; 2],
     },
+    /// Selector properties with only a default size, no minimum, and no maximum.
+    SelectorDefault(
+        #[schemars(inner(range(min = 1, max = i32::MAX)))]
+        [i32; 2],
+    ),
     /// Selector properties, including optional default, minimum, and maximum sizes.
-    Selector(ResizeLimits),
+    Selector(ResizeSelector),
 }
 
 impl Default for ResizeRule {
@@ -95,7 +101,7 @@ impl Default for ResizeRule {
 #[derive(Deserialize, Serialize)]
 #[derive(schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ResizeLimits {
+pub struct ResizeSelector {
     /// Primary `[width, height]` in positive physical pixels, independent of selector bounds.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(inner(range(min = 1, max = i32::MAX)))]
@@ -110,7 +116,7 @@ pub struct ResizeLimits {
     pub max: Option<[i32; 2]>,
 }
 
-impl ResizeLimits {
+impl ResizeSelector {
     /// Returns whether a positive size is within all configured selector bounds.
     pub const fn allows_size(&self, size: Size2D<i32>) -> bool {
         if size.width <= 0 || size.height <= 0 {

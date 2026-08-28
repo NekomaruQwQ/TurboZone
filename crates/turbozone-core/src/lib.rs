@@ -1,9 +1,4 @@
-//! Platform-independent configuration, matching, and geometry for TurboZone.
-
-#![feature(const_array)]
-#![feature(const_trait_impl)]
-
-#![feature(normalize_lexically)]
+//! Platform-independent configuration parsing, matching, and geometry for TurboZone.
 
 pub mod prelude;
 

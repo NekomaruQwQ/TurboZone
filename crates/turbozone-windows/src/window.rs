@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
+use anyhow::Context as _;
 use euclid::default::{Point2D, Rect, Size2D, Vector2D};
 use turbozone_core::{WindowDetail, WindowInfo, WindowState};
 use windows::core::{Error, Result};
@@ -10,13 +11,6 @@ use windows::Win32::Foundation::{E_INVALIDARG, HWND, RECT};
 use windows::Win32::Graphics::Gdi::{HMONITOR, MONITORINFO};
 
 use crate::native;
-
-fn normalize_native_path(path: &std::path::Path) -> String {
-    path.components()
-        .map(|component| component.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
-}
 
 /// A borrowed native window identity; the default is a null, non-actionable handle.
 ///
@@ -44,7 +38,7 @@ impl WindowEnumerator {
     /// Captures relevant top-level application windows.
     ///
     /// Only a top-level enumeration failure is returned to the caller. Per-window
-    /// detail failures remain visible as nonempty error lists on the snapshot.
+    /// detail failures retain the first contextual error on the snapshot.
     pub fn snapshot(&mut self) -> Result<Vec<WindowInfo<WindowHandle>>> {
         // Work areas and monitor handles can change between logic ticks.
         self.monitor_info_cache.clear();
@@ -71,70 +65,32 @@ impl WindowEnumerator {
             .clone()
     }
 
-    /// Retains basic identity even when independent detail queries fail.
+    /// Retains basic identity even when a detail query fails.
     fn snapshot_window(&mut self, handle: HWND) -> WindowInfo<WindowHandle> {
         let title = native::get_window_text(handle);
         let state = window_state(handle);
-        let mut errors = Vec::new();
-        let monitor = record_failure(
-            self.monitor_info(native::get_monitor(handle), native::get_monitor_info),
-            "Monitor geometry",
-            &mut errors);
-        let content_rect = match state {
-            WindowState::Normal => record_failure(
-                native::get_content_rect(handle), "Client geometry", &mut errors),
-            WindowState::Maximized | WindowState::Minimized => {
-                let placement = record_failure(
-                    native::get_window_placement(handle), "Restored placement", &mut errors);
-                let frame = record_failure(
-                    native::get_normal_frame(handle), "Restored frame", &mut errors);
-                let offset = monitor.as_ref().and_then(|monitor| record_failure(
-                    native::get_placement_offset(handle, monitor), "Placement coordinates", &mut errors));
-                placement.zip(frame).zip(offset).and_then(|((placement, frame), offset)| {
-                    record_failure(
-                        restored_content_rect(&placement.rcNormalPosition, &frame, offset),
-                        "Restored client geometry",
-                        &mut errors)
-                })
-            },
-        };
-        let process_id = record_failure(
-            native::get_process_id(handle), "Owning process", &mut errors);
-        // Do not report dependent program failures when the process query already failed.
-        let native_path = process_id.and_then(|process_id| record_failure(
-            native::get_program_path(process_id), "Program path", &mut errors));
-        let program_name = native_path.as_deref().and_then(|path| {
-            let Some(name) = path.file_name() else {
-                errors.push("Program path has no filename".to_owned());
-                return None;
-            };
-            Some(name.to_string_lossy().into_owned())
-        });
-        let program_path = native_path.as_deref().map(normalize_native_path);
-        let detail = match (monitor, content_rect, process_id, program_path, program_name) {
-            (Some(monitor), Some(content_rect), Some(process_id), Some(program_path), Some(program_name)) => {
-                Ok(WindowDetail {
-                    monitor_rect: native::rect_from_native(&monitor.rcWork),
-                    content_rect,
-                    process_id,
-                    program_path,
-                    program_name,
-                })
-            },
-            _ => Err(errors),
-        };
+        let detail = self.window_detail(handle, state);
         WindowInfo { handle: WindowHandle(handle), title, state, detail }
     }
-}
 
-/// Records contextual failures without allocating diagnostic strings on success.
-fn record_failure<T>(result: Result<T>, context: &str, errors: &mut Vec<String>) -> Option<T> {
-    match result {
-        Ok(value) => Some(value),
-        Err(error) => {
-            errors.push(format!("{context}: {error}"));
-            None
-        },
+    /// Stops at the first failed query while retaining the original native error.
+    fn window_detail(&mut self, handle: HWND, state: WindowState) -> anyhow::Result<WindowDetail> {
+        let monitor = self.monitor_info(native::get_monitor(handle), native::get_monitor_info)
+            .context("Monitor geometry")?;
+        let content_rect = content_rect(handle, state, &monitor).context("Client geometry")?;
+        let process_id = native::get_process_id(handle).context("Owning process")?;
+        let native_path = native::get_program_path(process_id).context("Program path")?;
+        let program_name = native_path.file_name().context("Program path has no filename")?
+            .to_string_lossy().into_owned();
+        // Windows supplies normalized paths; only the separator convention changes.
+        let program_path = native_path.to_string_lossy().replace('\\', "/");
+        Ok(WindowDetail {
+            monitor_rect: native::rect_from_native(&monitor.rcWork),
+            content_rect,
+            process_id,
+            program_path,
+            program_name,
+        })
     }
 }
 
@@ -320,14 +276,13 @@ mod tests {
     }
 
     #[test]
-    fn invalid_window_retains_identity_and_independent_errors() {
+    fn invalid_window_retains_identity_and_the_first_native_error() {
         let mut enumerator = WindowEnumerator::default();
         let window = enumerator.snapshot_window(HWND::default());
         assert_eq!(window.handle, WindowHandle::default());
-        let errors = window.detail.unwrap_err();
-        assert!(errors.iter().any(|error| error.starts_with("Client geometry:")));
-        assert!(errors.iter().any(|error| error.starts_with("Owning process:")));
-        assert!(!errors.iter().any(|error| error.starts_with("Program path:")));
+        let error = window.detail.unwrap_err();
+        assert_eq!(error.to_string(), "Client geometry");
+        assert!(error.downcast_ref::<Error>().is_some());
     }
 
     #[test]
@@ -345,13 +300,4 @@ mod tests {
         assert_eq!(restored_content_rect(&outer, &frame, Vector2D::zero()).unwrap_err().code(), E_INVALIDARG);
     }
 
-    #[test]
-    fn failed_query_does_not_hide_other_query_results() {
-        let mut errors = Vec::new();
-        let failed = record_failure::<u32>(
-            Err(Error::new(E_INVALIDARG, "unavailable")), "Monitor", &mut errors);
-        let successful = record_failure(Ok(42), "Process", &mut errors);
-        assert_eq!((failed, successful), (None, Some(42)));
-        assert_eq!(errors.len(), 1);
-    }
 }

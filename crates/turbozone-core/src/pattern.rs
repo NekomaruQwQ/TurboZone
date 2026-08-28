@@ -1,5 +1,6 @@
 use serde::*;
 
+/// Omits empty partial components without introducing an always-true predicate.
 fn none_if_default<T: Default + PartialEq>(value: T) -> Option<T> {
     if value == T::default() {
         None
@@ -8,24 +9,20 @@ fn none_if_default<T: Default + PartialEq>(value: T) -> Option<T> {
     }
 }
 
+/// An owned literal pattern paired with its case-sensitive string predicate.
 #[derive(Debug, Clone)]
 pub struct PatternMatcher(
+    /// Literal text, already normalized by the config compiler when appropriate.
     String,
+    /// Predicate chosen once during compilation.
     fn(input: &str, pattern: &str) -> bool);
 
 impl PatternMatcher {
-    pub(crate) const fn new(
-        pattern: String,
-        predicate: fn(&str, &str) -> bool) -> Self {
-        Self(pattern, predicate)
-    }
-
     /// Returns whether the candidate satisfies this predicate.
-    pub fn matches(&self, input: &str) -> bool {
-        (self.1)(input, self.0.as_str())
-    }
+    pub fn matches(&self, input: &str) -> bool { (self.1)(input, self.0.as_str()) }
 }
 
+/// An exact string or a conjunction of nonempty literal partial patterns.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[derive(Deserialize, Serialize)]
 #[derive(schemars::JsonSchema)]
@@ -49,14 +46,19 @@ pub enum Pattern {
 }
 
 impl Pattern {
+    /// Compiles literal, case-sensitive predicates without validating the pattern.
+    ///
+    /// Callers must normalize both patterns and candidates for case-insensitive
+    /// matching. An empty partial pattern returns no predicates; config validation
+    /// must reject it before using an all-predicates match.
     pub fn to_matchers(&self) -> Vec<PatternMatcher> {
         use std::iter;
 
-        match self {
-            Self::Exact(t) =>
+        match *self {
+            Self::Exact(ref t) =>
                 iter::once(PatternMatcher(t.clone(), |s, t| s == t))
                     .collect(),
-            Self::Partial { starts_with, ends_with, contains } => {
+            Self::Partial { ref starts_with, ref ends_with, ref contains } => {
                 iter::empty()
                     .chain(
                         none_if_default(starts_with.clone())

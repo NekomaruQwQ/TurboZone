@@ -11,10 +11,10 @@ turbozone-core = { workspace = true }
 turbozone-windows = { workspace = true }
 
 anyhow = { workspace = true }
+clap = { workspace = true }
 eframe = { workspace = true }
 euclid = { workspace = true }
 log = { workspace = true }
 pretty_env_logger = { workspace = true }
 serde_json = { workspace = true }
 tap = { workspace = true }
-toml = { workspace = true }

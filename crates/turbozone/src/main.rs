@@ -1,17 +1,34 @@
-mod app;
-mod config;
-mod data;
-mod ui;
+use std::process::ExitCode;
 
-fn main() -> eframe::Result {
+use clap::Parser as _;
+use turbozone::{app, config, diagnostics, ui};
+
+/// Handles CLI exits before startup I/O and reports fatal application errors once.
+fn main() -> ExitCode {
+    let args = config::Args::parse();
+    if let Err(error) = diagnostics::init_logging() {
+        eprintln!("failed to initialize logging: {error}");
+        return ExitCode::FAILURE;
+    }
+    match run(&args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            log::error!("{error:#}");
+            ExitCode::FAILURE
+        },
+    }
+}
+
+/// Loads configuration before creating the GUI, so fatal failures cannot look like an empty app.
+fn run(args: &config::Args) -> anyhow::Result<()> {
     use eframe::egui::{FontData, FontDefinitions, FontFamily, ViewportBuilder};
     use eframe::NativeOptions;
     use std::sync::Arc;
 
-    pretty_env_logger::init();
+    let config = config::load_config(&args.config)?;
 
     eframe::run_native(
-        "TurboRnR",
+        "TurboZone",
         NativeOptions {
             viewport: ViewportBuilder::default()
                 .with_inner_size((720.0, 680.0))
@@ -19,7 +36,7 @@ fn main() -> eframe::Result {
             centered: true,
             ..NativeOptions::default()
         },
-        Box::new(|creation_context| {
+        Box::new(move |creation_context| {
             let egui = &creation_context.egui_ctx;
             let mut fonts = FontDefinitions::default();
             match std::fs::read("C:/Windows/Fonts/msyh.ttc") {
@@ -38,6 +55,6 @@ fn main() -> eframe::Result {
                 },
             }
             ui::setup_style(egui);
-            Ok(Box::new(app::App::new()))
-        }))
+            Ok(Box::new(app::App::new(config)))
+        })).map_err(|error| anyhow::anyhow!("application failed: {error}"))
 }

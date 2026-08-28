@@ -3,12 +3,12 @@
 ## Configuration contract
 
 TurboZone is rule-driven, without configurable groups or rule inheritance.
-The Rust config types define the accepted structure. [turbozone.schema.json](turbozone.schema.json)
-is generated from those types for [editor completion and validation](config-schema.md).
+The Rust config types define the accepted structure. Startup generates a schema beside the
+selected config for [editor completion and validation](M1-Schema.md).
 [M1-Plan-config.d.ts](M1-Plan-config.d.ts) illustrates configuration and conceptual runtime
 types; [M1-Plan-config.toml](M1-Plan-config.toml) is a validated example.
 
-Each `ConfigRule` contains:
+Each `Rule` contains:
 
 1. A required unique `name`.
 2. An optional display `description`, trimmed while loading; blank uses the rule name.
@@ -27,6 +27,34 @@ Names are not trimmed or normalized. Omitted `rules` means an empty rule list.
 Unknown properties, old `match_*`, `set_position`, and `set_size` keys, and unsupported
 matcher forms are rejected. There are no compatibility aliases.
 
+`turbozone-core::parse_config()` checks the document envelope, then deserializes and compiles
+rules independently. Invalid TOML or top-level structure is fatal. Invalid individual rules are
+skipped as a whole, retaining the valid rules in declaration order. Diagnostics identify the
+original zero-based rule index. Only the first valid occurrence reserves a name; later duplicates
+are skipped. An empty document, or a document with no usable rules, is valid.
+
+## Startup and diagnostics
+
+1. Require `--config <FILE>` or `TURBOZONE_CONFIG`; the CLI takes precedence. Empty values are
+   rejected. Relative paths resolve against the working directory; there is no implicit fallback.
+2. Refresh `config_path.with_extension("schema.json")` from `Config::schema()`. A write failure
+   is a warning, not a reason to reject an otherwise usable config.
+3. Leave existing config bytes untouched, including comments, schema directives, BOM, and line
+   endings. Create a missing file exclusively with only a relative `#:schema` comment. Parent
+   directories must already exist. Concurrent creation never authorizes overwriting the file.
+4. Parse and compile via `turbozone-core`, log rejected rules and the loaded/skipped counts,
+   then launch the UI with a `RuntimeConfig`.
+
+Unreadable config, creation failure, and malformed documents exit nonzero before the UI opens.
+The generated schema is replaceable, but user-authored config is never rewritten automatically;
+there is no temporary-file replacement workflow.
+
+TurboZone assumes a terminal is available. Errors and warnings go to stderr, with application
+startup info visible by default; `RUST_LOG` overrides the filters. Diagnostics omit TOML source
+excerpts. Per-window native failures include the handle and contextual error chain, without title
+or program-path dumps. Unchanged periodic failures are suppressed until they change, recover,
+or disappear and recur. Enumeration failures are also deduplicated. No diagnostic UI state is kept.
+
 ## Actions and resize modes
 
 `move = true` enables centering the controllable client area in its monitor's work area.
@@ -38,6 +66,7 @@ False or omission disables centering.
 | --- | --- | --- | --- |
 | Omitted or `resize = false` | None | None | No resize controls |
 | `resize = true` or `resize = {}` | None | Unbounded limits | Size selector |
+| `resize = [1440, 900]` | None | That default with unbounded limits | Primary button plus selector |
 | `resize.exact = [1440, 900]` | That size | None | Exact resize button only |
 | `resize = { default = [1440, 900], min = [960, 540], max = [3840, 2400] }` | None | Those settings | Primary button plus selector |
 
@@ -64,7 +93,9 @@ Program paths and names compare case-insensitively. Configured patterns are lowe
 during validation; native candidates are lowercased once per snapshot. Titles stay case-sensitive.
 Runtime `ProgramFilter<Vec<PatternMatcher>>` and `WindowFilter<Vec<PatternMatcher>>`
 retain absent filters as `None`. Each matcher pairs an owned string with a function pointer.
-There are no regex engines, trait objects, or duplicate unchecked compilation paths.
+`Pattern::to_matchers()` compiles literal case-sensitive predicates; the config compiler supplies
+normalized program patterns and rejects empty partials before calling it. No regex engine or
+trait objects are involved.
 
 `RuntimeConfig` keeps one source-order vector. For each window with complete details:
 
@@ -85,12 +116,12 @@ Every snapshot retains its handle, title, and visual state. Its `detail` is eith
 
 1. `Ok(WindowDetail)`: monitor work area, controllable client rectangle, process ID, normalized
    program path, and program filename are all available.
-2. `Err(Vec<String>)`: a nonempty list of contextual query failures. Successful subsets of
-   detail fields are not retained; this is an all-or-nothing detail boundary.
+2. `Err(anyhow::Error)`: the first contextual query failure, preserving its original cause.
+   Successful subsets of detail fields are not retained; this is an all-or-nothing detail boundary.
 
-Independent failures are collected together. Queries whose prerequisites failed do not add
-redundant errors. Errors with documented native codes retain those diagnostics; APIs without a
-documented last-error contract get an explicit failure message instead of a stale code.
+Detail queries stop at the first failure. Errors with documented native codes retain those
+causes; APIs without a documented last-error contract get an explicit failure message instead
+of a stale code.
 
 Both rectangles use physical screen coordinates. `monitor_rect` is the work area excluding
 taskbars, not the full monitor extent. `content_rect` is the live client rectangle for normal
@@ -123,37 +154,34 @@ window's winning rule.
 
 ## Classification and UI
 
-Every eligible snapshot moves into exactly one destination:
+Snapshots are logged before classification, then only complete matches are retained:
 
 ```text
 WindowInfo
-    Err(errors) -> failed_windows
-    Ok(detail), no winning rule -> unmatched_windows
+    Err(error) -> log first/changed failure, discard snapshot
+    Ok(detail), no winning rule -> discard normally
     Ok(detail), winning rule -> (rule, program path) section
 ```
 
-`SectionedWindows` owns the complete, disjoint classification without cloning snapshots.
-Sections are ordered by rule source order, then lowercase program path. Persistent section
-identity is `(rule.name, normalized lowercase program path)`; the rule index is snapshot-local.
+`group_windows()` moves matched snapshots into `Vec<WindowSection>` without cloning them.
+Sections are ordered by valid rule source order, then lowercase program path. Persistent section
+identity is `(rule.name, lowercase program path)`; the rule index is snapshot-local.
 
 Windows from the same program matching the same rule share a section. Different paths or
-winning rules form separate sections. Actionless matched rules still appear on the sections page.
+winning rules form separate sections. Actionless matched rules still appear. The UI keeps section
+and window actions, program paths, process IDs, titles, visual states, and size highlighting.
 
-The separate diagnostics page has two categories, both without native controls:
-
-1. **Unmatched windows:** complete metadata useful for authoring a rule.
-2. **Details unavailable:** retained title, handle, state, and explicit error messages.
-
-A geometry failure also removes program identity from usable details, so that window moves
-out of its matched section until a later snapshot succeeds. Old details are never substituted.
-Diagnostic status uses text as well as color.
+A geometry failure removes the whole snapshot from matching until a later snapshot succeeds.
+Old details are never substituted. Unmatched windows are normal, with no warning or diagnostic
+bucket. An empty matched list shows the ordinary empty state. There is no diagnostics page,
+page navigation, error card, diagnostic count, or configuration-path heading.
 
 ## Native paths and actions
 
-Core `normalize_native_path` lexically resolves native `.` and `..` components without
-filesystem access, falls back to the original path if normalization fails, converts unusual
-non-Unicode paths lossily, and replaces backslashes with forward slashes. Display casing is
-preserved. Configured patterns are not path-normalized, and backslashes in them are rejected.
+Windows is assumed to return already normalized paths with backslash separators. The Windows
+adapter converts non-Unicode paths lossily and replaces backslashes with forward slashes,
+without lexical normalization or filesystem canonicalization. Display casing is preserved.
+Configured patterns are not path-normalized, and backslashes in them are rejected.
 
 Centering aligns the client-area center with the monitor work-area center. Resizing preserves
 the integer client-area center, including odd-sized targets. Actions preserve activation, z-order,
@@ -164,26 +192,31 @@ Individual and section actions capture handles from the rendered snapshot and ex
 next logic tick. A snapshot is not an atomic OS transaction: windows can disappear or change
 between queries and actions, so native actions remain fallible.
 
-If top-level enumeration fails, both matched and diagnostic snapshots are cleared and the
-enumeration error is shown. Per-window detail failures do not invalidate other windows.
+If top-level enumeration fails, stale matched sections are cleared and the enumeration error
+is logged. Per-window detail failures do not invalidate other windows. User-requested action
+failures are always logged and do not abort actions for the remaining targets.
 
 ## Source layout
 
-1. `turbozone-core/data/`: serialized config, generic patterns/filters, runtime rules,
-   platform-independent window snapshots, and native-path normalization.
-2. `turbozone-core/config.rs`: validated compilation and typed configuration errors.
-3. `turbozone-core/manifest.rs`: built-in Euclid resize choices.
-4. `turbozone-windows/`: native handle, cached enumeration, geometry queries, and actions.
-5. `turbozone/configuration.rs`: program-relative configuration loading and error presentation.
-6. `turbozone/data.rs`: disjoint classification and page state.
-7. `turbozone/app.rs`: snapshot timing and queued native actions.
-8. `turbozone/ui/view.rs`: matched sections, action controls, and diagnostic rendering.
+1. `turbozone-core/src/`: serialized config and schema, document parsing, per-rule validation and
+   compilation, structured diagnostics, literal patterns, runtime matching, platform-independent
+   window snapshots, and the array-based built-in resize manifest. This library performs no
+   filesystem I/O or logging.
+2. `turbozone-windows/src/`: native handles, cached enumeration, geometry queries, and actions.
+3. `turbozone/src/config.rs`: Clap arguments and explicit configuration startup.
+5. `turbozone/src/diagnostics.rs`: stderr setup and bounded periodic-error suppression.
+6. `turbozone/src/data.rs`: matched sections only.
+7. `turbozone/src/app.rs`: snapshot timing, error reporting, and queued native actions.
+8. `turbozone/src/ui/view.rs`: matched sections, metadata, and action controls.
 
 ## Verification
 
-Tests cover schema validation/serialization, all resize modes, selector bounds, exact and partial
-matching, case sensitivity, priority ties, size filters, path normalization, complete/failed
-classification, recovery, monitor caching, restored geometry, and action availability.
+Integration tests cover schema/serialization, partial rule recovery, all resize modes, selector
+bounds, exact and partial matching, case sensitivity, priority ties, size filters, CLI/environment
+precedence, config preservation/creation, stderr output, error recurrence, grouping, and headless
+UI rendering. Private native tests cover monitor caching, first-error context, restored geometry,
+and native actions using fixture-owned windows.
 
-The TOML example is parsed and validated by a core regression test. Verification uses release-mode
-workspace tests and Clippy with warnings denied. Formatting is manual; no formatter is run.
+The TOML example is parsed and compiled by a config-crate regression test. Schema-only tests stay
+in the core integration suite. Verification uses release-mode workspace tests and Clippy with
+warnings denied. Formatting is manual; no formatter is run. Interactive UI checks remain manual.

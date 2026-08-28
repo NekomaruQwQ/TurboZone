@@ -1,0 +1,14 @@
+/LICENSE
+
+/docs/
+
+/crates/*/tests/
+/crates/turbozone/src/
+/crates/turbozone-config/src/
+
+*.lock
+*.schema.json
+
+# BEGIN maintain-catignore managed paths
+/crates/turbozone-core/src/config_parser.rs
+# END maintain-catignore managed paths

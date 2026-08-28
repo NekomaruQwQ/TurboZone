@@ -2,13 +2,16 @@ use std::time::{Duration, Instant};
 
 use eframe::egui::{Context, Ui};
 use euclid::default::Size2D;
+use turbozone_core::RuntimeConfig;
 use turbozone_windows::{WindowHandle, WindowEnumerator};
 
-use crate::config::ConfigState;
-use crate::data::{SectionedWindows, WindowPage};
+use crate::data::{WindowSection, group_windows};
+use crate::diagnostics::SnapshotDiagnostics;
 use crate::ui;
 
+/// Keeps painting independent from native query frequency.
 const RENDER_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 30);
+/// Refreshes native details often enough to reflect external window changes.
 const LOGIC_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
@@ -30,29 +33,34 @@ pub enum Action {
 
 /// TurboZone application state shared by the logic and UI phases.
 pub struct App {
-    config: ConfigState,
+    /// Usable rules compiled once during startup.
+    config: RuntimeConfig,
+    /// Native enumeration and per-refresh monitor cache.
     snapshotter: WindowEnumerator,
-    windows: SectionedWindows,
-    page: WindowPage,
+    /// Only matched windows participate in rendering and actions.
+    windows: Vec<WindowSection>,
+    /// Actions target the handles captured when the user accepted them.
     pending_actions: Vec<Action>,
-    native_error: Option<String>,
+    /// Suppresses unchanged periodic errors, without storing UI diagnostics.
+    diagnostics: SnapshotDiagnostics,
+    /// Earliest scheduled native refresh, unless an action is pending.
     next_logic_tick: Instant,
 }
 
 impl App {
-    /// Loads configuration and creates an initially empty native snapshot.
-    pub fn new() -> Self {
+    /// Accepts compiled rules without performing filesystem or native work.
+    pub fn new(config: RuntimeConfig) -> Self {
         Self {
-            config: ConfigState::load(),
+            config,
             snapshotter: WindowEnumerator::default(),
-            windows: SectionedWindows::default(),
-            page: WindowPage::default(),
+            windows: Vec::new(),
             pending_actions: Vec::new(),
-            native_error: None,
+            diagnostics: SnapshotDiagnostics::default(),
             next_logic_tick: Instant::now(),
         }
     }
 
+    /// Applies queued actions before capturing the resulting window state.
     fn logic_tick(&mut self) {
         for action in std::mem::take(&mut self.pending_actions) {
             apply_action(action);
@@ -60,28 +68,26 @@ impl App {
         self.refresh_windows();
     }
 
+    /// Reports native failures and replaces stale sections on every refresh attempt.
     fn refresh_windows(&mut self) {
         let windows = match self.snapshotter.snapshot() {
             Ok(windows) => windows,
             Err(error) => {
-                let message = format!("window enumeration failed: {error}");
-                log::error!("{message}");
-                self.native_error = Some(message);
-                self.windows = SectionedWindows::default();
+                self.diagnostics.enumeration_failed(error.to_string());
+                self.windows.clear();
                 return;
             },
         };
-        self.native_error = None;
-        self.windows = SectionedWindows::from_windows(&self.config.runtime, windows);
+        self.diagnostics.update(&windows);
+        self.windows = group_windows(&self.config, windows);
     }
 
+    /// Renders controls without performing native actions inside the UI pass.
     fn app_ui(&mut self, ui: &mut Ui) {
         ui::app_ui(
             ui,
             &self.windows,
             &self.config,
-            self.native_error.as_deref(),
-            &mut self.page,
             &mut self.pending_actions);
     }
 }
@@ -105,6 +111,7 @@ impl eframe::App for App {
     }
 }
 
+/// Reports each failed user-requested action without aborting the remaining targets.
 fn apply_action(action: Action) {
     match action {
         Action::Center { windows } => {

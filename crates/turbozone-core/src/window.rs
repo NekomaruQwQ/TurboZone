@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use euclid::default::*;
 
 /// The current visual state of a native window.
@@ -39,7 +37,7 @@ pub struct WindowDetail {
 
     /// Successfully queried owning process identifier.
     pub process_id: u32,
-    /// Lexically normalized native program path with forward slashes.
+    /// Windows-supplied program path with backslashes replaced by forward slashes.
     pub program_path: String,
     /// Program filename used by configuration matching.
     pub program_name: String,

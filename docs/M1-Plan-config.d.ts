@@ -9,12 +9,12 @@ export type RuleName = string;
 
 /** Complete configuration accepted by M1; omitted rules means an empty list. */
 export interface Config {
-    /** Rules retained in declaration order. */
-    rules?: ConfigRule[];
+    /** Valid rules retain declaration order; broken rules are skipped independently. */
+    rules?: Rule[];
 }
 
 /** One rule pairing filters with enabled native actions. */
-export interface ConfigRule {
+export interface Rule {
     /** Required unique identifier, also used in persistent UI section identity. */
     name: RuleName;
     /** Trimmed display name; omitted or blank values fall back to name. */
@@ -124,12 +124,12 @@ Matching and UI semantics:
 
 1. Only snapshots with Ok(WindowDetail) participate in matching and native actions.
 2. All filters in a rule are ANDed; highest priority wins, then source order.
-3. Program candidates are normalized and lowercased once per snapshot.
-4. Titles retain their original case; native path normalization preserves display casing.
-5. A matched section is identified by (rule.name, normalized lowercase program path).
+3. Program candidates are lowercased once per snapshot for matching.
+4. Titles retain their original case; native paths only replace backslashes with forward slashes.
+5. A matched section is identified by (rule.name, lowercase program path).
 6. An actionless matched rule remains an intentional read-only section.
-7. Complete unmatched windows and failed-detail windows have separate diagnostic categories.
-8. Failed-detail snapshots retain handle, title, state, and errors; the next refresh retries.
+7. Unmatched windows are discarded normally; failed details are reported to stderr before discarding.
+8. Failed snapshots retain handle, title, state, and the first error; the next refresh retries.
 9. Size tuples must contain exactly two positive integers; no partial target is accepted.
 10. No configurable section abstraction, inheritance, or legacy schema aliases exist.
 */

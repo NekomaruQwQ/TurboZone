@@ -26,7 +26,7 @@ pub struct RuntimeRule {
     /// Optional exact target size, disabling the selector when present.
     pub resize_exact: Option<Size2D<i32>>,
     /// Selector settings, or none when resizing is disabled or exact-only.
-    pub resize_limits: Option<ResizeLimits>,
+    pub resize_selector: Option<ResizeSelector>,
 }
 
 impl RuntimeRule {
