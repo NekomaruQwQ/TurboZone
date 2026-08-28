@@ -4,7 +4,7 @@ use eframe::egui::{Context, Ui};
 use euclid::default::Size2D;
 use turbozone_windows::{WindowHandle, WindowEnumerator};
 
-use crate::configuration::ConfigState;
+use crate::config::ConfigState;
 use crate::data::{SectionedWindows, WindowPage};
 use crate::ui;
 

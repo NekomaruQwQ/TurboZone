@@ -67,3 +67,18 @@ fn load_config() -> Result<(PathBuf, RuntimeConfig)> {
         .with_context(|| format!("invalid configuration: {}", path.display()))?;
     Ok((path, runtime))
 }
+
+use std::path::Path;
+
+/// Writes UTF-8 JSON to the repository's documented schema location.
+///
+/// Serializes before opening the destination so generation errors leave it intact.
+/// Returns serialization or filesystem errors to the command's caller.
+pub fn generate_schema(path: &Path) -> anyhow::Result<()> {
+    let schema = Config::schema();
+    let mut json = serde_json::to_string_pretty(&schema)?;
+    json.push('\n');
+    fs::write(path, json)?;
+    println!("Generated {}", path.display());
+    Ok(())
+}

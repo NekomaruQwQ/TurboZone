@@ -1,6 +1,3 @@
-# @human-maintained
-# @formatted
-
 lints = { workspace = true }
 
 [package]
@@ -10,9 +7,12 @@ edition = { workspace = true }
 license = { workspace = true }
 
 [dependencies]
-euclid = { workspace = true, features = ["serde"] }
+anyhow = { workspace = true }
+euclid = { workspace = true }
+schemars = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+serde_json = { workspace = true }
 toml = { workspace = true }

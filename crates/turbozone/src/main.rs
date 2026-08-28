@@ -1,5 +1,5 @@
 mod app;
-mod configuration;
+mod config;
 mod data;
 mod ui;
 

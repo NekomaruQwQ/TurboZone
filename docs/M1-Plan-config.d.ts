@@ -26,7 +26,7 @@ export interface ConfigRule {
     /** Higher priorities win; defaults to zero, with declaration order breaking ties. */
     priority?: number;
     /** Enables client-area centering; defaults to false. */
-    relocate?: boolean;
+    move?: boolean;
     /** Disabled when omitted or false; true enables an unbounded selector. */
     resize?: ResizeRule;
 }

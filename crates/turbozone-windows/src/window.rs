@@ -4,12 +4,19 @@ use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
 use euclid::default::{Point2D, Rect, Size2D, Vector2D};
-use turbozone_core::{normalize_native_path, WindowDetail, WindowInfo, WindowState};
+use turbozone_core::{WindowDetail, WindowInfo, WindowState};
 use windows::core::{Error, Result};
 use windows::Win32::Foundation::{E_INVALIDARG, HWND, RECT};
 use windows::Win32::Graphics::Gdi::{HMONITOR, MONITORINFO};
 
 use crate::native;
+
+fn normalize_native_path(path: &std::path::Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
 
 /// A borrowed native window identity; the default is a null, non-actionable handle.
 ///

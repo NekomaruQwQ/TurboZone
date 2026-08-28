@@ -5,5 +5,7 @@ mod window;
 
 pub use window::*;
 
-pub use windows::core::Error as NativeError;
-pub use windows::core::Result as NativeResult;
+pub use windows::core::{
+    Error  as NativeError,
+    Result as NativeResult,
+};

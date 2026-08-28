@@ -3,7 +3,9 @@
 ## Configuration contract
 
 TurboZone is rule-driven, without configurable groups or rule inheritance.
-[M1-Plan-config.d.ts](M1-Plan-config.d.ts) documents the accepted schema and conceptual runtime
+The Rust config types define the accepted structure. [turbozone.schema.json](turbozone.schema.json)
+is generated from those types for [editor completion and validation](config-schema.md).
+[M1-Plan-config.d.ts](M1-Plan-config.d.ts) illustrates configuration and conceptual runtime
 types; [M1-Plan-config.toml](M1-Plan-config.toml) is a validated example.
 
 Each `ConfigRule` contains:
@@ -12,7 +14,7 @@ Each `ConfigRule` contains:
 2. An optional display `description`, trimmed while loading; blank uses the rule name.
 3. Generic `program` and `window` filters containing serialized `Pattern` values.
 4. A `priority` that defaults to zero.
-5. A `relocate` centering permission that defaults to false.
+5. A `move` centering permission that defaults to false (`relocate` in Rust).
 6. A `resize` rule that defaults to false.
 
 Rule names are plain strings validated as lowercase TOML-style dotted bare keys:
@@ -27,7 +29,7 @@ matcher forms are rejected. There are no compatibility aliases.
 
 ## Actions and resize modes
 
-`relocate = true` enables centering the controllable client area in its monitor's work area.
+`move = true` enables centering the controllable client area in its monitor's work area.
 False or omission disables centering.
 
 `ResizeRule` is an untagged union:

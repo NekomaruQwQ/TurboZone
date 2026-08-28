@@ -1,12 +1,12 @@
 use eframe::egui::*;
 use euclid::default::Size2D;
 use turbozone_core::{
-    is_known_window_size, ResizeLimits, RuntimeRule, WindowInfo, WindowState, WINDOW_SIZE_MANIFEST,
+    is_known_window_size, ResizeLimits, RuntimeRule, WindowInfo, WindowState, STANDARD_SIZE,
 };
 use turbozone_windows::WindowHandle;
 
 use crate::app::Action;
-use crate::configuration::ConfigState;
+use crate::config::ConfigState;
 use crate::data::{SectionedWindows, WindowPage, WindowSection};
 
 use super::color;
@@ -148,7 +148,7 @@ fn section_resize_controls(
     handles: impl Fn() -> Vec<WindowHandle>,
     actions: &mut Vec<Action>) {
     let primary_size = rule.resize_exact
-        .or_else(|| rule.resize_limits.as_ref()?.default);
+        .or_else(|| rule.resize_limits.as_ref()?.default.map(Size2D::from));
     let Some(primary_size) = primary_size else {
         if let Some(size) = rule.resize_limits.as_ref()
             .and_then(|limits| resize_menu_button(ui, "RESIZE", limits)) {
@@ -240,7 +240,7 @@ fn window_controls(
     }
 
     let primary_size = rule.resize_exact
-        .or_else(|| rule.resize_limits.as_ref()?.default);
+        .or_else(|| rule.resize_limits.as_ref()?.default.map(Size2D::from));
     let Some(primary_size) = primary_size else {
         if let Some(size) = rule.resize_limits.as_ref()
             .and_then(|limits| resize_menu_button(ui, "RESIZE", limits)) {
@@ -283,7 +283,7 @@ fn resize_menu_button(
 fn resize_menu(ui: &mut Ui, resize: &ResizeLimits) -> Option<Size2D<i32>> {
     let mut selected = None;
     let mut available = false;
-    for &(name, resolutions) in WINDOW_SIZE_MANIFEST {
+    for &(name, resolutions) in STANDARD_SIZE {
         let resolutions = resolutions.iter()
             .copied()
             .filter(|&size| resize.allows_size(size));
@@ -379,7 +379,7 @@ fn window_metadata(ui: &mut Ui, window: &WindowInfo<WindowHandle>, show_path: bo
 #[cfg(test)]
 mod tests {
     use euclid::default::{Point2D, Rect as PixelRect};
-    use turbozone_core::{Config, ConfigRule, ResizeRule, WindowDetail};
+    use turbozone_core::{Config, Rule, ResizeRule, WindowDetail};
 
     use super::*;
 
@@ -396,7 +396,7 @@ mod tests {
 
     /// Builds a validated action rule for a single rendering test.
     fn rule(resize: ResizeRule) -> RuntimeRule {
-        Config { rules: vec![ConfigRule {
+        Config { rules: vec![Rule {
             name: "app".to_owned(),
             relocate: true,
             resize,
@@ -446,7 +446,7 @@ mod tests {
 
     #[test]
     fn exact_resize_offers_only_a_primary_button() {
-        let rule = rule(ResizeRule::Exact { exact: Size2D::new(1280, 720) });
+        let rule = rule(ResizeRule::Exact { exact: [1280, 720] });
         let text = rendered_text(|ui| {
             section_resize_controls(ui, &rule, Vec::new, &mut Vec::new());
         });
@@ -456,7 +456,7 @@ mod tests {
     #[test]
     fn selector_default_offers_a_primary_button_and_menu() {
         let rule = rule(ResizeRule::Selector(ResizeLimits {
-            default: Some(Size2D::new(1280, 720)),
+            default: Some([1280, 720]),
             ..Default::default()
         }));
         let text = rendered_text(|ui| {

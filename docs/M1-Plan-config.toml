@@ -1,4 +1,5 @@
-# M1 accepts ConfigRule and Pattern from M1-Plan-config.d.ts.
+#:schema ./turbozone.schema.json
+# The schema is generated from Rust Config types; see config-schema.md for editor setup.
 # Strings are exact; all filters within one rule are ANDed.
 # Sizes are [width, height] arrays of positive physical-pixel integers.
 
@@ -6,7 +7,7 @@
 name = "vscode.main"
 description = "  VS Code (Main Projects)  " # trimmed while loading
 
-relocate = true
+move = true
 # Selector mode: a primary target plus independently bounded menu choices.
 resize.default = [1440, 900]
 resize.min = [960, 540]
@@ -22,7 +23,7 @@ window.max = [7680, 4320]
 name = "tool.selector-only"
 description = "Tool Windows"
 
-relocate = true
+move = true
 resize = true # unbounded selector, without a primary target; {} is equivalent
 
 priority = 20
@@ -45,7 +46,7 @@ name = "tool.read-only"
 description = "Tool Window (Read Only)"
 
 # Both actions default to false. This is still an intentional matched section.
-relocate = false
+move = false
 resize = false
 priority = 30
 program.name = "tool.exe"

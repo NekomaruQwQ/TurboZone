@@ -16,7 +16,6 @@ pub enum WindowState {
 }
 
 /// An immutable native window snapshot used by classification and rendering.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowInfo<H> {
     /// Native handle identifying the exact enumerated window.
     pub handle: H,
@@ -24,9 +23,9 @@ pub struct WindowInfo<H> {
     pub title: String,
     /// Current normal, maximized, or minimized state.
     pub state: WindowState,
-    /// Complete details, or a nonempty list of failures from this snapshot.
-    /// Failed details must not participate in matching or expose native actions.
-    pub detail: Result<WindowDetail, Vec<String>>,
+    /// Complete window details from this snapshot, or an error if any detail
+    /// could not be obtained.
+    pub detail: anyhow::Result<WindowDetail>,
 }
 
 /// Complete geometry and program identity for matching and native controls.
@@ -51,41 +50,5 @@ impl WindowDetail {
     /// Integer centers allow the unavoidable half-pixel difference for odd sizes.
     pub fn is_centered(&self) -> bool {
         self.content_rect.center() == self.monitor_rect.center()
-    }
-}
-
-/// Normalizes a native path lexically without accessing the filesystem.
-///
-/// If lexical normalization fails, keeps the original path. Non-Unicode names
-/// are converted lossily, and native backslashes become forward slashes.
-pub fn normalize_native_path(path: &Path) -> String {
-    path.normalize_lexically()
-        .unwrap_or_else(|_| path.to_path_buf())
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[cfg(windows)]
-    fn native_path_normalization_resolves_components_and_separators() {
-        assert_eq!(
-            normalize_native_path(Path::new(r"C:\Apps\.\Edge\..\Browser\app.exe")),
-            "C:/Apps/Browser/app.exe");
-    }
-
-    #[test]
-    fn centered_content_supports_negative_monitor_origins_and_odd_sizes() {
-        let detail = WindowDetail {
-            monitor_rect: Rect::new(Point2D::new(-1920, 40), Size2D::new(1920, 1040)),
-            content_rect: Rect::new(Point2D::new(-1280, 320), Size2D::new(641, 481)),
-            process_id: 1,
-            program_path: "C:/app.exe".to_owned(),
-            program_name: "app.exe".to_owned(),
-        };
-        assert!(detail.is_centered());
     }
 }

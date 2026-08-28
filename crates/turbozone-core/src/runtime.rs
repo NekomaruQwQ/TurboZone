@@ -67,10 +67,10 @@ impl RuntimeRule {
         let Some(size) = size else {
             return false;
         };
-        matcher.min.is_none_or(|minimum| {
-            size.width >= minimum.width && size.height >= minimum.height
-        }) && matcher.max.is_none_or(|maximum| {
-            size.width <= maximum.width && size.height <= maximum.height
+        matcher.min.is_none_or(|[min_width, min_height]| {
+            size.width >= min_width && size.height >= min_height
+        }) && matcher.max.is_none_or(|[max_width, max_height]| {
+            size.width <= max_width && size.height <= max_height
         })
     }
 }

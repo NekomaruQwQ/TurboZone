@@ -88,7 +88,7 @@ impl SectionedWindows {
 #[cfg(test)]
 mod tests {
     use euclid::default::{Point2D, Rect, Size2D};
-    use turbozone_core::{Config, ConfigRule, Pattern, WindowDetail, WindowFilter, WindowState};
+    use turbozone_core::{Config, Rule, Pattern, WindowDetail, WindowFilter, WindowState};
 
     use super::*;
 
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn classification_keeps_matched_unmatched_and_failed_windows_disjoint() {
-        let config = Config { rules: vec![ConfigRule {
+        let config = Config { rules: vec![Rule {
             name: "app".to_owned(),
             window: WindowFilter { title: Some(Pattern::Exact("Matched".to_owned())), ..Default::default() },
             ..Default::default()
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn failed_details_never_match_even_an_unfiltered_rule() {
-        let config = Config { rules: vec![ConfigRule { name: "all".to_owned(), ..Default::default() }] }
+        let config = Config { rules: vec![Rule { name: "all".to_owned(), ..Default::default() }] }
             .validate().unwrap();
         let mut failed = window("App");
         failed.detail = Err(vec!["Monitor geometry unavailable".to_owned()]);
@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn recovered_details_reenter_matching_on_the_next_snapshot() {
-        let config = Config { rules: vec![ConfigRule { name: "all".to_owned(), ..Default::default() }] }
+        let config = Config { rules: vec![Rule { name: "all".to_owned(), ..Default::default() }] }
             .validate().unwrap();
         let mut failed = window("App");
         failed.detail = Err(vec!["Monitor geometry unavailable".to_owned()]);
@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn program_section_identity_is_case_insensitive() {
-        let config = Config { rules: vec![ConfigRule { name: "all".to_owned(), ..Default::default() }] }
+        let config = Config { rules: vec![Rule { name: "all".to_owned(), ..Default::default() }] }
             .validate().unwrap();
         let mut other = window("Other");
         other.detail.as_mut().unwrap().program_path = "c:/apps/app.EXE".to_owned();
