@@ -114,8 +114,8 @@ No additional priority index is needed for the expected rule/window counts at th
 ## Window geometry and snapshots
 
 The core crate owns `WindowInfo<H>`, `WindowDetail`, `WindowState`, and the generic `Backend`
-contract. The Windows crate owns the concrete `WindowHandle` and returns
-`WindowInfo<WindowHandle>`. Immutable runtime names, titles, paths, and matcher literals use
+contract. The Windows crate owns the concrete `Handle<HWND>` and returns
+`WindowInfo<Handle<HWND>>`. Immutable runtime names, titles, paths, and matcher literals use
 `SmolStr`; mutable serialized config input and filesystem buffers remain `String`.
 
 Every snapshot retains its handle, title, and visual state. Its `detail` is either:
@@ -141,10 +141,11 @@ and [DPI-aware frame calculation](https://learn.microsoft.com/en-us/windows/win3
 Custom non-client layouts and wrapped menus are not fully inferable from window styles; restored
 client geometry retains this limitation of the standard-frame approach.
 
-`WindowEnumerator` caches monitor-query successes and failures by monitor handle within one
-snapshot. The cache clears before each new enumeration, so work-area changes and monitor
-removal are not carried across refreshes. Native actions query current geometry separately.
-Failed details are retried by the next scheduled snapshot, without extra retry loops.
+The Windows `Backend` is stateless. Each `Backend::snapshot()` call owns a monitor cache shared by
+all window-detail queries in that snapshot, including successful and failed monitor results. The
+cache is discarded when the call returns, so work-area changes and monitor removal are not carried
+across refreshes. Native actions query current geometry separately. Failed details are retried by
+the next scheduled snapshot, without extra retry loops.
 
 ## Size filters
 
@@ -195,7 +196,7 @@ and normal/maximized/minimized state; restored actions update placement rather t
 the window. Oversized targets that cannot fit native dimensions return errors.
 
 Individual actions capture one handle from the rendered snapshot. Section controls append one
-action per eligible handle. Core's non-exhaustive `Action<H>` currently contains
+action per eligible handle. Core's non-exhaustive `WindowAction<H>` currently contains
 `Resize(H, size)` and `MoveToCenter(H)`. The generic engine drains actions in order by calling
 `Backend::perform(action)`, then refreshes through `Backend::snapshot()`. The backend owns variant
 dispatch and deliberately panics on a future unsupported variant rather than silently doing nothing.
@@ -216,16 +217,18 @@ failures are always logged and do not abort actions for the remaining targets.
    models, and product cadence constants. It performs no filesystem I/O and does not install a logger.
 2. `turbozone-ui/src/`: generic `App<B>`, egui presentation, and standard-library config/schema
    filesystem operations. It has no dependency on the Windows crate.
-3. `turbozone-windows/src/`: native handles, cached enumeration, geometry queries,
-   `WindowsBackend`, Windows font setup, logger initialization, and the `turbozone.exe` entry point.
+3. `turbozone-windows/src/`: native handles, stateless snapshot adaptation with call-local monitor
+   caching, geometry queries, `Backend`, Windows font setup, logger initialization, and the
+   `turbozone.exe` entry point.
 
 ## Verification
 
 Integration tests cover schema/serialization, partial rule recovery, all resize modes, selector
 bounds, exact and partial matching, case sensitivity, priority ties, size filters, CLI/environment
-precedence, config preservation/creation, stderr output, error recurrence, grouping, and headless
-UI rendering. Private native tests cover monitor caching, first-error context, restored geometry,
-and native actions using fixture-owned windows.
+precedence, config preservation/creation, stderr output, error recurrence, grouping, headless UI
+rendering, and the public Windows snapshot, action, error, and restored-geometry contracts. Windows
+tests mutate only fixture-owned windows. The monitor cache remains a private implementation detail;
+its snapshot-local ownership and retry boundary are documented rather than instrumented for tests.
 
 The TOML example is parsed and compiled by a core regression test. Core fake-backend tests verify
 queue ordering, failure isolation, refresh behavior, name-based identity, grouping, and logging

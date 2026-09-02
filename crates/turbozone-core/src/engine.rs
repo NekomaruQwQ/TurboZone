@@ -32,7 +32,7 @@ impl<H: Copy> WindowAction<H> {
 
 /// Supplies snapshots and interprets native actions for one platform.
 ///
-/// Core forwards [`Action`] values without dispatching their variants. This keeps
+/// Core forwards [`WindowAction`] values without dispatching their variants. This keeps
 /// platform-specific dispatch beside the native mechanisms while core retains queue
 /// order, refresh policy, and non-fatal error handling.
 pub trait Backend {

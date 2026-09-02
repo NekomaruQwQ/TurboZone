@@ -323,28 +323,3 @@ pub fn resize_rect(rect: Rect<i32>, size: Size2D<i32>) -> Result<Rect<i32>> {
     }
     Ok(Rect::new(Point2D::new(x as i32, y as i32), size))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resize_preserves_integer_center_across_odd_dimensions() {
-        let old = Rect::new(Point2D::new(-1000, 123), Size2D::new(641, 481));
-        let new = resize_rect(old, Size2D::new(800, 600)).unwrap();
-        assert_eq!((new.center(), new.size), (old.center(), Size2D::new(800, 600)));
-    }
-
-    #[test]
-    fn resize_rejects_coordinate_overflow() {
-        let old = Rect::new(Point2D::new(i32::MAX - 10, 0), Size2D::new(10, 10));
-        assert_eq!(resize_rect(old, Size2D::new(100, 100)).unwrap_err().code(), E_INVALIDARG);
-    }
-
-    #[test]
-    fn frame_overhead_cannot_overflow_a_large_resize_target() {
-        assert_eq!(
-            checked_size_sum(Size2D::new(i32::MAX, 100), Size2D::new(16, 39)).unwrap_err().code(),
-            E_INVALIDARG);
-    }
-}

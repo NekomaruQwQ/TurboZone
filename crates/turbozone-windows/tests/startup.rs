@@ -101,13 +101,13 @@ fn cli_overrides_environment_and_relative_paths_use_the_working_directory() {
     }
     let output = command(&directory).env("TURBOZONE_CONFIG", "env.toml")
         .args(["--config", "cli.toml"]).output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(101));
     assert!(directory.path().join("cli.schema.json").is_file());
     assert!(!directory.path().join("env.schema.json").exists());
     assert!(stderr(&output).contains("cli.toml"));
 
     let output = command(&directory).env("TURBOZONE_CONFIG", "env.toml").output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(101));
     assert!(directory.path().join("env.schema.json").is_file());
     assert!(stderr(&output).contains("env.toml"));
 }
@@ -125,13 +125,13 @@ fn help_hides_private_environment_values_and_performs_no_io() {
 }
 
 #[test]
-fn configured_stderr_reports_warnings_and_fatal_errors_without_source_excerpts() {
+fn configured_stderr_reports_warnings_and_panic_chains_without_source_excerpts() {
     let directory = TempDir::new();
     fs::write(directory.path().join("private.toml"), "rules = [ # PRIVATE_SOURCE_SENTINEL").unwrap();
     fs::create_dir_all(directory.path().join("private.schema.json")).unwrap();
     let output = command(&directory).env("RUST_LOG", "warn")
         .args(["--config", "private.toml"]).output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(101));
     assert_eq!(output.stdout, b"");
     let diagnostics = stderr(&output);
     assert!(diagnostics.contains("failed to refresh schema"));
@@ -140,6 +140,9 @@ fn configured_stderr_reports_warnings_and_fatal_errors_without_source_excerpts()
 
     let output = command(&directory).env("RUST_LOG", "off")
         .args(["--config", "private.toml"]).output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert_eq!(output.stderr, b"");
+    assert_eq!(output.status.code(), Some(101));
+    let diagnostics = stderr(&output);
+    assert!(diagnostics.contains("failed to load configuration"));
+    assert!(diagnostics.contains("failed to parse configuration"));
+    assert!(!diagnostics.contains("PRIVATE_SOURCE_SENTINEL"));
 }
