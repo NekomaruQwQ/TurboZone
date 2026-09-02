@@ -1,8 +1,10 @@
-//! Windows snapshots and window manipulation for TurboRnR.
+//! Windows snapshots, action execution, and executable backend for TurboZone.
 
+mod backend;
 mod native;
 mod window;
 
+pub use backend::*;
 pub use window::*;
 
 pub use windows::core::{

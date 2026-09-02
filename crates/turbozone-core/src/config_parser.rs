@@ -2,12 +2,13 @@
 //!
 //! This module owns the transition from serialized [`Config`] values to [`RuntimeConfig`].
 //! Malformed documents fail as a whole, while invalid rules are diagnosed and excluded
-//! independently. Filesystem access and diagnostic logging remain application concerns.
+//! independently. Filesystem access and report logging remain caller concerns.
 
 use std::collections::BTreeSet;
 
 use euclid::default::Size2D;
 use serde::Deserialize;
+use smol_str::SmolStr;
 use thiserror::Error;
 
 use crate::{
@@ -93,7 +94,7 @@ fn compile_rules(rules: impl Iterator<Item = Result<Rule, ConfigError>>) -> Conf
         });
         match rule {
             Ok(rule) => {
-                names.insert(rule.name.clone());
+                names.insert(rule.name.to_string());
                 report.runtime.rules.push(rule);
             }
             Err(error) => report.diagnostics.push(RuleDiagnostic { index, error }),
@@ -175,14 +176,14 @@ fn compile_rule(index: usize, rule: Rule) -> Result<RuntimeRule, ConfigError> {
         });
     }
     let prefix = format!("rules[{index}]");
-    let description = rule.description.trim().to_owned();
-    let description = (!description.is_empty()).then_some(description);
+    let description = rule.description.trim();
+    let description = (!description.is_empty()).then(|| SmolStr::new(description));
     let (resize_exact, resize_selector) = compile_resize(rule.resize, &prefix)?;
     let program_filters = compile_program_match(rule.program, &prefix)?;
     let window_filters = compile_window_match(rule.window, &prefix)?;
 
     Ok(RuntimeRule {
-        name: rule.name,
+        name: rule.name.into(),
         description,
         relocate: rule.relocate,
         resize_exact,

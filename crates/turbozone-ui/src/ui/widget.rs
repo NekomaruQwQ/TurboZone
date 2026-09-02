@@ -1,3 +1,5 @@
+//! Reusable card primitives that preserve TurboZone's visual hierarchy.
+
 use eframe::egui::collapsing_header::CollapsingState;
 use eframe::egui::*;
 

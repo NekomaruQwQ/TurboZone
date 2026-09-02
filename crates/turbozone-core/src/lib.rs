@@ -1,7 +1,16 @@
-//! Platform-independent configuration parsing, matching, and geometry for TurboZone.
+//! Platform-independent product logic and backend contracts for TurboZone.
+//!
+//! Core owns configuration interpretation, stable rule identity, action orchestration,
+//! snapshot grouping, and non-fatal logging policy. Platform adapters own native reads
+//! and writes, while presentation crates decide when to tick and how to render the state.
 
 pub mod prelude;
 
+mod args;
+mod constants;
+mod data;
+mod engine;
+mod logging;
 mod window;
 mod manifest;
 
@@ -10,6 +19,11 @@ mod config_parser;
 mod pattern;
 mod runtime;
 
+pub use args::*;
+pub use constants::*;
+pub use data::*;
+pub use engine::*;
+pub use logging::*;
 pub use window::*;
 pub use manifest::*;
 

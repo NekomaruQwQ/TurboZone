@@ -1,3 +1,5 @@
+//! TurboZone's compact dark palette.
+
 use eframe::egui::Color32;
 
 const ZINC_900: Color32 = Color32::from_rgb(0x18, 0x18, 0x1B);

@@ -1,6 +1,6 @@
 use eframe::egui::{Context, RawInput, Shape};
-use turbozone::{data::group_windows, ui::app_ui};
-use turbozone_core::parse_config;
+use turbozone_core::{group_windows, parse_config};
+use turbozone_ui::ui::app_ui;
 
 #[path = "support/window.rs"]
 mod fixture;
@@ -10,11 +10,11 @@ use fixture::window;
 fn rendered_text(source: &str) -> Vec<String> {
     let config = parse_config(source).unwrap().runtime;
     let sections = group_windows(&config, vec![window("C:/Apps/App.exe", "Application")]);
-    let mut actions = Vec::new();
+    let mut actions = None;
     let mut output = Context::default().run_ui(RawInput::default(), |ui| {
-        app_ui(ui, &sections, &config, &mut actions);
+        actions = Some(app_ui(ui, &sections, &config));
     });
-    assert!(actions.is_empty(), "rendering without interaction must not queue native actions");
+    assert!(actions.unwrap().is_empty(), "rendering without interaction must not queue native actions");
     // No renderer consumes texture uploads in this integration test.
     output.textures_delta.clear();
     output.shapes.into_iter().filter_map(|shape| match shape.shape {

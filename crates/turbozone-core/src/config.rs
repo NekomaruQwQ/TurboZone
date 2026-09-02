@@ -4,11 +4,13 @@ use crate::Pattern;
 use schemars::*;
 use schemars::generate::SchemaSettings;
 
+const MAX_SIZE: i32 = 8192;
+
 /// The serialized top-level configuration for TurboZone.
 #[derive(Debug, Clone)]
 #[derive(Default)]
 #[derive(Deserialize, Serialize)]
-#[derive(schemars::JsonSchema)]
+#[derive(JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// Rules in source order.
@@ -17,14 +19,12 @@ pub struct Config {
 }
 
 impl Config {
-    /// Generates the input schema for TOML editors without running application validation.
+    /// Generates the JSON schema for [`Config`].
     ///
-    /// Draft 7 avoids requiring newer JSON Schema keywords in editor integrations.
-    /// Rule-name grammar, duplicate names, nonempty partial patterns, path separators,
-    /// and comparisons between bounds are validated by [`crate::parse_config`] and
-    /// [`crate::compile_config`].
+    /// Extra validation rules that cannot be enforced by the schema itself are
+    /// validated in [`crate::parse_config`] and [`crate::compile_config`].
     pub fn schema() -> Schema {
-        SchemaSettings::draft07()
+        SchemaSettings::draft2020_12()
             .for_deserialize()
             .into_generator()
             .into_root_schema_for::<Self>()
@@ -35,7 +35,7 @@ impl Config {
 #[derive(Debug, Clone)]
 #[derive(Default)]
 #[derive(Deserialize, Serialize)]
-#[derive(schemars::JsonSchema)]
+#[derive(JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
     // ---- Metadata ----
@@ -69,7 +69,7 @@ pub struct Rule {
 /// Complete serialized resize behavior.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[derive(Deserialize, Serialize)]
-#[derive(schemars::JsonSchema)]
+#[derive(JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[serde(untagged)]
 pub enum ResizeRule {
@@ -78,12 +78,12 @@ pub enum ResizeRule {
     /// Exact target size. The selector is disabled in this mode.
     Exact {
         /// Positive client-area `[width, height]` in physical pixels, independent of selector limits.
-        #[schemars(inner(range(min = 1, max = i32::MAX)))]
+        #[schemars(inner(range(min = 1, max = MAX_SIZE)))]
         exact: [i32; 2],
     },
     /// Selector properties with only a default size, no minimum, and no maximum.
     SelectorDefault(
-        #[schemars(inner(range(min = 1, max = i32::MAX)))]
+        #[schemars(inner(range(min = 1, max = MAX_SIZE)))]
         [i32; 2],
     ),
     /// Selector properties, including optional default, minimum, and maximum sizes.
@@ -99,20 +99,14 @@ impl Default for ResizeRule {
 /// Selector defaults and inclusive bounds; omitted bounds are unrestricted.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[derive(Deserialize, Serialize)]
-#[derive(schemars::JsonSchema)]
+#[derive(JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResizeSelector {
-    /// Primary `[width, height]` in positive physical pixels, independent of selector bounds.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(inner(range(min = 1, max = i32::MAX)))]
+    /// Primary `[width, height]` in physical pixels, independent of selector bounds.
     pub default: Option<[i32; 2]>,
-    /// Minimum `[width, height]` offered by the selector, in positive physical pixels.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(inner(range(min = 1, max = i32::MAX)))]
+    /// Minimum `[width, height]` offered by the selector, in physical pixels.
     pub min: Option<[i32; 2]>,
-    /// Maximum `[width, height]` offered by the selector, in positive physical pixels.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(inner(range(min = 1, max = i32::MAX)))]
+    /// Maximum `[width, height]` offered by the selector, in physical pixels.
     pub max: Option<[i32; 2]>,
 }
 
@@ -142,14 +136,12 @@ impl ResizeSelector {
 /// Program filters using serialized patterns or compiled predicates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[derive(Deserialize, Serialize)]
-#[derive(schemars::JsonSchema)]
+#[derive(JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProgramFilter<S> {
-    /// Optional case-insensitive program-name matcher.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Optional case-insensitive filename matcher.
     pub name: Option<S>,
-    /// Optional case-insensitive normalized-path matcher.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Optional case-insensitive path matcher.
     pub path: Option<S>,
 }
 
@@ -162,19 +154,14 @@ impl<S> Default for ProgramFilter<S> {
 /// Window filters using serialized patterns or compiled predicates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[derive(Deserialize, Serialize)]
-#[derive(schemars::JsonSchema)]
+#[derive(JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WindowFilter<S> {
     /// Optional case-sensitive window-title matcher.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<S>,
     /// Inclusive minimum client-area `[width, height]` in positive physical pixels.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(inner(range(min = 1, max = i32::MAX)))]
     pub min: Option<[i32; 2]>,
     /// Inclusive maximum client-area `[width, height]` in positive physical pixels.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(inner(range(min = 1, max = i32::MAX)))]
     pub max: Option<[i32; 2]>,
 }
 

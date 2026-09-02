@@ -7,7 +7,7 @@ export type Size = [width: number, height: number];
  */
 export type RuleName = string;
 
-/** Complete configuration accepted by M1; omitted rules means an empty list. */
+/** Complete TurboZone configuration; omitted rules means an empty list. */
 export interface Config {
     /** Valid rules retain declaration order; broken rules are skipped independently. */
     rules?: Rule[];

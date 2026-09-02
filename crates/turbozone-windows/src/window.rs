@@ -70,7 +70,7 @@ impl WindowEnumerator {
         let title = native::get_window_text(handle);
         let state = window_state(handle);
         let detail = self.window_detail(handle, state);
-        WindowInfo { handle: WindowHandle(handle), title, state, detail }
+        WindowInfo { handle: WindowHandle(handle), title: title.into(), state, detail }
     }
 
     /// Stops at the first failed query while retaining the original native error.
@@ -88,8 +88,8 @@ impl WindowEnumerator {
             monitor_rect: native::rect_from_native(&monitor.rcWork),
             content_rect,
             process_id,
-            program_path,
-            program_name,
+            program_path: program_path.into(),
+            program_name: program_name.into(),
         })
     }
 }

@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Config",
   "description": "The serialized top-level configuration for TurboZone.",
   "type": "object",
@@ -9,12 +9,12 @@
       "type": "array",
       "default": [],
       "items": {
-        "$ref": "#/definitions/Rule"
+        "$ref": "#/$defs/Rule"
       }
     }
   },
   "additionalProperties": false,
-  "definitions": {
+  "$defs": {
     "Pattern": {
       "description": "An exact string or a conjunction of nonempty literal partial patterns.",
       "anyOf": [
@@ -48,10 +48,10 @@
       "type": "object",
       "properties": {
         "name": {
-          "description": "Optional case-insensitive program-name matcher.",
+          "description": "Optional case-insensitive filename matcher.",
           "anyOf": [
             {
-              "$ref": "#/definitions/Pattern"
+              "$ref": "#/$defs/Pattern"
             },
             {
               "type": "null"
@@ -59,67 +59,15 @@
           ]
         },
         "path": {
-          "description": "Optional case-insensitive normalized-path matcher.",
+          "description": "Optional case-insensitive path matcher.",
           "anyOf": [
             {
-              "$ref": "#/definitions/Pattern"
+              "$ref": "#/$defs/Pattern"
             },
             {
               "type": "null"
             }
           ]
-        }
-      },
-      "additionalProperties": false
-    },
-    "ResizeLimits": {
-      "description": "Selector defaults and inclusive bounds; omitted bounds are unrestricted.",
-      "type": "object",
-      "properties": {
-        "default": {
-          "description": "Primary `[width, height]` in positive physical pixels, independent of selector bounds.",
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "type": "integer",
-            "format": "int32",
-            "maximum": 2147483647,
-            "minimum": 1
-          },
-          "maxItems": 2,
-          "minItems": 2
-        },
-        "max": {
-          "description": "Maximum `[width, height]` offered by the selector, in positive physical pixels.",
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "type": "integer",
-            "format": "int32",
-            "maximum": 2147483647,
-            "minimum": 1
-          },
-          "maxItems": 2,
-          "minItems": 2
-        },
-        "min": {
-          "description": "Minimum `[width, height]` offered by the selector, in positive physical pixels.",
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "type": "integer",
-            "format": "int32",
-            "maximum": 2147483647,
-            "minimum": 1
-          },
-          "maxItems": 2,
-          "minItems": 2
         }
       },
       "additionalProperties": false
@@ -141,7 +89,7 @@
               "items": {
                 "type": "integer",
                 "format": "int32",
-                "maximum": 2147483647,
+                "maximum": 8192,
                 "minimum": 1
               },
               "maxItems": 2,
@@ -154,14 +102,68 @@
           ]
         },
         {
+          "description": "Selector properties with only a default size, no minimum, and no maximum.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 8192,
+            "minimum": 1
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        {
           "description": "Selector properties, including optional default, minimum, and maximum sizes.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/ResizeLimits"
-            }
-          ]
+          "$ref": "#/$defs/ResizeSelector"
         }
       ]
+    },
+    "ResizeSelector": {
+      "description": "Selector defaults and inclusive bounds; omitted bounds are unrestricted.",
+      "type": "object",
+      "properties": {
+        "default": {
+          "description": "Primary `[width, height]` in physical pixels, independent of selector bounds.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "max": {
+          "description": "Maximum `[width, height]` offered by the selector, in physical pixels.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "min": {
+          "description": "Minimum `[width, height]` offered by the selector, in physical pixels.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        }
+      },
+      "additionalProperties": false
     },
     "Rule": {
       "description": "One serialized rule pairing window filters with the actions they enable.",
@@ -186,27 +188,15 @@
         },
         "program": {
           "description": "Program filters.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/ProgramFilter"
-            }
-          ]
+          "$ref": "#/$defs/ProgramFilter"
         },
         "resize": {
           "description": "Resize controls, target, and selector limits.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/ResizeRule"
-            }
-          ]
+          "$ref": "#/$defs/ResizeRule"
         },
         "window": {
           "description": "Window filters.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/WindowFilter"
-            }
-          ]
+          "$ref": "#/$defs/WindowFilter"
         }
       },
       "additionalProperties": false,
@@ -226,9 +216,7 @@
           ],
           "items": {
             "type": "integer",
-            "format": "int32",
-            "maximum": 2147483647,
-            "minimum": 1
+            "format": "int32"
           },
           "maxItems": 2,
           "minItems": 2
@@ -241,9 +229,7 @@
           ],
           "items": {
             "type": "integer",
-            "format": "int32",
-            "maximum": 2147483647,
-            "minimum": 1
+            "format": "int32"
           },
           "maxItems": 2,
           "minItems": 2
@@ -252,7 +238,7 @@
           "description": "Optional case-sensitive window-title matcher.",
           "anyOf": [
             {
-              "$ref": "#/definitions/Pattern"
+              "$ref": "#/$defs/Pattern"
             },
             {
               "type": "null"

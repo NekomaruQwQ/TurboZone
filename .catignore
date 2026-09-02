@@ -2,13 +2,28 @@
 
 /docs/
 
-/crates/*/tests/
+/crates/turbozone-core/src/config_parser.rs
 /crates/turbozone/src/
-/crates/turbozone-config/src/
+/crates/*/tests/
 
 *.lock
 *.schema.json
 
-# BEGIN maintain-catignore managed paths
-/crates/turbozone-core/src/config_parser.rs
-# END maintain-catignore managed paths
+# BEGIN agent
+/Cargo.toml
+/crates/turbozone-core/Cargo.toml
+/crates/turbozone-core/src/args.rs
+/crates/turbozone-core/src/constants.rs
+/crates/turbozone-core/src/data.rs
+/crates/turbozone-core/src/engine.rs
+/crates/turbozone-core/src/lib.rs
+/crates/turbozone-core/src/logging.rs
+/crates/turbozone-core/src/runtime.rs
+/crates/turbozone-core/src/window.rs
+/crates/turbozone-ui/Cargo.toml
+/crates/turbozone-ui/src/
+/crates/turbozone-windows/Cargo.toml
+/crates/turbozone-windows/src/backend.rs
+/crates/turbozone-windows/src/lib.rs
+/crates/turbozone-windows/src/main.rs
+# END agent

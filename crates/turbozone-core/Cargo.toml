@@ -8,9 +8,12 @@ license = { workspace = true }
 
 [dependencies]
 anyhow = { workspace = true }
+clap = { workspace = true }
 euclid = { workspace = true }
+log = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
+smol_str = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 

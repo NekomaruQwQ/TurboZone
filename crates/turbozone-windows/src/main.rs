@@ -1,15 +1,19 @@
+//! Windows process entry point and eframe specialization.
+
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use clap::Parser as _;
-use turbozone::{app, config, diagnostics, ui};
+use eframe::NativeOptions;
+use eframe::egui::{FontData, FontDefinitions, FontFamily, ViewportBuilder};
+use turbozone_core::Args;
+use turbozone_ui::{app, config, ui};
+use turbozone_windows::WindowsBackend;
 
-/// Handles CLI exits before startup I/O and reports fatal application errors once.
+/// Initializes process-global services and reports fatal startup failures once.
 fn main() -> ExitCode {
-    let args = config::Args::parse();
-    if let Err(error) = diagnostics::init_logging() {
-        eprintln!("failed to initialize logging: {error}");
-        return ExitCode::FAILURE;
-    }
+    let args = Args::parse();
+    pretty_env_logger::init();
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -19,12 +23,8 @@ fn main() -> ExitCode {
     }
 }
 
-/// Loads configuration before creating the GUI, so fatal failures cannot look like an empty app.
-fn run(args: &config::Args) -> anyhow::Result<()> {
-    use eframe::egui::{FontData, FontDefinitions, FontFamily, ViewportBuilder};
-    use eframe::NativeOptions;
-    use std::sync::Arc;
-
+/// Loads configuration before opening a native window and specializes the generic UI.
+fn run(args: &Args) -> anyhow::Result<()> {
     let config = config::load_config(&args.config)?;
 
     eframe::run_native(
@@ -55,6 +55,6 @@ fn run(args: &config::Args) -> anyhow::Result<()> {
                 },
             }
             ui::setup_style(egui);
-            Ok(Box::new(app::App::new(config)))
+            Ok(Box::new(app::App::new(config, WindowsBackend::default())))
         })).map_err(|error| anyhow::anyhow!("application failed: {error}"))
 }

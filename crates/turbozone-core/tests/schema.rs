@@ -16,7 +16,7 @@ fn schema_exposes_serialized_names_instead_of_rust_field_names() {
     };
     let serialized = serde_json::to_value(rule).unwrap();
     let schema = Config::schema();
-    let properties = schema.pointer("/definitions/Rule/properties").unwrap();
+    let properties = schema.pointer("/$defs/Rule/properties").unwrap();
     for name in serialized.as_object().unwrap().keys() {
         assert!(
             properties.get(name).is_some(),
@@ -34,7 +34,7 @@ fn optional_size_arrays_remain_nullable_and_not_required() {
         ("ResizeSelector", ["default", "min", "max"].as_slice()),
         ("WindowFilter", ["min", "max"].as_slice()),
     ] {
-        let object = &schema.as_value()["definitions"][definition];
+        let object = &schema.as_value()["$defs"][definition];
         for field in fields {
             let types = object["properties"][field]["type"].as_array().unwrap();
             assert!(types.contains(&json!("array")) && types.contains(&json!("null")));
@@ -52,7 +52,7 @@ fn optional_size_arrays_remain_nullable_and_not_required() {
 fn untagged_resize_schema_keeps_exact_and_selector_fields_separate() {
     let schema = Config::schema();
     let variants = schema
-        .pointer("/definitions/ResizeRule/anyOf")
+        .pointer("/$defs/ResizeRule/anyOf")
         .unwrap()
         .as_array()
         .unwrap();
@@ -69,7 +69,7 @@ fn untagged_resize_schema_keeps_exact_and_selector_fields_separate() {
     assert_eq!(exact["required"], json!(["exact"]));
     assert_eq!(exact["additionalProperties"], false);
 
-    let selector = schema.pointer("/definitions/ResizeSelector").unwrap();
+    let selector = schema.pointer("/$defs/ResizeSelector").unwrap();
     assert!(selector["properties"].get("exact").is_none());
     assert_eq!(selector["additionalProperties"], false);
     assert!(variants.iter().any(|variant| variant["type"] == "boolean"));
@@ -80,7 +80,7 @@ fn untagged_resize_schema_keeps_exact_and_selector_fields_separate() {
 #[test]
 fn size_schema_matches_array_serialization_and_runtime_bounds() {
     let schema = Config::schema();
-    let definitions = &schema.as_value()["definitions"];
+    let definitions = &schema.as_value()["$defs"];
     let selector_default = definitions["ResizeRule"]["anyOf"]
         .as_array()
         .unwrap()
@@ -94,7 +94,7 @@ fn size_schema_matches_array_serialization_and_runtime_bounds() {
         .find_map(|variant| variant.pointer("/properties/exact"))
         .unwrap();
     let serialized = serde_json::to_value(ResizeRule::Exact {
-        exact: [1, i32::MAX],
+        exact: [1, 8192],
     })
     .unwrap();
     let serialized_size = &serialized["exact"];

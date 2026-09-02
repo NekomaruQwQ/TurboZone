@@ -1,3 +1,5 @@
+//! Stateless egui presentation over core snapshots and actions.
+
 mod color;
 mod style;
 mod view;

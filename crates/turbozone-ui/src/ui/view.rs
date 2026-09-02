@@ -1,22 +1,30 @@
+//! Generic window-section rendering that emits core actions without native work.
+
+use std::fmt::Debug;
+use std::hash::Hash;
+
 use eframe::egui::*;
 use euclid::default::Size2D;
 use turbozone_core::{
-    ResizeSelector, RuntimeConfig, RuntimeRule, WindowInfo, WindowState, STANDARD_SIZE,
+    Action, ResizeSelector, RuntimeConfig, RuntimeRule, STANDARD_SIZE, WindowInfo,
+    WindowSection, WindowState,
 };
-use turbozone_windows::WindowHandle;
-
-use crate::app::Action;
-use crate::data::WindowSection;
 
 use super::color;
 use super::widget::Card;
 
-/// Renders matched windows and appends accepted native actions; diagnostics go to stderr.
-pub fn app_ui(
+/// Renders matched windows and returns accepted actions for deferred execution.
+///
+/// Rendering remains a pure snapshot operation: no backend is borrowed and no native
+/// work can occur within egui's UI pass.
+pub fn app_ui<H>(
     ui: &mut Ui,
-    windows: &[WindowSection],
-    config: &RuntimeConfig,
-    pending_actions: &mut Vec<Action>) {
+    windows: &[WindowSection<H>],
+    config: &RuntimeConfig) -> Vec<Action<H>>
+where
+    H: Copy + Debug + Eq + Hash + 'static,
+{
+    let mut actions = Vec::new();
     CentralPanel::default()
         .frame(Frame::new().inner_margin(Margin::same(10)))
         .show(ui, |ui| {
@@ -25,16 +33,20 @@ pub fn app_ui(
             ScrollArea::vertical()
                 .auto_shrink(false)
                 .scroll_bar_visibility(scroll_area::ScrollBarVisibility::AlwaysHidden)
-                .show(ui, |ui| sections_page(ui, windows, config, pending_actions));
+                .show(ui, |ui| sections_page(ui, windows, config, &mut actions));
         });
+    actions
 }
 
-/// Renders successfully classified windows in configuration order.
-fn sections_page(
+/// Resolves every section through its stable name so config reordering cannot retarget it.
+fn sections_page<H>(
     ui: &mut Ui,
-    windows: &[WindowSection],
+    windows: &[WindowSection<H>],
     config: &RuntimeConfig,
-    pending_actions: &mut Vec<Action>) {
+    actions: &mut Vec<Action<H>>)
+where
+    H: Copy + Debug + Eq + Hash + 'static,
+{
     if windows.is_empty() {
         Card::default().show(ui, |ui| {
             ui.label(RichText::new("No matched windows found").weak());
@@ -42,52 +54,51 @@ fn sections_page(
         return;
     }
     for section in windows {
-        let Some(rule) = config.rules.get(section.rule_index) else {
-            continue;
-        };
-        section_card(ui, section, rule, pending_actions);
+        let Some(rule) = config.rule(&section.rule_name) else { continue; };
+        section_card(ui, section, rule, actions);
     }
 }
 
-/// Keeps collapse state keyed by the stable rule and program identity.
-fn section_card(
+/// Keeps collapse state keyed by stable rule and program identities.
+fn section_card<H>(
     ui: &mut Ui,
-    section: &WindowSection,
+    section: &WindowSection<H>,
     rule: &RuntimeRule,
-    pending_actions: &mut Vec<Action>) {
+    actions: &mut Vec<Action<H>>)
+where
+    H: Copy + Debug + Eq + Hash + 'static,
+{
     let (header_actions, body_actions) = Card::default().show_collapsible(
         ui,
         ("window-section", rule.name.as_str(), section.program_path.as_str()),
         |ui| section_header(ui, section, rule),
         |ui| section_body(ui, section, rule));
-    pending_actions.extend(header_actions);
-    pending_actions.extend(body_actions.unwrap_or_default());
+    actions.extend(header_actions);
+    actions.extend(body_actions.unwrap_or_default());
 }
 
 /// Offers section actions only for handles with complete snapshot details.
-fn section_header(ui: &mut Ui, section: &WindowSection, rule: &RuntimeRule) -> Vec<Action> {
+fn section_header<H>(
+    ui: &mut Ui,
+    section: &WindowSection<H>,
+    rule: &RuntimeRule) -> Vec<Action<H>>
+where
+    H: Copy,
+{
     let mut actions = Vec::new();
     let available = Vec2::new(ui.available_width(), ui.spacing().interact_size.y);
     ui.allocate_ui_with_layout(available, Layout::right_to_left(Align::Center), |ui| {
-        let handles = || {
-            section.windows.iter()
-                .filter(|window| window.detail.is_ok())
-                .map(|window| window.handle)
-                .collect::<Vec<_>>()
-        };
         if rule.relocate && ui.button("CENTER ALL").clicked() {
-            actions.push(Action::Center {
-                windows: handles(),
-            });
+            actions.extend(actionable_handles(section).map(Action::MoveToCenter));
         }
-        section_resize_controls(ui, rule, handles, &mut actions);
+        section_resize_controls(ui, rule, section, &mut actions);
         if !rule.relocate && rule.resize_exact.is_none() && rule.resize_selector.is_none() {
             ui.label(RichText::new("READ ONLY").small().weak());
         }
 
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             ui.label(RichText::new(
-                rule.description.as_deref().unwrap_or(&rule.name)).heading());
+                rule.description.as_deref().unwrap_or(rule.name.as_str())).heading());
             ui.label(RichText::new(format!("{} windows", section.windows.len())).small().weak());
         });
     });
@@ -95,49 +106,54 @@ fn section_header(ui: &mut Ui, section: &WindowSection, rule: &RuntimeRule) -> V
 }
 
 /// Renders exact-only, selector-only, or primary-plus-selector resize controls.
-fn section_resize_controls(
+fn section_resize_controls<H: Copy>(
     ui: &mut Ui,
     rule: &RuntimeRule,
-    handles: impl Fn() -> Vec<WindowHandle>,
-    actions: &mut Vec<Action>) {
+    section: &WindowSection<H>,
+    actions: &mut Vec<Action<H>>) {
     let primary_size = rule.resize_exact
         .or_else(|| rule.resize_selector.as_ref()?.default.map(Size2D::from));
     let Some(primary_size) = primary_size else {
         if let Some(size) = rule.resize_selector.as_ref()
             .and_then(|selector| resize_menu_button(ui, "RESIZE", selector)) {
-            actions.push(Action::Resize {
-                windows: handles(),
-                size,
-            });
+            actions.extend(actionable_handles(section).map(|handle| Action::Resize(handle, size)));
         }
         return;
     };
 
     if ui.button(format!("RESIZE {}x{}", primary_size.width, primary_size.height)).clicked() {
-        actions.push(Action::Resize {
-            windows: handles(),
-            size: primary_size,
-        });
+        actions.extend(actionable_handles(section)
+            .map(|handle| Action::Resize(handle, primary_size)));
     }
     if let Some(size) = rule.resize_selector.as_ref()
         .and_then(|selector| resize_menu_button(ui, "\u{25bc}", selector)) {
-        actions.push(Action::Resize {
-            windows: handles(),
-            size,
-        });
+        actions.extend(actionable_handles(section).map(|handle| Action::Resize(handle, size)));
     }
 }
 
+/// Iterates only handles whose native metadata was complete when rendered.
+fn actionable_handles<H: Copy>(section: &WindowSection<H>) -> impl Iterator<Item = H> + '_ {
+    section.windows.iter()
+        .filter(|window| window.detail.is_ok())
+        .map(|window| window.handle)
+}
+
 /// Shows the program path and independently actionable window rows.
-fn section_body(ui: &mut Ui, section: &WindowSection, rule: &RuntimeRule) -> Vec<Action> {
+fn section_body<H>(
+    ui: &mut Ui,
+    section: &WindowSection<H>,
+    rule: &RuntimeRule) -> Vec<Action<H>>
+where
+    H: Copy + Debug + Eq + Hash + 'static,
+{
     let mut actions = Vec::new();
     if let Some(detail) = section.windows.first()
         .and_then(|window| window.detail.as_ref().ok()) {
-        ui.add(Label::new(RichText::new(&detail.program_path).small().weak()).truncate());
+        ui.add(Label::new(RichText::new(detail.program_path.as_str()).small().weak()).truncate());
         ui.add_space(4.0);
     }
     for window in &section.windows {
-        ui.push_id(window.handle.address(), |ui| {
+        ui.push_id(window.handle, |ui| {
             window_row(ui, window, rule, &mut actions);
         });
     }
@@ -145,11 +161,11 @@ fn section_body(ui: &mut Ui, section: &WindowSection, rule: &RuntimeRule) -> Vec
 }
 
 /// Renders a window title, visual state, controls, and detail status.
-fn window_row(
+fn window_row<H: Copy>(
     ui: &mut Ui,
-    window: &WindowInfo<WindowHandle>,
+    window: &WindowInfo<H>,
     rule: &RuntimeRule,
-    actions: &mut Vec<Action>) {
+    actions: &mut Vec<Action<H>>) {
     let available = Vec2::new(ui.available_width(), ui.spacing().interact_size.y);
     ui.allocate_ui_with_layout(available, Layout::right_to_left(Align::Center), |ui| {
         window_controls(ui, window, rule, actions);
@@ -162,7 +178,7 @@ fn window_row(
             if !state.is_empty() {
                 ui.label(RichText::new(state).small().weak());
             }
-            ui.add(Label::new(&window.title).truncate());
+            ui.add(Label::new(window.title.as_str()).truncate());
         });
     });
     window_metadata(ui, window);
@@ -170,25 +186,20 @@ fn window_row(
 }
 
 /// Appends actions only when details are complete and the rule enables them.
-fn window_controls(
+fn window_controls<H: Copy>(
     ui: &mut Ui,
-    window: &WindowInfo<WindowHandle>,
+    window: &WindowInfo<H>,
     rule: &RuntimeRule,
-    actions: &mut Vec<Action>) {
-    // Never expose actions for an incomplete snapshot, even if passed a matching rule.
-    let Ok(ref detail) = window.detail else {
-        return;
-    };
+    actions: &mut Vec<Action<H>>) {
+    // Incomplete snapshots remain visible to diagnostics but never become actionable.
+    let Ok(ref detail) = window.detail else { return; };
     if rule.relocate {
-        if detail.is_centered() {
-            ui.label(RichText::new("CENTERED").small().color(color::GREEN));
-        } else {
-            let response = ui.button("CENTER");
-            if response.clicked() {
-                actions.push(Action::Center {
-                    windows: vec![window.handle],
-                });
+        if !detail.is_centered() {
+            if ui.button("CENTER").clicked() {
+                actions.push(Action::MoveToCenter(window.handle));
             }
+        } else {
+            ui.label(RichText::new("CENTERED").small().color(color::GREEN));
         }
     }
 
@@ -197,10 +208,7 @@ fn window_controls(
     let Some(primary_size) = primary_size else {
         if let Some(size) = rule.resize_selector.as_ref()
             .and_then(|selector| resize_menu_button(ui, "RESIZE", selector)) {
-            actions.push(Action::Resize {
-                windows: vec![window.handle],
-                size,
-            });
+            actions.push(Action::Resize(window.handle, size));
         }
         return;
     };
@@ -210,17 +218,11 @@ fn window_controls(
             primary_size.width,
             primary_size.height))
         .clicked() {
-        actions.push(Action::Resize {
-            windows: vec![window.handle],
-            size: primary_size,
-        });
+        actions.push(Action::Resize(window.handle, primary_size));
     }
     if let Some(size) = rule.resize_selector.as_ref()
         .and_then(|selector| resize_menu_button(ui, "\u{25bc}", selector)) {
-        actions.push(Action::Resize {
-            windows: vec![window.handle],
-            size,
-        });
+        actions.push(Action::Resize(window.handle, size));
     }
 }
 
@@ -260,15 +262,13 @@ fn resize_menu(ui: &mut Ui, resize: &ResizeSelector) -> Option<Size2D<i32>> {
     selected
 }
 
-/// Shows metadata only for complete snapshots; failed queries are reported before grouping.
-fn window_metadata(ui: &mut Ui, window: &WindowInfo<WindowHandle>) {
-    let Ok(ref detail) = window.detail else {
-        return;
-    };
+/// Shows metadata only for complete snapshots; failed queries are logged by core.
+fn window_metadata<H>(ui: &mut Ui, window: &WindowInfo<H>) {
+    let Ok(ref detail) = window.detail else { return; };
     ui.horizontal(|ui| {
         ui.add_space(4.0);
         ui.label(RichText::new(format!("PID {}", detail.process_id)).small().weak());
-        ui.label(RichText::new(&detail.program_name).small().weak());
+        ui.label(RichText::new(detail.program_name.as_str()).small().weak());
         let size = detail.content_rect.size;
         let text = RichText::new(format!("{}x{}", size.width, size.height)).small();
         let known = STANDARD_SIZE.iter()

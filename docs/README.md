@@ -1,12 +1,12 @@
-# M1 Plan
+# TurboZone design
 
 ## Configuration contract
 
 TurboZone is rule-driven, without configurable groups or rule inheritance.
 The Rust config types define the accepted structure. Startup generates a schema beside the
-selected config for [editor completion and validation](M1-Schema.md).
-[M1-Plan-config.d.ts](M1-Plan-config.d.ts) illustrates configuration and conceptual runtime
-types; [M1-Plan-config.toml](M1-Plan-config.toml) is a validated example.
+selected config for [editor completion and validation](Schema.md).
+[config.example.d.ts](config.example.d.ts) illustrates configuration and conceptual runtime
+types; [config.example.toml](config.example.toml) is a validated example.
 
 Each `Rule` contains:
 
@@ -30,7 +30,8 @@ matcher forms are rejected. There are no compatibility aliases.
 `turbozone-core::parse_config()` checks the document envelope, then deserializes and compiles
 rules independently. Invalid TOML or top-level structure is fatal. Invalid individual rules are
 skipped as a whole, retaining the valid rules in declaration order. Diagnostics identify the
-original zero-based rule index. Only the first valid occurrence reserves a name; later duplicates
+original array position solely as a source location, never as runtime identity. Only the first
+valid occurrence reserves a name; later duplicates
 are skipped. An empty document, or a document with no usable rules, is valid.
 
 ## Startup and diagnostics
@@ -49,11 +50,12 @@ Unreadable config, creation failure, and malformed documents exit nonzero before
 The generated schema is replaceable, but user-authored config is never rewritten automatically;
 there is no temporary-file replacement workflow.
 
-TurboZone assumes a terminal is available. Errors and warnings go to stderr, with application
-startup info visible by default; `RUST_LOG` overrides the filters. Diagnostics omit TOML source
-excerpts. Per-window native failures include the handle and contextual error chain, without title
-or program-path dumps. Unchanged periodic failures are suppressed until they change, recover,
-or disappear and recur. Enumeration failures are also deduplicated. No diagnostic UI state is kept.
+TurboZone assumes a terminal is available. The Windows binary installs
+`pretty_env_logger::init()` without a custom filter builder; `RUST_LOG` controls filtering.
+Diagnostics omit TOML source excerpts. Per-window and action failures include the handle,
+contextual error chain, and available title or executable path. Unchanged periodic failures are
+suppressed until they change, recover, or disappear and recur. Enumeration failures are also
+deduplicated. No diagnostic UI state is kept.
 
 ## Actions and resize modes
 
@@ -92,25 +94,29 @@ objects, regexes, and globs are not accepted.
 Program paths and names compare case-insensitively. Configured patterns are lowercased once
 during validation; native candidates are lowercased once per snapshot. Titles stay case-sensitive.
 Runtime `ProgramFilter<Vec<PatternMatcher>>` and `WindowFilter<Vec<PatternMatcher>>`
-retain absent filters as `None`. Each matcher pairs an owned string with a function pointer.
+retain absent filters as `None`. Each matcher pairs an immutable `SmolStr` with a function pointer.
 `Pattern::to_matchers()` compiles literal case-sensitive predicates; the config compiler supplies
 normalized program patterns and rejects empty partials before calling it. No regex engine or
 trait objects are involved.
 
-`RuntimeConfig` keeps one source-order vector. For each window with complete details:
+`RuntimeConfig` keeps one source-order vector but exposes rules by stable name rather than array
+position. For each window with complete details:
 
 1. Scan all rules in source order.
 2. AND all configured filters.
 3. Replace the winner only when a matching rule has strictly greater priority.
 4. Equal priority therefore favors the first rule.
 
-This straightforward scan also preserves source-order UI sections. No additional priority index
-is needed for the expected rule/window counts at the 100 ms logic interval.
+`matching_rule_name()` returns the winning name and `rule(name)` resolves it. This straightforward
+scan preserves source-order UI sections without allowing array positions to escape as identity.
+No additional priority index is needed for the expected rule/window counts at the 10 Hz logic rate.
 
 ## Window geometry and snapshots
 
-The core crate owns `WindowInfo<H>`, `WindowDetail`, and `WindowState`. The Windows crate owns
-the concrete `WindowHandle` and returns `WindowInfo<WindowHandle>`.
+The core crate owns `WindowInfo<H>`, `WindowDetail`, `WindowState`, and the generic `Backend`
+contract. The Windows crate owns the concrete `WindowHandle` and returns
+`WindowInfo<WindowHandle>`. Immutable runtime names, titles, paths, and matcher literals use
+`SmolStr`; mutable serialized config input and filesystem buffers remain `String`.
 
 Every snapshot retains its handle, title, and visual state. Its `detail` is either:
 
@@ -163,9 +169,9 @@ WindowInfo
     Ok(detail), winning rule -> (rule, program path) section
 ```
 
-`group_windows()` moves matched snapshots into `Vec<WindowSection>` without cloning them.
+`group_windows()` moves matched snapshots into `Vec<WindowSection<H>>` without cloning them.
 Sections are ordered by valid rule source order, then lowercase program path. Persistent section
-identity is `(rule.name, lowercase program path)`; the rule index is snapshot-local.
+identity is `(rule.name, lowercase program path)`; rule array indices are never retained.
 
 Windows from the same program matching the same rule share a section. Different paths or
 winning rules form separate sections. Actionless matched rules still appear. The UI keeps section
@@ -188,9 +194,16 @@ the integer client-area center, including odd-sized targets. Actions preserve ac
 and normal/maximized/minimized state; restored actions update placement rather than restoring
 the window. Oversized targets that cannot fit native dimensions return errors.
 
-Individual and section actions capture handles from the rendered snapshot and execute on the
-next logic tick. A snapshot is not an atomic OS transaction: windows can disappear or change
-between queries and actions, so native actions remain fallible.
+Individual actions capture one handle from the rendered snapshot. Section controls append one
+action per eligible handle. Core's non-exhaustive `Action<H>` currently contains
+`Resize(H, size)` and `MoveToCenter(H)`. The generic engine drains actions in order by calling
+`Backend::perform(action)`, then refreshes through `Backend::snapshot()`. The backend owns variant
+dispatch and deliberately panics on a future unsupported variant rather than silently doing nothing.
+
+The eframe app records the last completed logic tick and calls the engine immediately at startup,
+when an action is pending, or at the core-owned 10 Hz cadence. A snapshot is not an atomic OS
+transaction: windows can disappear or change between queries and actions, so native actions
+remain fallible.
 
 If top-level enumeration fails, stale matched sections are cleared and the enumeration error
 is logged. Per-window detail failures do not invalidate other windows. User-requested action
@@ -198,16 +211,13 @@ failures are always logged and do not abort actions for the remaining targets.
 
 ## Source layout
 
-1. `turbozone-core/src/`: serialized config and schema, document parsing, per-rule validation and
-   compilation, structured diagnostics, literal patterns, runtime matching, platform-independent
-   window snapshots, and the array-based built-in resize manifest. This library performs no
-   filesystem I/O or logging.
-2. `turbozone-windows/src/`: native handles, cached enumeration, geometry queries, and actions.
-3. `turbozone/src/config.rs`: Clap arguments and explicit configuration startup.
-5. `turbozone/src/diagnostics.rs`: stderr setup and bounded periodic-error suppression.
-6. `turbozone/src/data.rs`: matched sections only.
-7. `turbozone/src/app.rs`: snapshot timing, error reporting, and queued native actions.
-8. `turbozone/src/ui/view.rs`: matched sections, metadata, and action controls.
+1. `turbozone-core/src/`: CLI shape, serialized config and schema, validation, runtime matching,
+   backend contract, action queue, snapshot lifecycle, stable sections, log deduplication, window
+   models, and product cadence constants. It performs no filesystem I/O and does not install a logger.
+2. `turbozone-ui/src/`: generic `App<B>`, egui presentation, and standard-library config/schema
+   filesystem operations. It has no dependency on the Windows crate.
+3. `turbozone-windows/src/`: native handles, cached enumeration, geometry queries,
+   `WindowsBackend`, Windows font setup, logger initialization, and the `turbozone.exe` entry point.
 
 ## Verification
 
@@ -217,6 +227,8 @@ precedence, config preservation/creation, stderr output, error recurrence, group
 UI rendering. Private native tests cover monitor caching, first-error context, restored geometry,
 and native actions using fixture-owned windows.
 
-The TOML example is parsed and compiled by a config-crate regression test. Schema-only tests stay
-in the core integration suite. Verification uses release-mode workspace tests and Clippy with
-warnings denied. Formatting is manual; no formatter is run. Interactive UI checks remain manual.
+The TOML example is parsed and compiled by a core regression test. Core fake-backend tests verify
+queue ordering, failure isolation, refresh behavior, name-based identity, grouping, and logging
+deduplication. Schema-only tests stay in the core integration suite. Verification uses release-mode
+workspace tests and Clippy with warnings denied. Formatting is manual; no formatter is run.
+Interactive UI checks remain manual.

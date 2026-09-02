@@ -1,4 +1,5 @@
 use euclid::default::Size2D;
+use smol_str::SmolStr;
 use turbozone_core::*;
 
 /// Deserializes fixtures that exercise compilation separately from document parsing.
@@ -333,8 +334,9 @@ fn matching_rule_prefers_higher_priority_over_source_order() {
     .expect("rules must validate");
 
     assert_eq!(
-        runtime.matching_rule_index(None, "c:/app.exe", "App", None),
-        Some(1)
+        runtime.matching_rule_name(None, "c:/app.exe", "App", None)
+            .map(SmolStr::as_str),
+        Some("second")
     );
 }
 
@@ -354,8 +356,9 @@ fn matching_rule_uses_source_order_for_equal_priority() {
     .expect("rules must validate");
 
     assert_eq!(
-        runtime.matching_rule_index(None, "c:/app.exe", "App", None),
-        Some(0)
+        runtime.matching_rule_name(None, "c:/app.exe", "App", None)
+            .map(SmolStr::as_str),
+        Some("first")
     );
 }
 
@@ -371,7 +374,7 @@ fn size_filtered_rule_rejects_missing_client_size() {
     .expect("size matcher must validate");
 
     assert_eq!(
-        runtime.matching_rule_index(None, "c:/app.exe", "App", None),
+        runtime.matching_rule_name(None, "c:/app.exe", "App", None),
         None
     );
 }
@@ -390,13 +393,14 @@ fn size_bounds_are_inclusive() {
     .expect("equal inclusive bounds must validate");
 
     assert_eq!(
-        runtime.matching_rule_index(None, "c:/app.exe", "App", Some(Size2D::new(640, 480))),
-        Some(0)
+        runtime.matching_rule_name(None, "c:/app.exe", "App", Some(Size2D::new(640, 480)))
+            .map(SmolStr::as_str),
+        Some("bounded")
     );
 
     for size in [[639, 480], [640, 479], [641, 480], [640, 481]] {
         assert_eq!(
-            runtime.matching_rule_index(None, "c:/app.exe", "App", Some(Size2D::from(size))),
+            runtime.matching_rule_name(None, "c:/app.exe", "App", Some(Size2D::from(size))),
             None,
             "size {size:?} must fail one of the bounds"
         );
@@ -463,13 +467,13 @@ fn unknown_rule_property_is_rejected_by_deserialization() {
 }
 
 #[test]
-fn documented_m1_example_validates() {
-    let report = parse_config(include_str!("../../../docs/M1-Plan-config.toml"))
-        .expect("documented M1 example must deserialize");
+fn documented_example_validates() {
+    let report = parse_config(include_str!("../../../docs/config.example.toml"))
+        .expect("documented example must deserialize");
     assert_eq!(
         report.diagnostics.len(),
         0,
-        "documented M1 example must compile without rejected rules"
+        "documented example must compile without rejected rules"
     );
 }
 
@@ -667,9 +671,7 @@ fn parser_recovers_whole_rules_in_source_order_and_only_valid_names_are_reserved
         [[rules]]
         name = "last"
         priority = 7
-    "#,
-    )
-    .unwrap();
+    "#).unwrap();
     assert_eq!(
         report
             .runtime
@@ -702,8 +704,9 @@ fn parser_recovers_whole_rules_in_source_order_and_only_valid_names_are_reserved
     assert_eq!(
         report
             .runtime
-            .matching_rule_index(None, "c:/app.exe", "App", None),
-        Some(0)
+            .matching_rule_name(None, "c:/app.exe", "App", None)
+            .map(SmolStr::as_str),
+        Some("reused")
     );
 }
 
@@ -752,9 +755,7 @@ fn parser_checks_each_partial_program_component_without_folding_titles() {
         program.name = { starts_with = "TO", ends_with = ".EXE", contains = "OOL" }
         program.path = { starts_with = "C:/", ends_with = "/TOOL.EXE", contains = "/APPS/" }
         window.title = { starts_with = "Tool", ends_with = "Ready", contains = " - " }
-    "#,
-    )
-    .unwrap();
+    "#).unwrap();
     assert!(report.diagnostics.is_empty());
     let rule = &report.runtime.rules[0];
     assert!(rule.matches(Some("tool.exe"), "c:/apps/tool.exe", "Tool - Ready", None));

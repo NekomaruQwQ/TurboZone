@@ -1,14 +1,15 @@
 use crate::prelude::*;
 use super::*;
+use smol_str::SmolStr;
 
 /// A validated rule ready for matching and UI rendering.
 #[derive(Debug)]
 pub struct RuntimeRule {
     // --- Metadata ----
     /// Stable unique rule identifier.
-    pub name: String,
+    pub name: SmolStr,
     /// Trimmed user-facing section name, when nonempty.
-    pub description: Option<String>,
+    pub description: Option<SmolStr>,
 
     // --- Filters ----
     /// Predicates applied to program metadata.
@@ -83,18 +84,23 @@ pub struct RuntimeConfig {
 }
 
 impl RuntimeConfig {
-    /// Returns the winning rule index, preferring higher priority and then source order.
+    /// Returns a rule by its stable unique name.
+    pub fn rule(&self, name: &str) -> Option<&RuntimeRule> {
+        self.rules.iter().find(|rule| rule.name == name)
+    }
+
+    /// Returns the winning rule name, preferring higher priority and then source order.
     ///
     /// Program names and paths must already be lowercased. Window titles remain
     /// case-sensitive and must retain their native casing.
-    pub fn matching_rule_index(
+    pub fn matching_rule_name(
         &self,
         program_name: Option<&str>,
         program_path: &str,
         window_title: &str,
-        client_size: Option<Size2D<i32>>) -> Option<usize> {
+        client_size: Option<Size2D<i32>>) -> Option<&SmolStr> {
         let mut winner = None;
-        for (index, rule) in self.rules.iter().enumerate() {
+        for rule in &self.rules {
             if !rule.matches(
                 program_name,
                 program_path,
@@ -103,9 +109,9 @@ impl RuntimeConfig {
                 continue;
             }
             if winner.is_none_or(|(_, priority)| rule.priority > priority) {
-                winner = Some((index, rule.priority));
+                winner = Some((&rule.name, rule.priority));
             }
         }
-        winner.map(|(index, _)| index)
+        winner.map(|(name, _)| name)
     }
 }

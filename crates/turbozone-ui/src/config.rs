@@ -2,20 +2,10 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context as _, Result};
-use clap::Parser;
 use turbozone_core::{Config, RuntimeConfig};
-
-/// Command-line configuration; no implicit path is selected or searched.
-#[derive(Debug, Parser)]
-#[command(version, about = "Rule-driven window positioning and resizing")]
-pub struct Args {
-    /// Config file to load or create; relative paths use the current working directory.
-    #[arg(long, env = "TURBOZONE_CONFIG", value_name = "FILE", hide_env_values = true)]
-    pub config: PathBuf,
-}
 
 /// Refreshes the schema, creates a missing config, and loads all usable rules.
 ///

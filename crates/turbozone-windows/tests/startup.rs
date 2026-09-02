@@ -1,8 +1,8 @@
 use std::fs;
 use std::process::{Command, Output};
 
-use turbozone::config::load_config;
 use turbozone_core::Config;
+use turbozone_ui::config::load_config;
 
 #[path = "support/temp_dir.rs"]
 mod temp_dir;
@@ -125,11 +125,12 @@ fn help_hides_private_environment_values_and_performs_no_io() {
 }
 
 #[test]
-fn default_stderr_reports_warnings_and_fatal_errors_without_source_excerpts() {
+fn configured_stderr_reports_warnings_and_fatal_errors_without_source_excerpts() {
     let directory = TempDir::new();
     fs::write(directory.path().join("private.toml"), "rules = [ # PRIVATE_SOURCE_SENTINEL").unwrap();
     fs::create_dir_all(directory.path().join("private.schema.json")).unwrap();
-    let output = command(&directory).args(["--config", "private.toml"]).output().unwrap();
+    let output = command(&directory).env("RUST_LOG", "warn")
+        .args(["--config", "private.toml"]).output().unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert_eq!(output.stdout, b"");
     let diagnostics = stderr(&output);

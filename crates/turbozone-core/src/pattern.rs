@@ -1,4 +1,5 @@
 use serde::*;
+use smol_str::SmolStr;
 
 /// Omits empty partial components without introducing an always-true predicate.
 fn none_if_default<T: Default + PartialEq>(value: T) -> Option<T> {
@@ -9,11 +10,14 @@ fn none_if_default<T: Default + PartialEq>(value: T) -> Option<T> {
     }
 }
 
-/// An owned literal pattern paired with its case-sensitive string predicate.
+/// An immutable literal pattern paired with its case-sensitive string predicate.
+///
+/// Compiled literals use [`SmolStr`] because they are cloned into long-lived runtime
+/// rules but are usually short enough to remain inline.
 #[derive(Debug, Clone)]
 pub struct PatternMatcher(
     /// Literal text, already normalized by the config compiler when appropriate.
-    String,
+    SmolStr,
     /// Predicate chosen once during compilation.
     fn(input: &str, pattern: &str) -> bool);
 
@@ -56,19 +60,19 @@ impl Pattern {
 
         match *self {
             Self::Exact(ref t) =>
-                iter::once(PatternMatcher(t.clone(), |s, t| s == t))
+                iter::once(PatternMatcher(t.as_str().into(), |s, t| s == t))
                     .collect(),
             Self::Partial { ref starts_with, ref ends_with, ref contains } => {
                 iter::empty()
                     .chain(
-                        none_if_default(starts_with.clone())
-                            .map(|t| PatternMatcher(t, |s, t| s.starts_with(t))))
+                        none_if_default(starts_with.as_str())
+                            .map(|t| PatternMatcher(t.into(), |s, t| s.starts_with(t))))
                     .chain(
-                        none_if_default(ends_with.clone())
-                            .map(|t| PatternMatcher(t, |s, t| s.ends_with(t))))
+                        none_if_default(ends_with.as_str())
+                            .map(|t| PatternMatcher(t.into(), |s, t| s.ends_with(t))))
                     .chain(
-                        none_if_default(contains.clone())
-                            .map(|t| PatternMatcher(t, |s, t| s.contains(t))))
+                        none_if_default(contains.as_str())
+                            .map(|t| PatternMatcher(t.into(), |s, t| s.contains(t))))
                     .collect()
             }
         }

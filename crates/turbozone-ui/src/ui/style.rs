@@ -1,3 +1,5 @@
+//! Global egui style installation owned by the presentation layer.
+
 use eframe::egui::*;
 
 use super::color;

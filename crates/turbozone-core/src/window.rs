@@ -1,4 +1,5 @@
 use euclid::default::*;
+use smol_str::SmolStr;
 
 /// The current visual state of a native window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -18,7 +19,7 @@ pub struct WindowInfo<H> {
     /// Native handle identifying the exact enumerated window.
     pub handle: H,
     /// Case-sensitive window title.
-    pub title: String,
+    pub title: SmolStr,
     /// Current normal, maximized, or minimized state.
     pub state: WindowState,
     /// Complete window details from this snapshot, or an error if any detail
@@ -38,9 +39,9 @@ pub struct WindowDetail {
     /// Successfully queried owning process identifier.
     pub process_id: u32,
     /// Windows-supplied program path with backslashes replaced by forward slashes.
-    pub program_path: String,
+    pub program_path: SmolStr,
     /// Program filename used by configuration matching.
-    pub program_name: String,
+    pub program_name: SmolStr,
 }
 
 impl WindowDetail {

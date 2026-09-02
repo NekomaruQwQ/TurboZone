@@ -6,9 +6,21 @@ version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 
+[[bin]]
+name = "turbozone"
+path = "src/main.rs"
+
 [dependencies]
 turbozone-core = { workspace = true }
+turbozone-ui = { workspace = true }
 
 anyhow = { workspace = true }
+clap = { workspace = true }
+eframe = { workspace = true }
 euclid = { workspace = true }
+log = { workspace = true }
+pretty_env_logger = { workspace = true }
 windows = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -9,7 +9,7 @@ The TypeScript declarations in this directory are illustrative, not generator in
 Pass a file explicitly, or set `TURBOZONE_CONFIG`. The CLI wins when both are supplied:
 
 ```sh
-cargo run --release -p turbozone -- --config D:/Private/TurboZone/local.config.toml
+cargo run --release -p turbozone-windows --bin turbozone -- --config D:/Private/TurboZone/local.config.toml
 ```
 
 Relative paths use the current working directory. There is no executable-adjacent default or
@@ -45,7 +45,7 @@ artifact and no standalone generation feature or example is required.
    resize.exact = [1440, 900]
    ```
 
-The schema path is relative to the TOML file. The [example configuration](M1-Plan-config.toml)
+The schema path is relative to the TOML file. The [example configuration](config.example.toml)
 already names its generated sibling. Local schemas work offline. Do not add a `$schema` TOML
 key: unknown top-level fields are fatal; `#:schema` is a comment understood by the editor.
 
@@ -55,10 +55,10 @@ or `resize.exact = [0, 900]`. An exact resize cannot be combined with selector f
 
 ## Schema and parser boundaries
 
-The schema uses JSON Schema Draft 7 with internal references, without additional downloads.
+The schema uses JSON Schema Draft 2020-12 with `$defs` internal references, without additional downloads.
 It describes input structure, defaults, renamed keys, untagged alternatives, and rejected unknown
 fields. Sizes use `[i32; 2]`, serialized as `[width, height]` in physical pixels. Schemars derives the
-fixed array length; per-element annotations require positive integers no greater than `i32::MAX`.
+fixed array length; per-element annotations require positive integers no greater than 8192.
 Optional Rust fields can include JSON `null` in the schema; TOML has no null, so omit them instead.
 
 `turbozone-core::parse_config()` parses the document and compiles rules independently. Invalid
