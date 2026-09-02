@@ -4,6 +4,7 @@ use std::fmt;
 use std::hash::Hash;
 
 use euclid::default::Size2D;
+use smol_str::{SmolStr, format_smolstr};
 
 use crate::{SnapshotLogging, RuntimeConfig, WindowInfo, WindowSection, group_windows};
 
@@ -110,7 +111,7 @@ impl<B: Backend> Engine<B> {
         let windows = match self.backend.snapshot() {
             Ok(windows) => windows,
             Err(error) => {
-                self.logging.enumeration_failed(error.to_string());
+                self.logging.enumeration_failed(format_smolstr!("{error}"));
                 self.sections.clear();
                 return;
             },
@@ -122,21 +123,24 @@ impl<B: Backend> Engine<B> {
     /// Returns the backend after consuming the engine, primarily for adapter tests.
     pub fn into_backend(self) -> B { self.backend }
 
-    /// Formats cached metadata before the backend consumes the action.
-    fn window_identity(&self, handle: B::Handle) -> String {
+    /// Owns cached metadata before the backend consumes the action.
+    ///
+    /// The identity must outlive the snapshot borrow because native execution may
+    /// invalidate it; compact immutable text keeps that boundary explicit.
+    fn window_identity(&self, handle: B::Handle) -> SmolStr {
         let window = self.sections.iter()
             .flat_map(|section| &section.windows)
             .find(|window| window.handle == handle);
-        match window {
-            Some(window) => if let Ok(detail) = window.detail.as_ref() {
-                format!(
-                    "{handle:?} title={:?} executable={:?}",
-                    window.title,
-                    detail.program_path)
-            } else {
-                format!("{handle:?} title={:?}", window.title)
-            },
-            None => format!("{handle:?}"),
+        let Some(window) = window else {
+            return format_smolstr!("{handle:?}");
+        };
+        if let Ok(detail) = window.detail.as_ref() {
+            format_smolstr!(
+                "{handle:?} title={:?} executable={:?}",
+                window.title,
+                detail.program_path)
+        } else {
+            format_smolstr!("{handle:?} title={:?}", window.title)
         }
     }
 }

@@ -3,6 +3,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use euclid::default::{Point2D, Rect, Size2D};
+use smol_str::{SmolStr, format_smolstr};
 use turbozone_core::WindowState;
 use turbozone_windows::{Handle, window::get_content_rect};
 use windows::core::{HSTRING, PCWSTR, w};
@@ -23,7 +24,7 @@ static NEXT_WINDOW: AtomicU64 = AtomicU64::new(0);
 /// enumerates only visible top-level windows.
 pub struct TestWindow {
     handle: HWND,
-    title: String,
+    title: SmolStr,
 }
 
 impl TestWindow {
@@ -36,8 +37,8 @@ impl TestWindow {
     /// Uses the predefined STATIC class so fixtures require no process-global registration.
     fn new(visible: bool) -> Self {
         let sequence = NEXT_WINDOW.fetch_add(1, Ordering::Relaxed);
-        let title = format!("TurboZone integration test {}-{sequence}", std::process::id());
-        let wide_title = HSTRING::from(&title);
+        let title = format_smolstr!("TurboZone integration test {}-{sequence}", std::process::id());
+        let wide_title = HSTRING::from(title.as_str());
         let extended_style = if visible {
             WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
         } else {

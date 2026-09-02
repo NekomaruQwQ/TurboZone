@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 
-use smol_str::SmolStr;
+use smol_str::{SmolStr, format_smolstr};
 
 use crate::WindowInfo;
 
@@ -31,7 +31,7 @@ impl<H: Copy + Debug + Eq + Hash> SnapshotLogging<H> {
         let mut current = HashMap::new();
         for window in windows {
             if let Err(ref error) = window.detail {
-                let message = SmolStr::new(format!("{error:#}"));
+                let message = format_smolstr!("{error:#}");
                 if self.window_errors.get(&window.handle) != Some(&message) {
                     log::warn!(
                         "window {:?} title={:?}: {message}",

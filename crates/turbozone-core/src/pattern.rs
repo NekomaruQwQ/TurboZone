@@ -1,15 +1,6 @@
 use serde::*;
 use smol_str::SmolStr;
 
-/// Omits empty partial components without introducing an always-true predicate.
-fn none_if_default<T: Default + PartialEq>(value: T) -> Option<T> {
-    if value == T::default() {
-        None
-    } else {
-        Some(value)
-    }
-}
-
 /// An immutable literal pattern paired with its case-sensitive string predicate.
 ///
 /// Compiled literals use [`SmolStr`] because they are cloned into long-lived runtime
@@ -27,6 +18,9 @@ impl PatternMatcher {
 }
 
 /// An exact string or a conjunction of nonempty literal partial patterns.
+///
+/// Serialized and compiled literals share [`SmolStr`] so parsing, validation, and
+/// runtime matching keep one owned representation without changing their wire format.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[derive(Deserialize, Serialize)]
 #[derive(schemars::JsonSchema)]
@@ -34,18 +28,18 @@ impl PatternMatcher {
 #[serde(untagged)]
 pub enum Pattern {
     /// Exact match against the entire string.
-    Exact(String),
+    Exact(SmolStr),
     /// Several non-empty partial predicates which are ANDed.
     Partial {
         /// Required prefix, or an empty string when omitted.
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        starts_with: String,
+        #[serde(default, skip_serializing_if = "SmolStr::is_empty")]
+        starts_with: SmolStr,
         /// Required suffix, or an empty string when omitted.
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        ends_with: String,
+        #[serde(default, skip_serializing_if = "SmolStr::is_empty")]
+        ends_with: SmolStr,
         /// Required substring, or an empty string when omitted.
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        contains: String,
+        #[serde(default, skip_serializing_if = "SmolStr::is_empty")]
+        contains: SmolStr,
     }
 }
 
@@ -60,19 +54,19 @@ impl Pattern {
 
         match *self {
             Self::Exact(ref t) =>
-                iter::once(PatternMatcher(t.as_str().into(), |s, t| s == t))
+                iter::once(PatternMatcher(t.clone(), |s, t| s == t))
                     .collect(),
             Self::Partial { ref starts_with, ref ends_with, ref contains } => {
                 iter::empty()
                     .chain(
-                        none_if_default(starts_with.as_str())
-                            .map(|t| PatternMatcher(t.into(), |s, t| s.starts_with(t))))
+                        (!starts_with.is_empty())
+                            .then(|| PatternMatcher(starts_with.clone(), |s, t| s.starts_with(t))))
                     .chain(
-                        none_if_default(ends_with.as_str())
-                            .map(|t| PatternMatcher(t.into(), |s, t| s.ends_with(t))))
+                        (!ends_with.is_empty())
+                            .then(|| PatternMatcher(ends_with.clone(), |s, t| s.ends_with(t))))
                     .chain(
-                        none_if_default(contains.as_str())
-                            .map(|t| PatternMatcher(t.into(), |s, t| s.contains(t))))
+                        (!contains.is_empty())
+                            .then(|| PatternMatcher(contains.clone(), |s, t| s.contains(t))))
                     .collect()
             }
         }

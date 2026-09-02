@@ -1,4 +1,5 @@
 use eframe::egui::{Context, RawInput, Shape};
+use smol_str::{SmolStr, format_smolstr};
 use turbozone_core::{group_windows, parse_config};
 use turbozone_ui::ui::app_ui;
 
@@ -7,7 +8,7 @@ mod fixture;
 use fixture::window;
 
 /// Runs the public view headlessly; snapshots are never sent to native actions.
-fn rendered_text(source: &str) -> Vec<String> {
+fn rendered_text(source: &str) -> Vec<SmolStr> {
     let config = parse_config(source).unwrap().runtime;
     let sections = group_windows(&config, vec![window("C:/Apps/App.exe", "Application")]);
     let mut actions = None;
@@ -18,7 +19,7 @@ fn rendered_text(source: &str) -> Vec<String> {
     // No renderer consumes texture uploads in this integration test.
     output.textures_delta.clear();
     output.shapes.into_iter().filter_map(|shape| match shape.shape {
-        Shape::Text(text) => Some(text.galley.text().to_owned()),
+        Shape::Text(text) => Some(SmolStr::new(text.galley.text())),
         _ => None,
     }).collect()
 }
@@ -46,7 +47,7 @@ fn resize_modes_preserve_primary_and_selector_controls() {
         ("resize.exact = [1280, 720]", Some("RESIZE 1280x720"), false),
         ("resize.default = [1280, 720]", Some("RESIZE 1280x720"), true),
     ] {
-        let source = format!("[[rules]]\nname = 'app'\nmove = true\n{resize}");
+        let source = format_smolstr!("[[rules]]\nname = 'app'\nmove = true\n{resize}");
         let text = rendered_text(&source);
         assert!(text.iter().any(|text| text == "CENTER ALL"));
         assert!(text.iter().any(|text| text == "CENTER"));

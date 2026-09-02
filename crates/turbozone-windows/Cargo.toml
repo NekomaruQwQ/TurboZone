@@ -20,6 +20,7 @@ eframe = { workspace = true }
 euclid = { workspace = true }
 log = { workspace = true }
 pretty_env_logger = { workspace = true }
+smol_str = { workspace = true }
 windows = { workspace = true }
 
 [dev-dependencies]

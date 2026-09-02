@@ -6,10 +6,10 @@ use serde_json::json;
 #[test]
 fn schema_exposes_serialized_names_instead_of_rust_field_names() {
     let rule = Rule {
-        name: "app".to_owned(),
+        name: "app".into(),
         relocate: true,
         program: ProgramFilter {
-            name: Some(Pattern::Exact("app.exe".to_owned())),
+            name: Some(Pattern::Exact("app.exe".into())),
             ..Default::default()
         },
         ..Default::default()

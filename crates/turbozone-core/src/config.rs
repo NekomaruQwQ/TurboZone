@@ -3,6 +3,7 @@ use crate::Pattern;
 
 use schemars::*;
 use schemars::generate::SchemaSettings;
+use smol_str::SmolStr;
 
 const MAX_SIZE: i32 = 8192;
 
@@ -39,11 +40,11 @@ impl Config {
 #[serde(deny_unknown_fields)]
 pub struct Rule {
     // ---- Metadata ----
-    /// Unique stable identifier of the rule.
-    pub name: String,
-    /// User-facing section name, falling back to the rule name when empty.
+    /// Unique stable identifier retained in the same compact representation at runtime.
+    pub name: SmolStr,
+    /// Compact user-facing section name, falling back to the rule name when empty.
     #[serde(default, skip_serializing_if = "is_default")]
-    pub description: String,
+    pub description: SmolStr,
 
     // ---- Filters ----
     /// Higher priorities take precedence; zero is the default.

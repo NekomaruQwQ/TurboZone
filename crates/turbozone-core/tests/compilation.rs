@@ -1,5 +1,5 @@
 use euclid::default::Size2D;
-use smol_str::SmolStr;
+use smol_str::{SmolStr, format_smolstr};
 use turbozone_core::*;
 
 /// Deserializes fixtures that exercise compilation separately from document parsing.
@@ -42,7 +42,7 @@ fn validate_rejects_duplicate_rule_names() {
     assert_eq!(
         validate(config).expect_err("duplicate rule name must fail"),
         ConfigError::DuplicateRuleName {
-            name: "same".to_owned(),
+            name: "same".into(),
         }
     );
 }
@@ -266,7 +266,7 @@ fn empty_partial_matcher_is_rejected() {
     assert_eq!(
         validate(config).expect_err("empty partial matcher must fail"),
         ConfigError::EmptyPartialMatcher {
-            field: "rules[0].window.title".to_owned(),
+            field: "rules[0].window.title".into(),
         }
     );
 }
@@ -299,7 +299,7 @@ fn program_path_matcher_rejects_backslashes() {
     assert_eq!(
         validate(config).expect_err("backslash path must fail"),
         ConfigError::BackslashInProgramPath {
-            field: "rules[0].program.path".to_owned(),
+            field: "rules[0].program.path".into(),
         }
     );
 }
@@ -421,8 +421,8 @@ fn reversed_window_size_bounds_are_rejected() {
     assert_eq!(
         validate(config).expect_err("reversed bounds must fail"),
         ConfigError::InvalidBounds {
-            minimum_field: "rules[0].window.min[0]".to_owned(),
-            maximum_field: "rules[0].window.max[0]".to_owned(),
+            minimum_field: "rules[0].window.min[0]".into(),
+            maximum_field: "rules[0].window.max[0]".into(),
         }
     );
 }
@@ -518,7 +518,7 @@ fn configured_sizes_reject_nonpositive_dimensions() {
             assert_eq!(
                 validate(parse(&source)).unwrap_err(),
                 ConfigError::InvalidDimension {
-                    field: format!("rules[0].{field}[{axis}]"),
+                    field: format_smolstr!("rules[0].{field}[{axis}]"),
                     value: size[axis],
                 }
             );
@@ -533,8 +533,8 @@ fn resize_rejects_reversed_selector_bounds() {
     assert_eq!(
         validate(config).unwrap_err(),
         ConfigError::InvalidBounds {
-            minimum_field: "rules[0].resize.min[1]".to_owned(),
-            maximum_field: "rules[0].resize.max[1]".to_owned(),
+            minimum_field: "rules[0].resize.min[1]".into(),
+            maximum_field: "rules[0].resize.max[1]".into(),
         }
     );
 }

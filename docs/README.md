@@ -115,8 +115,10 @@ No additional priority index is needed for the expected rule/window counts at th
 
 The core crate owns `WindowInfo<H>`, `WindowDetail`, `WindowState`, and the generic `Backend`
 contract. The Windows crate owns the concrete `Handle<HWND>` and returns
-`WindowInfo<Handle<HWND>>`. Immutable runtime names, titles, paths, and matcher literals use
-`SmolStr`; mutable serialized config input and filesystem buffers remain `String`.
+`WindowInfo<Handle<HWND>>`. Owned UTF-8 text crossing TurboZone API boundaries uses `SmolStr`,
+including serialized config values, diagnostics, startup file contents, runtime names, titles,
+paths, and matcher literals. Standard-library and serializer helpers may construct temporary
+buffers before conversion; persisted bytes and external string formats remain unchanged.
 
 Every snapshot retains its handle, title, and visual state. Its `detail` is either:
 

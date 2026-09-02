@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use euclid::default::Size2D;
 use serde::Deserialize;
-use smol_str::SmolStr;
+use smol_str::{SmolStr, StrExt as _, format_smolstr};
 use thiserror::Error;
 
 use crate::{
@@ -63,9 +63,9 @@ pub fn parse_config(source: &str) -> anyhow::Result<ConfigReport> {
                         .chars()
                         .count()
                         + 1;
-                    format!("invalid configuration at line {line}, column {column}")
+                    format_smolstr!("invalid configuration at line {line}, column {column}")
                 })
-                .unwrap_or_else(|| "invalid configuration document".to_owned());
+                .unwrap_or_else(|| SmolStr::new_static("invalid configuration document"));
             // Display normally includes the offending source line, which may be private.
             error.set_input(None);
             anyhow::Error::new(error).context(location)
@@ -94,7 +94,7 @@ fn compile_rules(rules: impl Iterator<Item = Result<Rule, ConfigError>>) -> Conf
         });
         match rule {
             Ok(rule) => {
-                names.insert(rule.name.to_string());
+                names.insert(rule.name.clone());
                 report.runtime.rules.push(rule);
             }
             Err(error) => report.diagnostics.push(RuleDiagnostic { index, error }),
@@ -129,31 +129,31 @@ pub enum ConfigError {
         /// Zero-based rule index.
         index: usize,
         /// Invalid configured name.
-        name: String,
+        name: SmolStr,
     },
     /// The same rule name appeared more than once.
     #[error("duplicate rule name '{name}'")]
     DuplicateRuleName {
         /// Duplicate configured name.
-        name: String,
+        name: SmolStr,
     },
     /// A partial matcher contained no predicates.
     #[error("{field} must contain starts_with, ends_with, or contains")]
     EmptyPartialMatcher {
         /// Configuration field containing the invalid matcher.
-        field: String,
+        field: SmolStr,
     },
     /// A configured program-path pattern used a backslash.
     #[error("{field} must use forward slashes; backslashes are not accepted")]
     BackslashInProgramPath {
         /// Configuration field containing the invalid path pattern.
-        field: String,
+        field: SmolStr,
     },
     /// A configured dimension was not positive.
     #[error("{field} must be positive, found {value}")]
     InvalidDimension {
         /// Configuration field containing the invalid dimension.
-        field: String,
+        field: SmolStr,
         /// Invalid configured value.
         value: i32,
     },
@@ -161,9 +161,9 @@ pub enum ConfigError {
     #[error("{minimum_field} must not exceed {maximum_field}")]
     InvalidBounds {
         /// Configuration field containing the minimum.
-        minimum_field: String,
+        minimum_field: SmolStr,
         /// Configuration field containing the maximum.
-        maximum_field: String,
+        maximum_field: SmolStr,
     },
 }
 
@@ -175,7 +175,7 @@ fn compile_rule(index: usize, rule: Rule) -> Result<RuntimeRule, ConfigError> {
             name: rule.name,
         });
     }
-    let prefix = format!("rules[{index}]");
+    let prefix = format_smolstr!("rules[{index}]");
     let description = rule.description.trim();
     let description = (!description.is_empty()).then(|| SmolStr::new(description));
     let (resize_exact, resize_selector) = compile_resize(rule.resize, &prefix)?;
@@ -183,7 +183,7 @@ fn compile_rule(index: usize, rule: Rule) -> Result<RuntimeRule, ConfigError> {
     let window_filters = compile_window_match(rule.window, &prefix)?;
 
     Ok(RuntimeRule {
-        name: rule.name.into(),
+        name: rule.name,
         description,
         relocate: rule.relocate,
         resize_exact,
@@ -204,11 +204,11 @@ fn compile_resize(
         ResizeRule::Boolean(false) => Ok((None, None)),
         ResizeRule::Boolean(true) => Ok((None, Some(ResizeSelector::default()))),
         ResizeRule::Exact { exact } => {
-            validate_size(exact, &format!("{prefix}.resize.exact"))?;
+            validate_size(exact, &format_smolstr!("{prefix}.resize.exact"))?;
             Ok((Some(Size2D::from(exact)), None))
         }
         ResizeRule::SelectorDefault(default) => {
-            validate_size(default, &format!("{prefix}.resize"))?;
+            validate_size(default, &format_smolstr!("{prefix}.resize"))?;
             Ok((
                 None,
                 Some(ResizeSelector {
@@ -219,9 +219,9 @@ fn compile_resize(
         }
         ResizeRule::Selector(selector) => {
             if let Some(size) = selector.default {
-                validate_size(size, &format!("{prefix}.resize.default"))?;
+                validate_size(size, &format_smolstr!("{prefix}.resize.default"))?;
             }
-            validate_size_bounds(selector.min, selector.max, &format!("{prefix}.resize"))?;
+            validate_size_bounds(selector.min, selector.max, &format_smolstr!("{prefix}.resize"))?;
             Ok((None, Some(selector)))
         }
     }
@@ -235,13 +235,13 @@ fn compile_program_match(
     let name = matcher
         .name
         .map(|matcher| {
-            compile_string_matcher(matcher, &format!("{prefix}.program.name"), false, false)
+            compile_string_matcher(matcher, &format_smolstr!("{prefix}.program.name"), false, false)
         })
         .transpose()?;
     let path = matcher
         .path
         .map(|matcher| {
-            compile_string_matcher(matcher, &format!("{prefix}.program.path"), false, true)
+            compile_string_matcher(matcher, &format_smolstr!("{prefix}.program.path"), false, true)
         })
         .transpose()?;
     Ok(ProgramFilter { name, path })
@@ -255,10 +255,10 @@ fn compile_window_match(
     let title = matcher
         .title
         .map(|matcher| {
-            compile_string_matcher(matcher, &format!("{prefix}.window.title"), true, false)
+            compile_string_matcher(matcher, &format_smolstr!("{prefix}.window.title"), true, false)
         })
         .transpose()?;
-    validate_size_bounds(matcher.min, matcher.max, &format!("{prefix}.window"))?;
+    validate_size_bounds(matcher.min, matcher.max, &format_smolstr!("{prefix}.window"))?;
     Ok(WindowFilter {
         title,
         min: matcher.min,
@@ -284,7 +284,7 @@ fn compile_string_matcher(
         } => {
             if starts_with.is_empty() && ends_with.is_empty() && contains.is_empty() {
                 return Err(ConfigError::EmptyPartialMatcher {
-                    field: field.to_owned(),
+                    field: field.into(),
                 });
             }
             for (name, pattern) in [
@@ -292,7 +292,11 @@ fn compile_string_matcher(
                 ("ends_with", ends_with),
                 ("contains", contains),
             ] {
-                normalize_pattern(pattern, &format!("{field}.{name}"), case_sensitive, is_path)?;
+                normalize_pattern(
+                    pattern,
+                    &format_smolstr!("{field}.{name}"),
+                    case_sensitive,
+                    is_path)?;
             }
         }
     }
@@ -301,26 +305,26 @@ fn compile_string_matcher(
 
 /// Validates path separators and folds only case-insensitive patterns at load time.
 fn normalize_pattern(
-    pattern: &mut String,
+    pattern: &mut SmolStr,
     field: &str,
     case_sensitive: bool,
     is_path: bool,
 ) -> Result<(), ConfigError> {
     if is_path && pattern.contains('\\') {
         return Err(ConfigError::BackslashInProgramPath {
-            field: field.to_owned(),
+            field: field.into(),
         });
     }
     if !case_sensitive {
-        *pattern = pattern.to_lowercase();
+        *pattern = pattern.to_lowercase_smolstr();
     }
     Ok(())
 }
 
 /// Validates both array dimensions using their configuration indices.
 fn validate_size([width, height]: [i32; 2], field: &str) -> Result<(), ConfigError> {
-    validate_dimension(width, &format!("{field}[0]"))?;
-    validate_dimension(height, &format!("{field}[1]"))
+    validate_dimension(width, &format_smolstr!("{field}[0]"))?;
+    validate_dimension(height, &format_smolstr!("{field}[1]"))
 }
 
 /// Checks positive bounds and rejects inverted axes when both bounds are present.
@@ -330,17 +334,17 @@ fn validate_size_bounds(
     prefix: &str,
 ) -> Result<(), ConfigError> {
     if let Some(size) = min {
-        validate_size(size, &format!("{prefix}.min"))?;
+        validate_size(size, &format_smolstr!("{prefix}.min"))?;
     }
     if let Some(size) = max {
-        validate_size(size, &format!("{prefix}.max"))?;
+        validate_size(size, &format_smolstr!("{prefix}.max"))?;
     }
     if let (Some(min), Some(max)) = (min, max) {
         for (axis, (minimum, maximum)) in min.into_iter().zip(max).enumerate() {
             if minimum > maximum {
                 return Err(ConfigError::InvalidBounds {
-                    minimum_field: format!("{prefix}.min[{axis}]"),
-                    maximum_field: format!("{prefix}.max[{axis}]"),
+                    minimum_field: format_smolstr!("{prefix}.min[{axis}]"),
+                    maximum_field: format_smolstr!("{prefix}.max[{axis}]"),
                 });
             }
         }
@@ -352,7 +356,7 @@ fn validate_size_bounds(
 fn validate_dimension(value: i32, field: &str) -> Result<(), ConfigError> {
     if value <= 0 {
         Err(ConfigError::InvalidDimension {
-            field: field.to_owned(),
+            field: field.into(),
             value,
         })
     } else {

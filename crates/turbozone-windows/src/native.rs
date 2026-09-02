@@ -5,6 +5,7 @@ use std::os::windows::ffi::OsStringExt as _;
 use std::path::PathBuf;
 
 use euclid::default::{Point2D, Rect, Size2D, Vector2D};
+use smol_str::SmolStr;
 use windows::core::{BOOL, Error, PWSTR, Result};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::*;
@@ -132,17 +133,16 @@ pub fn get_content_rect(hwnd: HWND) -> Result<Rect<i32>> {
         Size2D::new(rect.right - rect.left, rect.bottom - rect.top)))
 }
 
-/// Reads a lossy UTF-8 window title, returning an empty string on query failure.
-pub fn get_window_text(hwnd: HWND) -> String {
+/// Reads a lossy UTF-8 window title directly into the snapshot's immutable text representation.
+/// Query failures remain an empty title so enumeration can retain the window's native identity.
+pub fn get_window_text(hwnd: HWND) -> SmolStr {
     // SAFETY: GetWindowTextLengthW only queries the supplied handle.
     let buffer_length = unsafe { GetWindowTextLengthW(hwnd) } as usize + 1;
     let mut buffer = vec![0u16; buffer_length];
 
     // SAFETY: The buffer is writable and sized for the length reported above.
     let length = unsafe { GetWindowTextW(hwnd, &mut buffer) } as usize;
-    OsString::from_wide(&buffer[..length])
-        .to_string_lossy()
-        .into_owned()
+    SmolStr::new(OsString::from_wide(&buffer[..length]).to_string_lossy())
 }
 
 /// Reads the owning process ID, returning the native error if the window is gone.

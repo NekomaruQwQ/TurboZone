@@ -19,6 +19,7 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 use euclid::default::Size2D;
+use smol_str::{SmolStr, StrExt as _};
 
 use windows::core::Result;
 use windows::Win32::Foundation::HWND;
@@ -80,7 +81,7 @@ fn snapshot_window(
     let state = get_window_state(handle);
     WindowInfo {
         handle: Handle(handle),
-        title: native::get_window_text(handle).into(),
+        title: native::get_window_text(handle),
         state,
         detail: snapshot_window_detail(monitor_info_cache, handle, state),
     }
@@ -108,19 +109,16 @@ fn snapshot_window_detail(
     let native_path =
         native::get_program_path(process_id)
             .context("failed to get program path")?;
-    let program_name =
+    let program_name = SmolStr::new(
         native_path
             .file_name()
             .context("program path has no filename")?
-            .to_string_lossy()
-            .into_owned()
-            .into();
+            .to_string_lossy());
     // Windows supplies normalized paths; only the separator convention changes.
     let program_path =
         native_path
             .to_string_lossy()
-            .replace('\\', "/")
-            .into();
+            .replace_smolstr("\\", "/");
     Ok(WindowDetail {
         monitor_rect: monitor.rcWork.convert(),
         content_rect,

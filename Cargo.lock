@@ -1931,6 +1931,7 @@ dependencies = [
  "schemars_derive",
  "serde",
  "serde_json",
+ "smol_str 0.3.6",
 ]
 
 [[package]]
@@ -2344,6 +2345,7 @@ dependencies = [
  "euclid",
  "log",
  "serde_json",
+ "smol_str 0.3.6",
  "tap",
  "turbozone-core",
 ]
@@ -2359,6 +2361,7 @@ dependencies = [
  "log",
  "pretty_env_logger",
  "serde_json",
+ "smol_str 0.3.6",
  "turbozone-core",
  "turbozone-ui",
  "windows",

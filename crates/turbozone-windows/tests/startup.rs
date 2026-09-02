@@ -1,6 +1,7 @@
 use std::fs;
 use std::process::{Command, Output};
 
+use smol_str::SmolStr;
 use turbozone_core::Config;
 use turbozone_ui::config::load_config;
 
@@ -18,7 +19,9 @@ fn command(directory: &TempDir) -> Command {
 }
 
 /// Captures UTF-8 diagnostics separately from normal CLI output.
-fn stderr(output: &Output) -> String { String::from_utf8(output.stderr.clone()).unwrap() }
+fn stderr(output: &Output) -> SmolStr {
+    SmolStr::new(std::str::from_utf8(&output.stderr).unwrap())
+}
 
 #[test]
 fn missing_config_is_created_empty_with_its_current_sibling_schema() {
@@ -118,7 +121,7 @@ fn help_hides_private_environment_values_and_performs_no_io() {
     let output = command(&directory).env("TURBOZONE_CONFIG", "private-location.toml")
         .arg("--help").output().unwrap();
     assert!(output.status.success());
-    let help = String::from_utf8(output.stdout).unwrap();
+    let help = SmolStr::new(std::str::from_utf8(&output.stdout).unwrap());
     assert!(help.contains("TURBOZONE_CONFIG"));
     assert!(!help.contains("private-location"));
     assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
