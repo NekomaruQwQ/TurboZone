@@ -1,28 +1,25 @@
-/LICENSE
+# `turbozone-core`
+/crates/turbozone-core/src/**/*
+!/crates/turbozone-core/src/lib.rs
+!/crates/turbozone-core/src/config.rs
+!/crates/turbozone-core/src/window.rs
+!/crates/turbozone-core/src/bin/
+!/crates/turbozone-core/src/bin/generate_schema.rs
 
-/docs/**/*.md
+# `turbozone-ui`
+/crates/turbozone-ui/src/
 
-/crates/turbozone-core/src/config_parser.rs
-
-/crates/turbozone-windows/src/snapshot.rs
+# `turbozone-windows`
 /crates/turbozone-windows/src/native.rs
 /crates/turbozone-windows/src/window.rs
 
-/crates/turbozone/src/
-/crates/turbozone-ui/src/
+# Tests are maintained exclusively by agents
+tests/
 
-/crates/*/tests/
+# Documentation is maintained exclusively by agents
+*.md
 
+# Generated files are always ignored even if they are versioned.
+LICENSE
 *.lock
 *.schema.json
-
-# BEGIN agent
-/crates/turbozone-core/src/args.rs
-/crates/turbozone-core/src/constants.rs
-/crates/turbozone-core/src/data.rs
-/crates/turbozone-core/src/engine.rs
-/crates/turbozone-core/src/lib.rs
-/crates/turbozone-core/src/logging.rs
-/crates/turbozone-core/src/runtime.rs
-/crates/turbozone-core/src/window.rs
-# END agent

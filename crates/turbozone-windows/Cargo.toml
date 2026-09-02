@@ -1,5 +1,3 @@
-lints = { workspace = true }
-
 [package]
 name = "turbozone-windows"
 version = { workspace = true }
@@ -9,6 +7,9 @@ license = { workspace = true }
 [[bin]]
 name = "turbozone"
 path = "src/main.rs"
+
+[lints]
+workspace = true
 
 [dependencies]
 turbozone-core = { workspace = true }
@@ -22,6 +23,3 @@ log = { workspace = true }
 pretty_env_logger = { workspace = true }
 smol_str = { workspace = true }
 windows = { workspace = true }
-
-[dev-dependencies]
-serde_json = { workspace = true }

@@ -1,17 +1,22 @@
-use crate::prelude::*;
-use crate::Pattern;
-
+use serde::*;
+use educe::Educe;
+use euclid::default::Size2D;
 use schemars::*;
-use schemars::generate::SchemaSettings;
 use smol_str::SmolStr;
 
-const MAX_SIZE: i32 = 8192;
+/// Returns whether a value is the default value of its type.
+///
+/// This is useful for `skip_serializing_if` and `skip_deserializing_if` attributes
+/// on serde fields.
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    value == &T::default()
+}
 
 /// The serialized top-level configuration for TurboZone.
 #[derive(Debug, Clone)]
 #[derive(Default)]
-#[derive(Deserialize, Serialize)]
 #[derive(JsonSchema)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// Rules in source order.
@@ -19,24 +24,11 @@ pub struct Config {
     pub rules: Vec<Rule>,
 }
 
-impl Config {
-    /// Generates the JSON schema for [`Config`].
-    ///
-    /// Extra validation rules that cannot be enforced by the schema itself are
-    /// validated in [`crate::parse_config`] and [`crate::compile_config`].
-    pub fn schema() -> Schema {
-        SchemaSettings::draft2020_12()
-            .for_deserialize()
-            .into_generator()
-            .into_root_schema_for::<Self>()
-    }
-}
-
 /// One serialized rule pairing window filters with the actions they enable.
 #[derive(Debug, Clone)]
 #[derive(Default)]
-#[derive(Deserialize, Serialize)]
 #[derive(JsonSchema)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
     // ---- Metadata ----
@@ -69,38 +61,36 @@ pub struct Rule {
 
 /// Complete serialized resize behavior.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Deserialize, Serialize)]
+#[derive(Educe)]
 #[derive(JsonSchema)]
+#[derive(Deserialize, Serialize)]
+#[educe(Default)]
 #[serde(deny_unknown_fields)]
 #[serde(untagged)]
 pub enum ResizeRule {
     /// Resizing disabled or selector enabled without any size filters.
+    #[educe(Default)]
     Boolean(bool),
     /// Exact target size. The selector is disabled in this mode.
     Exact {
         /// Positive client-area `[width, height]` in physical pixels, independent of selector limits.
-        #[schemars(inner(range(min = 1, max = MAX_SIZE)))]
+        #[schemars(inner(range(min = 1, max = i32::MAX)))]
         exact: [i32; 2],
     },
     /// Selector properties with only a default size, no minimum, and no maximum.
     SelectorDefault(
-        #[schemars(inner(range(min = 1, max = MAX_SIZE)))]
+        #[schemars(inner(range(min = 1, max = i32::MAX)))]
         [i32; 2],
     ),
     /// Selector properties, including optional default, minimum, and maximum sizes.
     Selector(ResizeSelector),
 }
 
-impl Default for ResizeRule {
-    fn default() -> Self {
-        Self::Boolean(false)
-    }
-}
-
 /// Selector defaults and inclusive bounds; omitted bounds are unrestricted.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 #[derive(JsonSchema)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResizeSelector {
     /// Primary `[width, height]` in physical pixels, independent of selector bounds.
@@ -136,38 +126,107 @@ impl ResizeSelector {
 
 /// Program filters using serialized patterns or compiled predicates.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Deserialize, Serialize)]
+#[derive(Educe)]
 #[derive(JsonSchema)]
+#[derive(Deserialize, Serialize)]
+#[educe(Default)]
 #[serde(deny_unknown_fields)]
 pub struct ProgramFilter<S> {
     /// Optional case-insensitive filename matcher.
+    #[educe(Default = None)]
     pub name: Option<S>,
     /// Optional case-insensitive path matcher.
+    #[educe(Default = None)]
     pub path: Option<S>,
-}
-
-impl<S> Default for ProgramFilter<S> {
-    fn default() -> Self {
-        Self { name: None, path: None }
-    }
 }
 
 /// Window filters using serialized patterns or compiled predicates.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Deserialize, Serialize)]
+#[derive(Educe)]
 #[derive(JsonSchema)]
+#[derive(Deserialize, Serialize)]
+#[educe(Default)]
 #[serde(deny_unknown_fields)]
 pub struct WindowFilter<S> {
     /// Optional case-sensitive window-title matcher.
+    #[educe(Default = None)]
     pub title: Option<S>,
     /// Inclusive minimum client-area `[width, height]` in positive physical pixels.
+    #[educe(Default = None)]
     pub min: Option<[i32; 2]>,
     /// Inclusive maximum client-area `[width, height]` in positive physical pixels.
+    #[educe(Default = None)]
     pub max: Option<[i32; 2]>,
 }
 
-impl<S> Default for WindowFilter<S> {
-    fn default() -> Self {
-        Self { title: None, min: None, max: None }
+/// An immutable literal pattern paired with its case-sensitive string predicate.
+///
+/// Compiled literals use [`SmolStr`] because they are cloned into long-lived runtime
+/// rules but are usually short enough to remain inline.
+#[derive(Debug, Clone)]
+pub struct PatternMatcher(
+    /// Literal text, already normalized by the config compiler when appropriate.
+    SmolStr,
+    /// Predicate chosen once during compilation.
+    fn(input: &str, pattern: &str) -> bool);
+
+impl PatternMatcher {
+    /// Returns whether the candidate satisfies this predicate.
+    pub fn matches(&self, input: &str) -> bool { (self.1)(input, self.0.as_str()) }
+}
+
+/// An exact string or a conjunction of nonempty literal partial patterns.
+///
+/// Serialized and compiled literals share [`SmolStr`] so parsing, validation, and
+/// runtime matching keep one owned representation without changing their wire format.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Deserialize, Serialize)]
+#[derive(schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[serde(untagged)]
+pub enum Pattern {
+    /// Exact match against the entire string.
+    Exact(SmolStr),
+    /// Several non-empty partial predicates which are ANDed.
+    Partial {
+        /// Required prefix, or an empty string when omitted.
+        #[serde(default, skip_serializing_if = "SmolStr::is_empty")]
+        starts_with: SmolStr,
+        /// Required suffix, or an empty string when omitted.
+        #[serde(default, skip_serializing_if = "SmolStr::is_empty")]
+        ends_with: SmolStr,
+        /// Required substring, or an empty string when omitted.
+        #[serde(default, skip_serializing_if = "SmolStr::is_empty")]
+        contains: SmolStr,
+    }
+}
+
+impl Pattern {
+    /// Compiles literal, case-sensitive predicates without validating the pattern.
+    ///
+    /// Callers must normalize both patterns and candidates for case-insensitive
+    /// matching. An empty partial pattern returns no predicates; config validation
+    /// must reject it before using an all-predicates match.
+    pub fn to_matchers(&self) -> Vec<PatternMatcher> {
+        use std::iter;
+
+        match *self {
+            Self::Exact(ref t) =>
+                iter::once(PatternMatcher(t.clone(), |s, t| s == t))
+                    .collect(),
+            Self::Partial { ref starts_with, ref ends_with, ref contains } => {
+                iter::empty()
+                    .chain(
+                        (!starts_with.is_empty())
+                            .then(|| PatternMatcher(starts_with.clone(), |s, t| s.starts_with(t))))
+                    .chain(
+                        (!ends_with.is_empty())
+                            .then(|| PatternMatcher(ends_with.clone(), |s, t| s.ends_with(t))))
+                    .chain(
+                        (!contains.is_empty())
+                            .then(|| PatternMatcher(contains.clone(), |s, t| s.contains(t))))
+                    .collect()
+            }
+        }
     }
 }

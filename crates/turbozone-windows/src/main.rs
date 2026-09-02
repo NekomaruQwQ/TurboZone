@@ -1,28 +1,42 @@
 //! Entry point of TurboZone for Windows.
 
 use turbozone_core::constants::*;
-use turbozone_core::Args;
-use turbozone_windows::Backend;
 use turbozone_ui::{
     app::App,
     config::load_config,
     ui::setup_style,
 };
 
+use turbozone_windows::Backend;
+
+use std::path::PathBuf;
+
+use clap::Parser;
+
 use eframe::NativeOptions;
 use eframe::egui;
 use egui::*;
 
-use clap::Parser as _;
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Parser)]
+#[command(version, about = "Rule-driven window positioning and resizing")]
+pub struct Args {
+    #[arg(
+        short,
+        long,
+        env = "TURBOZONE_CONFIG",
+        value_name = "FILE",
+        hide_env_values = true)]
+    pub config: PathBuf,
+}
 
-/// Initializes process-global services and reports fatal startup failures once.
 fn main() {
     pretty_env_logger::init();
 
     let args = Args::parse();
     let config =
         load_config(&args.config)
-            .expect("failed to load configuration");
+            .expect("failed to load configuration file");
     let viewport =
         ViewportBuilder::default()
             .with_inner_size(APP_WINDOW_SIZE)
@@ -46,7 +60,6 @@ fn main() {
     result.expect("failed to start eframe application");
 }
 
-/// Loads the Microsoft YaHei UI font for CJK glyphs if available.
 fn setup_fonts(egui: &Context) {
     use std::sync::Arc;
 

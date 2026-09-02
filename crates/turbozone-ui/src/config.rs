@@ -19,12 +19,7 @@ pub fn load_config(path: &Path) -> Result<RuntimeConfig> {
     anyhow::ensure!(path.file_name().is_some(), "configuration path must name a file");
     log::info!("configuration: {}", path.display());
 
-    let schema_path = path.with_extension("schema.json");
-    if let Err(error) = generate_schema(&schema_path) {
-        log::warn!("failed to refresh schema {}: {error:#}", schema_path.display());
-    }
-    let source = read_or_create_config(&path, &schema_path)?;
-    let report = turbozone_core::parse_config(&source)
+    let report = turbozone_core::parse_config("https://raw.githubusercontent.com/NekomaruQwQ/TurboZone/refs/heads/main/data/config.schema.json")
         .with_context(|| format_smolstr!("failed to parse configuration: {}", path.display()))?;
     for diagnostic in &report.diagnostics {
         log::warn!("skipping rules[{}]: {}", diagnostic.index, diagnostic.error);
@@ -68,12 +63,4 @@ fn read_or_create_config(path: &Path, schema_path: &Path) -> Result<SmolStr> {
         })?;
     log::info!("created empty configuration: {}", path.display());
     Ok(source)
-}
-
-/// Writes the current type-derived schema as UTF-8 JSON with a trailing newline.
-/// Serialization finishes before opening the replaceable generated file.
-fn generate_schema(path: &Path) -> Result<()> {
-    let json = format_smolstr!("{}\n", serde_json::to_string_pretty(&Config::schema())?);
-    fs::write(path, json.as_bytes())?;
-    Ok(())
 }

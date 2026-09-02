@@ -8,14 +8,12 @@ license = { workspace = true }
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { workspace = true }
+educe = { version = "0.7.6", default-features = false, features = ["Default"] }
 euclid = { workspace = true }
 log = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 smol_str = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
-
-[dev-dependencies]
-serde_json = { workspace = true }

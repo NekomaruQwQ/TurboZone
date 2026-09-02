@@ -3,8 +3,9 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui::{Context, Ui};
-use turbozone_core::{
-    Backend, Engine, LOGIC_TICKS_PER_SECOND, RENDER_FRAMES_PER_SECOND, RuntimeConfig,
+use turbozone_core::{Backend, Engine, RuntimeConfig};
+use turbozone_core::constants::{
+    LOGIC_TICKS_PER_SECOND, RENDER_FRAMES_PER_SECOND,
 };
 
 use crate::ui;

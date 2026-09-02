@@ -1,6 +1,7 @@
-use crate::prelude::*;
-use super::*;
+use crate::*;
+
 use smol_str::SmolStr;
+use euclid::default::Size2D;
 
 /// A validated rule ready for matching and UI rendering.
 #[derive(Debug)]

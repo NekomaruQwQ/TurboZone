@@ -43,10 +43,11 @@ pub fn resize_window(handle: Handle<HWND>, size: Size2D<i32>) -> Result<()> {
     }
 
     match get_window_state(handle.0) {
-        WindowState::Normal => native::resize_client(handle.0, size),
-        WindowState::Maximized | WindowState::Minimized => {
-            resize_restored_window(handle.0, size)
-        },
+        WindowState::Normal =>
+            native::resize_client(handle.0, size),
+        WindowState::Maximized |
+        WindowState::Minimized =>
+            resize_restored_window(handle.0, size),
     }
 }
 

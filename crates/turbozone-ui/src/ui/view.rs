@@ -6,8 +6,9 @@ use std::hash::Hash;
 use eframe::egui::*;
 use euclid::default::Size2D;
 use turbozone_core::{
-    WindowAction, ResizeSelector, RuntimeConfig, RuntimeRule, STANDARD_SIZE, WindowInfo,
+    WindowAction, ResizeSelector, RuntimeConfig, RuntimeRule, WindowInfo,
     WindowSection, WindowState,
+    constants::STANDARD_SIZE,
 };
 
 use super::color;

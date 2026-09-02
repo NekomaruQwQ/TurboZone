@@ -16,7 +16,7 @@
   "additionalProperties": false,
   "$defs": {
     "Pattern": {
-      "description": "An exact string or a conjunction of nonempty literal partial patterns.",
+      "description": "An exact string or a conjunction of nonempty literal partial patterns.\n\nSerialized and compiled literals share [`SmolStr`] so parsing, validation, and\nruntime matching keep one owned representation without changing their wire format.",
       "anyOf": [
         {
           "description": "Exact match against the entire string.",
@@ -89,7 +89,7 @@
               "items": {
                 "type": "integer",
                 "format": "int32",
-                "maximum": 8192,
+                "maximum": 2147483647,
                 "minimum": 1
               },
               "maxItems": 2,
@@ -107,7 +107,7 @@
           "items": {
             "type": "integer",
             "format": "int32",
-            "maximum": 8192,
+            "maximum": 2147483647,
             "minimum": 1
           },
           "maxItems": 2,
@@ -170,7 +170,7 @@
       "type": "object",
       "properties": {
         "description": {
-          "description": "User-facing section name, falling back to the rule name when empty.",
+          "description": "Compact user-facing section name, falling back to the rule name when empty.",
           "type": "string"
         },
         "move": {
@@ -178,7 +178,7 @@
           "type": "boolean"
         },
         "name": {
-          "description": "Unique stable identifier of the rule.",
+          "description": "Unique stable identifier retained in the same compact representation at runtime.",
           "type": "string"
         },
         "priority": {

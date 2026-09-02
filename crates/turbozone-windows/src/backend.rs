@@ -77,11 +77,13 @@ impl CoreBackend for Backend {
 /// Retains basic identity even when a detail query fails.
 fn snapshot_window(
     monitor_info_cache: &mut MonitorInfoCache,
-    handle: HWND) -> WindowInfo {
+    handle: HWND)
+ -> WindowInfo {
+    let title = native::get_window_text(handle);
     let state = get_window_state(handle);
     WindowInfo {
         handle: Handle(handle),
-        title: native::get_window_text(handle),
+        title,
         state,
         detail: snapshot_window_detail(monitor_info_cache, handle, state),
     }
@@ -114,7 +116,6 @@ fn snapshot_window_detail(
             .file_name()
             .context("program path has no filename")?
             .to_string_lossy());
-    // Windows supplies normalized paths; only the separator convention changes.
     let program_path =
         native_path
             .to_string_lossy()
