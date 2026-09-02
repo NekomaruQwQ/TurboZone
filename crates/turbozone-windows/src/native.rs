@@ -302,7 +302,14 @@ pub fn resize_client(hwnd: HWND, size: Size2D<i32>) -> Result<()> {
     }
 }
 
-/// Adds frame overhead without allowing a large configured target to wrap.
+/// Adds native frame overhead to a client size without allowing either dimension to wrap.
+///
+/// Keeping this calculation separate from window mutation makes the native dimension contract
+/// reusable wherever client and frame geometry must be combined.
+///
+/// # Errors
+///
+/// Returns [`E_INVALIDARG`] when addition overflows or produces a nonpositive dimension.
 pub fn checked_size_sum(size: Size2D<i32>, overhead: Size2D<i32>) -> Result<Size2D<i32>> {
     let width = size.width.checked_add(overhead.width);
     let height = size.height.checked_add(overhead.height);
@@ -312,7 +319,15 @@ pub fn checked_size_sum(size: Size2D<i32>, overhead: Size2D<i32>) -> Result<Size
     }
 }
 
-/// Resizes around the integer center, preserving odd sizes and rejecting coordinate overflow.
+/// Returns a rectangle with the requested size around the input rectangle's integer center.
+///
+/// The widened intermediate coordinates preserve the existing center policy without permitting
+/// native-coordinate overflow before the result is narrowed back to `i32`.
+///
+/// # Errors
+///
+/// Returns [`E_INVALIDARG`] when either requested dimension is nonpositive or the resulting
+/// rectangle lies outside the native coordinate range.
 pub fn resize_rect(rect: Rect<i32>, size: Size2D<i32>) -> Result<Rect<i32>> {
     let x = i64::from(rect.origin.x) + i64::from(rect.size.width / 2) - i64::from(size.width / 2);
     let y = i64::from(rect.origin.y) + i64::from(rect.size.height / 2) - i64::from(size.height / 2);

@@ -74,10 +74,16 @@ pub fn get_content_rect(handle: HWND, state: WindowState, monitor: &MONITORINFO)
     }
 }
 
-/// Removes standard frame offsets and converts workspace placement to screen coordinates.
+/// Derives restored client geometry from an outer placement rectangle and standard frame offsets.
 ///
-/// Returns an error when the inferred frame is larger than the restored outer rectangle.
-fn get_restored_content_rect(
+/// The calculation stays independent from Win32 queries and mutation so restored-geometry policy
+/// can be reused and verified without changing a desktop window. `offset` converts workspace
+/// placement coordinates to screen coordinates when required by the window style.
+///
+/// # Errors
+///
+/// Returns [`E_INVALIDARG`] when the inferred frame is larger than the restored outer rectangle.
+pub fn get_restored_content_rect(
     outer: RECT,
     frame: RECT,
     offset: Vector2D<i32>) -> Result<Rect<i32>> {

@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use euclid::default::{Point2D, Rect, Size2D};
 use turbozone_core::WindowState;
-use turbozone_windows::{Handle, get_content_rect};
+use turbozone_windows::{Handle, window::get_content_rect};
 use windows::core::{HSTRING, PCWSTR, w};
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTOPRIMARY, MonitorFromWindow};
