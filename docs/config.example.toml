@@ -1,4 +1,5 @@
-#:schema ./config.example.schema.json
+#:schema https://raw.githubusercontent.com/NekomaruQwQ/TurboZone/refs/heads/main/data/config.schema.json
+
 # The schema is generated from Rust Config types; see Schema.md for editor setup.
 # Strings are exact; all filters within one rule are ANDed.
 # Sizes are [width, height] arrays of positive physical-pixel integers.

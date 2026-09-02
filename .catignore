@@ -1,17 +1,22 @@
 /LICENSE
 
-/docs/
+/docs/**/*.md
 
 /crates/turbozone-core/src/config_parser.rs
+
+/crates/turbozone-windows/src/snapshot.rs
+/crates/turbozone-windows/src/native.rs
+/crates/turbozone-windows/src/window.rs
+
 /crates/turbozone/src/
+/crates/turbozone-ui/src/
+
 /crates/*/tests/
 
 *.lock
 *.schema.json
 
 # BEGIN agent
-/Cargo.toml
-/crates/turbozone-core/Cargo.toml
 /crates/turbozone-core/src/args.rs
 /crates/turbozone-core/src/constants.rs
 /crates/turbozone-core/src/data.rs
@@ -20,10 +25,4 @@
 /crates/turbozone-core/src/logging.rs
 /crates/turbozone-core/src/runtime.rs
 /crates/turbozone-core/src/window.rs
-/crates/turbozone-ui/Cargo.toml
-/crates/turbozone-ui/src/
-/crates/turbozone-windows/Cargo.toml
-/crates/turbozone-windows/src/backend.rs
-/crates/turbozone-windows/src/lib.rs
-/crates/turbozone-windows/src/main.rs
 # END agent

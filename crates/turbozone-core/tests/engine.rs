@@ -2,14 +2,14 @@ use std::collections::VecDeque;
 
 use euclid::default::{Point2D, Rect, Size2D};
 use turbozone_core::{
-    Action, Backend, Engine, WindowDetail, WindowInfo, WindowState, parse_config,
+    WindowAction, Backend, Engine, WindowDetail, WindowInfo, WindowState, parse_config,
 };
 
 /// Records the action boundary independently of action variants and supplies scripted snapshots.
 #[derive(Default)]
 struct FakeBackend {
     snapshots: VecDeque<anyhow::Result<Vec<WindowInfo<u64>>>>,
-    attempted: Vec<Action<u64>>,
+    attempted: Vec<WindowAction<u64>>,
     failing_handle: Option<u64>,
 }
 
@@ -20,7 +20,7 @@ impl Backend for FakeBackend {
         self.snapshots.pop_front().unwrap_or_else(|| Ok(Vec::new()))
     }
 
-    fn perform(&mut self, action: Action<Self::Handle>) -> anyhow::Result<()> {
+    fn perform(&mut self, action: WindowAction<Self::Handle>) -> anyhow::Result<()> {
         let handle = action.handle();
         self.attempted.push(action);
         if self.failing_handle == Some(handle) {
@@ -51,14 +51,14 @@ fn tick_forwards_actions_in_queue_order_before_refreshing() {
     let mut backend = FakeBackend::default();
     backend.snapshots.push_back(Ok(vec![window(1)]));
     let mut engine = Engine::new(config, backend);
-    engine.queue(Action::MoveToCenter(1));
-    engine.queue(Action::Resize(1, Size2D::new(1280, 720)));
+    engine.queue(WindowAction::MoveToCenter(1));
+    engine.queue(WindowAction::Resize(1, Size2D::new(1280, 720)));
 
     engine.tick();
 
     assert_eq!(engine.into_backend().attempted, [
-        Action::MoveToCenter(1),
-        Action::Resize(1, Size2D::new(1280, 720)),
+        WindowAction::MoveToCenter(1),
+        WindowAction::Resize(1, Size2D::new(1280, 720)),
     ]);
 }
 
@@ -68,8 +68,8 @@ fn failed_action_does_not_prevent_later_targets_or_refresh() {
     let mut backend = FakeBackend { failing_handle: Some(1), ..Default::default() };
     backend.snapshots.push_back(Ok(vec![window(2)]));
     let mut engine = Engine::new(config, backend);
-    engine.queue(Action::MoveToCenter(1));
-    engine.queue(Action::MoveToCenter(2));
+    engine.queue(WindowAction::MoveToCenter(1));
+    engine.queue(WindowAction::MoveToCenter(2));
 
     engine.tick();
 

@@ -13,6 +13,32 @@ use windows::Win32::System::Threading::*;
 use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+/// Converts between equivalent Euclid and Win32 geometry representations.
+///
+/// Implementations preserve the coordinate space; only the representation changes.
+pub trait Convert<T> { fn convert(self) -> T; }
+
+impl Convert<RECT> for Rect<i32> {
+    fn convert(self) -> RECT {
+        RECT {
+            left:   self.min_x(),
+            top:    self.min_y(),
+            right:  self.max_x(),
+            bottom: self.max_y(),
+        }
+    }
+}
+
+impl Convert<Rect<i32>> for RECT {
+    fn convert(self) -> Rect<i32> {
+        Rect::new(
+            Point2D::new(self.left, self.top),
+            Size2D::new(
+                self.right - self.left,
+                self.bottom - self.top))
+    }
+}
+
 /// Enumerates every top-level desktop window handle.
 pub fn enumerate_windows() -> Result<Vec<HWND>> {
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -239,13 +265,6 @@ pub fn get_placement_offset(hwnd: HWND, monitor: &MONITORINFO) -> Result<Vector2
     })
 }
 
-/// Converts a native rectangle without changing its coordinate space.
-pub const fn rect_from_native(rect: &RECT) -> Rect<i32> {
-    Rect::new(
-        Point2D::new(rect.left, rect.top),
-        Size2D::new(rect.right - rect.left, rect.bottom - rect.top))
-}
-
 /// Moves a live window without resizing, activating, or changing z-order.
 pub fn set_window_position(hwnd: HWND, position: Point2D<i32>) -> Result<()> {
     // SAFETY: Position and flags are plain values; no pointers are retained.
@@ -263,7 +282,7 @@ pub fn set_window_position(hwnd: HWND, position: Point2D<i32>) -> Result<()> {
 
 /// Resizes a live client area around its existing center.
 pub fn resize_client(hwnd: HWND, size: Size2D<i32>) -> Result<()> {
-    let outer = rect_from_native(&get_window_rect(hwnd)?);
+    let outer: Rect<i32> = get_window_rect(hwnd)?.convert();
     let content = get_content_rect(hwnd)?;
     let resized = resize_rect(content, size)?;
     let new_window_size = checked_size_sum(size, outer.size - content.size)?;

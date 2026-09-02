@@ -1,4 +1,6 @@
-#:schema config.schema.json
+#:schema https://raw.githubusercontent.com/NekomaruQwQ/TurboZone/refs/heads/main/data/config.schema.json
+
+# Sample configuration for TurboZone.
 
 [[rules]]
 name = "default"
@@ -26,32 +28,3 @@ resize.default = [2560, 1600]
 priority = 1
 program.name = "msedge.exe"
 window.title.contains = "ChatGPT"
-
-[[rules]]
-name = "edge.youtube-music"
-move = true
-resize.default = [2560, 1600]
-priority = 1
-program.name = "msedge.exe"
-window.title.contains = "YouTube Music"
-
-[[rules]]
-name = "edge.lofi-engine"
-move = true
-resize.default = [2560, 1600]
-priority = 1
-program.name = "msedge.exe"
-window.title.contains = "Lofi Engine"
-
-[[rules]]
-name = "explorer"
-move = true
-resize.default = [2880, 1800]
-program.name = "explorer.exe"
-window.title.ends_with = "File Explorer"
-
-[[rules]]
-name = "md.mclauncher"
-move = true
-resize.default = [1920, 1200]
-window.title = "Minecraft Launcher"

@@ -6,7 +6,7 @@ use std::hash::Hash;
 use eframe::egui::*;
 use euclid::default::Size2D;
 use turbozone_core::{
-    Action, ResizeSelector, RuntimeConfig, RuntimeRule, STANDARD_SIZE, WindowInfo,
+    WindowAction, ResizeSelector, RuntimeConfig, RuntimeRule, STANDARD_SIZE, WindowInfo,
     WindowSection, WindowState,
 };
 
@@ -20,7 +20,7 @@ use super::widget::Card;
 pub fn app_ui<H>(
     ui: &mut Ui,
     windows: &[WindowSection<H>],
-    config: &RuntimeConfig) -> Vec<Action<H>>
+    config: &RuntimeConfig) -> Vec<WindowAction<H>>
 where
     H: Copy + Debug + Eq + Hash + 'static,
 {
@@ -43,7 +43,7 @@ fn sections_page<H>(
     ui: &mut Ui,
     windows: &[WindowSection<H>],
     config: &RuntimeConfig,
-    actions: &mut Vec<Action<H>>)
+    actions: &mut Vec<WindowAction<H>>)
 where
     H: Copy + Debug + Eq + Hash + 'static,
 {
@@ -64,7 +64,7 @@ fn section_card<H>(
     ui: &mut Ui,
     section: &WindowSection<H>,
     rule: &RuntimeRule,
-    actions: &mut Vec<Action<H>>)
+    actions: &mut Vec<WindowAction<H>>)
 where
     H: Copy + Debug + Eq + Hash + 'static,
 {
@@ -81,7 +81,7 @@ where
 fn section_header<H>(
     ui: &mut Ui,
     section: &WindowSection<H>,
-    rule: &RuntimeRule) -> Vec<Action<H>>
+    rule: &RuntimeRule) -> Vec<WindowAction<H>>
 where
     H: Copy,
 {
@@ -89,7 +89,7 @@ where
     let available = Vec2::new(ui.available_width(), ui.spacing().interact_size.y);
     ui.allocate_ui_with_layout(available, Layout::right_to_left(Align::Center), |ui| {
         if rule.relocate && ui.button("CENTER ALL").clicked() {
-            actions.extend(actionable_handles(section).map(Action::MoveToCenter));
+            actions.extend(actionable_handles(section).map(WindowAction::MoveToCenter));
         }
         section_resize_controls(ui, rule, section, &mut actions);
         if !rule.relocate && rule.resize_exact.is_none() && rule.resize_selector.is_none() {
@@ -110,24 +110,24 @@ fn section_resize_controls<H: Copy>(
     ui: &mut Ui,
     rule: &RuntimeRule,
     section: &WindowSection<H>,
-    actions: &mut Vec<Action<H>>) {
+    actions: &mut Vec<WindowAction<H>>) {
     let primary_size = rule.resize_exact
         .or_else(|| rule.resize_selector.as_ref()?.default.map(Size2D::from));
     let Some(primary_size) = primary_size else {
         if let Some(size) = rule.resize_selector.as_ref()
             .and_then(|selector| resize_menu_button(ui, "RESIZE", selector)) {
-            actions.extend(actionable_handles(section).map(|handle| Action::Resize(handle, size)));
+            actions.extend(actionable_handles(section).map(|handle| WindowAction::Resize(handle, size)));
         }
         return;
     };
 
     if ui.button(format!("RESIZE {}x{}", primary_size.width, primary_size.height)).clicked() {
         actions.extend(actionable_handles(section)
-            .map(|handle| Action::Resize(handle, primary_size)));
+            .map(|handle| WindowAction::Resize(handle, primary_size)));
     }
     if let Some(size) = rule.resize_selector.as_ref()
         .and_then(|selector| resize_menu_button(ui, "\u{25bc}", selector)) {
-        actions.extend(actionable_handles(section).map(|handle| Action::Resize(handle, size)));
+        actions.extend(actionable_handles(section).map(|handle| WindowAction::Resize(handle, size)));
     }
 }
 
@@ -142,7 +142,7 @@ fn actionable_handles<H: Copy>(section: &WindowSection<H>) -> impl Iterator<Item
 fn section_body<H>(
     ui: &mut Ui,
     section: &WindowSection<H>,
-    rule: &RuntimeRule) -> Vec<Action<H>>
+    rule: &RuntimeRule) -> Vec<WindowAction<H>>
 where
     H: Copy + Debug + Eq + Hash + 'static,
 {
@@ -165,7 +165,7 @@ fn window_row<H: Copy>(
     ui: &mut Ui,
     window: &WindowInfo<H>,
     rule: &RuntimeRule,
-    actions: &mut Vec<Action<H>>) {
+    actions: &mut Vec<WindowAction<H>>) {
     let available = Vec2::new(ui.available_width(), ui.spacing().interact_size.y);
     ui.allocate_ui_with_layout(available, Layout::right_to_left(Align::Center), |ui| {
         window_controls(ui, window, rule, actions);
@@ -190,13 +190,13 @@ fn window_controls<H: Copy>(
     ui: &mut Ui,
     window: &WindowInfo<H>,
     rule: &RuntimeRule,
-    actions: &mut Vec<Action<H>>) {
+    actions: &mut Vec<WindowAction<H>>) {
     // Incomplete snapshots remain visible to diagnostics but never become actionable.
     let Ok(ref detail) = window.detail else { return; };
     if rule.relocate {
         if !detail.is_centered() {
             if ui.button("CENTER").clicked() {
-                actions.push(Action::MoveToCenter(window.handle));
+                actions.push(WindowAction::MoveToCenter(window.handle));
             }
         } else {
             ui.label(RichText::new("CENTERED").small().color(color::GREEN));
@@ -208,7 +208,7 @@ fn window_controls<H: Copy>(
     let Some(primary_size) = primary_size else {
         if let Some(size) = rule.resize_selector.as_ref()
             .and_then(|selector| resize_menu_button(ui, "RESIZE", selector)) {
-            actions.push(Action::Resize(window.handle, size));
+            actions.push(WindowAction::Resize(window.handle, size));
         }
         return;
     };
@@ -218,11 +218,11 @@ fn window_controls<H: Copy>(
             primary_size.width,
             primary_size.height))
         .clicked() {
-        actions.push(Action::Resize(window.handle, primary_size));
+        actions.push(WindowAction::Resize(window.handle, primary_size));
     }
     if let Some(size) = rule.resize_selector.as_ref()
         .and_then(|selector| resize_menu_button(ui, "\u{25bc}", selector)) {
-        actions.push(Action::Resize(window.handle, size));
+        actions.push(WindowAction::Resize(window.handle, size));
     }
 }
 

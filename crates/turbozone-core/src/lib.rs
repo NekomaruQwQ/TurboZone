@@ -5,9 +5,9 @@
 //! and writes, while presentation crates decide when to tick and how to render the state.
 
 pub mod prelude;
+pub mod constants;
 
 mod args;
-mod constants;
 mod data;
 mod engine;
 mod logging;
