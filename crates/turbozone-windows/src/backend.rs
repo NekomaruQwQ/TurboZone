@@ -4,6 +4,7 @@ use turbozone_core::{
     WindowState,
     WindowDetail,
     WindowAction as CoreWindowAction,
+    ProgramDetail,
 };
 
 use crate::window::*;
@@ -15,13 +16,25 @@ use crate::{
     resize_window,
 };
 
-use std::collections::{HashMap, HashSet};
+use std::collections::hash_map::{
+    HashMap,
+    Entry as HashMapEntry,
+};
 
+use std::rc::Rc;
+use std::ffi::OsString;
+use std::path::Path;
+
+use tap::prelude::*;
+
+use anyhow::anyhow;
 use anyhow::Context as _;
 use euclid::default::Size2D;
-use smol_str::{SmolStr, StrExt as _};
+use smol_str::SmolStr;
+use smol_str::StrExt as _;
 
-use windows::core::Result;
+use windows::core::Result as NativeResult;
+
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{HMONITOR, MONITORINFO};
 
@@ -31,80 +44,137 @@ type Pred<T> = fn(&T) -> bool;
 type WindowInfo   = CoreWindowInfo<Handle<HWND>>;
 type WindowAction = CoreWindowAction<Handle<HWND>>;
 
-type MonitorInfoCache = HashMap<Handle<HMONITOR>, Result<MONITORINFO>>;
+type MonitorCache = HashMap<Handle<HMONITOR>, NativeResult<MONITORINFO>>;
+type ProcessCache = HashMap<u32, NativeResult<Rc<Path>>>;
+type ProgramCache = HashMap<OsString, (u64, Result<Rc<ProgramDetail>, &'static str>)>;
 
-/// Reuses human-facing executable metadata while its program path remains observable.
-///
-/// Version-resource lookup is optional display work and may fail for valid executables.
-/// Caching the filename fallback avoids repeating that failure at the snapshot cadence.
-#[derive(Debug, Default)]
-struct ProgramDescriptions(HashMap<SmolStr, SmolStr>);
-
-impl ProgramDescriptions {
-    /// Resolves one case-insensitive Windows path without repeating its metadata query.
-    fn get_or_insert_with(
-        &mut self,
-        program_path: &str,
-        program_name: &SmolStr,
-        lookup: impl FnOnce() -> Option<SmolStr>) -> SmolStr {
-        self.0
-            .entry(program_path.to_lowercase_smolstr())
-            .or_insert_with(|| {
-                lookup()
-                    .filter(|description| !description.is_empty())
-                    .unwrap_or_else(|| program_name.clone())
-            })
-            .clone()
-    }
-
-    /// Evicts entries only after successful enumeration establishes the live path set.
-    fn retain_observed<'a>(&mut self, program_paths: impl Iterator<Item = &'a str>) {
-        let observed = program_paths
-            .map(str::to_lowercase_smolstr)
-            .collect::<HashSet<_>>();
-        self.0.retain(|program_path, _| observed.contains(program_path));
-    }
-}
+const TICK_BEFORE_EVICT: u64 = 600;
 
 const IGNORE_WINDOWS: &[Pred<WindowInfo>] = &[
     |window| window.title.is_empty(),
     |window| {
         window.title == "Program Manager" &&
-        window.detail.as_ref().is_ok_and(|detail| {
-            detail.program_name.eq_ignore_ascii_case("explorer.exe")
-        })},
+        window.detail
+            .as_ref()
+            .is_ok_and(|detail| {
+                detail
+                    .program
+                    .name
+                    .eq_ignore_ascii_case("explorer.exe")
+            })},
 ];
 
-/// Adapts Win32 snapshots and actions while retaining only derived display metadata.
+/// Owns query caches and program-path liveness bookkeeping for one snapshot.
 ///
-/// Program descriptions persist across snapshots to avoid repeated version-resource
-/// queries; live-path pruning owns their bounded lifetime independently of core state.
+/// Monitor results remain call-local so work-area changes are visible to the next snapshot.
+/// Program descriptions borrow the backend cache because executable version metadata can be
+/// reused safely across snapshots, then [`Self::finish`] prunes paths this enumeration did not
+/// observe.
+struct SnapshotContext<'a> {
+    /// The current snapshot sequence, incremented for each successful enumeration.
+    seq: u64,
+    /// Temporary cache of [`MONITORINFO`] results for the lifetime of this snapshot.
+    monitor_cache: MonitorCache,
+    /// Temporary cache of process paths for the lifetime of this snapshot.
+    process_cache: ProcessCache,
+    /// Persistent cache of program details, shared with the backend across snapshots.
+    program_cache: &'a mut ProgramCache,
+}
+
+impl SnapshotContext<'_> {
+    /// Gets the [`MONITORINFO`] for the given monitor, or an error if the query
+    /// failed.
+    ///
+    /// Results are cached for the lifetime of this snapshot and not shared across
+    /// snapshots because:
+    ///
+    /// - Monitor handles may be reused for different monitors between enumerations.
+    /// - Monitor work areas may change between enumerations.
+    fn get_monitor_info(&mut self, handle: HMONITOR) -> NativeResult<MONITORINFO> {
+        self.monitor_cache
+            .entry(Handle(handle))
+            .or_insert_with(|| native::get_monitor_info(handle))
+            .clone()
+    }
+
+    /// Gets the program path for the given process, or an error if the query failed.
+    ///
+    /// Results are cached for the lifetime of this snapshot and not shared across
+    /// snapshots because process IDs may be reused for different processes between
+    /// enumerations.
+    fn get_process_path(&mut self, process_id: u32) -> NativeResult<Rc<Path>> {
+        self.process_cache
+            .entry(process_id)
+            .or_insert_with(|| native::get_program_path(process_id).map(Rc::from))
+            .clone()
+    }
+
+    /// Gets the [`ProgramDetail`] for the given program path, or an error if the query
+    /// failed.
+    fn get_program_detail(&mut self, native_path: &Path)
+     -> anyhow::Result<Rc<ProgramDetail>> {
+        let entry =
+            self.program_cache
+                .entry(native_path.as_os_str().to_os_string());
+
+        match entry {
+            HashMapEntry::Occupied(mut entry) => {
+                let &mut (ref mut cache_seq, ref program) = entry.get_mut();
+                *cache_seq = self.seq;
+                program
+                    .as_ref()
+                    .map(Rc::clone)
+                    .map_err(|&error| anyhow!("failed to get program detail of {:?}: {error}", native_path.display()))
+            },
+            HashMapEntry::Vacant(entry) => {
+                let program =
+                    snapshot_program(native_path).map(Rc::new);
+                let &mut (_, ref program) =
+                    entry.insert((self.seq, program));
+                program
+                    .as_ref()
+                    .map(Rc::clone)
+                    .map_err(|&error| anyhow!("failed to get program detail of {:?}: {error}", native_path.display()))
+            }
+        }
+    }
+}
+
+/// The Win32 backend for TurboZone.
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct Backend {
-    program_descriptions: ProgramDescriptions,
+    next_seq: u64,
+    program_cache: ProgramCache,
 }
 
 impl CoreBackend for Backend {
     type Handle = Handle<HWND>;
 
     fn snapshot(&mut self) -> anyhow::Result<Vec<WindowInfo>> {
-        let mut monitor_info_cache = HashMap::new();
-        let mut windows = native::enumerate_windows()?
-            .into_iter()
-            .filter(|&handle| native::is_app_window(handle))
-            .map(|handle| snapshot_window(
-                &mut monitor_info_cache,
-                &mut self.program_descriptions,
-                handle))
-            .collect::<Vec<_>>();
-        // Prune before product filtering so an observable ignored window does not
-        // repeatedly query the same executable metadata on every snapshot.
-        self.program_descriptions.retain_observed(
-            windows.iter()
-                .filter_map(|window| window.detail.as_ref().ok())
-                .map(|detail| detail.program_path.as_str()));
+        self.next_seq += 1;
+
+        let mut ctx = SnapshotContext {
+            seq: self.next_seq,
+            monitor_cache: HashMap::new(),
+            process_cache: HashMap::new(),
+            program_cache: &mut self.program_cache,
+        };
+
+        let mut windows =
+            native::enumerate_windows()?
+                .into_iter()
+                .filter(|&handle| native::is_app_window(handle))
+                .map(|handle| snapshot_window(&mut ctx, handle))
+                .collect::<Vec<_>>();
+
+        self.program_cache
+            .retain(|_, &mut (entry_seq, _)| {
+                entry_seq + TICK_BEFORE_EVICT <= self.next_seq
+        });
+
         windows.retain(|window| !IGNORE_WINDOWS.iter().any(|pred| pred(window)));
+
         Ok(windows)
     }
 
@@ -122,11 +192,8 @@ impl CoreBackend for Backend {
     }
 }
 
-/// Retains basic identity even when a detail query fails.
-fn snapshot_window(
-    monitor_info_cache: &mut MonitorInfoCache,
-    program_descriptions: &mut ProgramDescriptions,
-    handle: HWND)
+/// Snapshots the [`WindowInfo`] for a given window.
+fn snapshot_window(ctx: &mut SnapshotContext, handle: HWND)
  -> WindowInfo {
     let title = native::get_window_text(handle);
     let state = get_window_state(handle);
@@ -134,64 +201,84 @@ fn snapshot_window(
         handle: Handle(handle),
         title,
         state,
-        detail: snapshot_window_detail(
-            monitor_info_cache,
-            program_descriptions,
-            handle,
-            state),
+        detail: snapshot_window_detail(ctx, handle, state),
     }
 }
 
+/// Snapshots the [`WindowDetail`] for a given window.
+///
 /// Stops at the first required query failure while treating display metadata as optional.
 fn snapshot_window_detail(
-    monitor_info_cache: &mut MonitorInfoCache,
-    program_descriptions: &mut ProgramDescriptions,
+    ctx: &mut SnapshotContext,
     handle: HWND,
-    state: WindowState)
+    window_state: WindowState)
     -> anyhow::Result<WindowDetail> {
-    let monitor_handle = native::get_monitor(handle);
+    let monitor_handle =
+        native::get_monitor(handle);
     let monitor =
-        monitor_info_cache
-            .entry(Handle(monitor_handle))
-            .or_insert_with(|| native::get_monitor_info(monitor_handle))
-            .clone()
+        ctx
+            .get_monitor_info(monitor_handle)
             .context("failed to get monitor info")?;
     let content_rect =
-        get_content_rect(handle, state, &monitor)
+        get_content_rect(handle, window_state, &monitor)
             .context("failed to get content rect")?;
     let process_id =
         native::get_process_id(handle)
             .context("failed to get process ID")?;
-    let native_path =
-        native::get_program_path(process_id)
-            .context("failed to get program path")?;
-    let program_name = SmolStr::new(
-        native_path
-            .file_name()
-            .context("program path has no filename")?
-            .to_string_lossy());
     let program_path =
-        native_path
-            .to_string_lossy()
-            .replace_smolstr("\\", "/");
-    let program_description =
-        program_descriptions.get_or_insert_with(
-            &program_path,
-            &program_name,
-            || win32_version_info::VersionInfo::from_file(&native_path)
-                .ok()
-                .map(|metadata| SmolStr::new(metadata.file_description)));
+        ctx
+            .get_process_path(process_id)
+            .context("failed to get program path")?;
+    let program =
+        ctx
+            .get_program_detail(&program_path)
+            .context("failed to get program detail")?;
     Ok(WindowDetail {
         monitor_rect: monitor.rcWork.convert(),
         content_rect,
         process_id,
-        program_path,
-        program_name,
-        program_description,
+        program,
     })
 }
 
-#[cfg(test)]
-#[path = "../tests/support/program_description_cache.rs"]
-mod program_description_cache_tests;
-
+/// Snapshots the [`ProgramDetail`] for a given program.
+///
+/// This function does not cache the result; use [`SnapshotContext::get_program_detail`]
+/// to avoid repeated queries for the same path.
+///
+/// Encountering invalid utf-8 strings in any of the fields is considered
+/// an error and will be reported as a failure to obtain the program detail.
+///
+/// Failures to obtain the program description are not considered fatal, and
+/// the program name will be used instead.
+fn snapshot_program(native_path: &Path) -> Result<ProgramDetail, &'static str> {
+    let name =
+        native_path
+            .file_name()
+            .ok_or("program path has no filename")?
+            .to_str()
+            .ok_or("program path is not valid UTF-8")?
+            .pipe(SmolStr::new);
+    let path =
+        native_path
+            .to_str()
+            .ok_or("program path is not valid UTF-8")?
+            .replace_smolstr("\\", "/");
+    let description =
+        win32_version_info::VersionInfo::from_file(native_path)
+            .ok()
+            .map(|info| info.file_description)
+            .unwrap_or_default()
+            .pipe(SmolStr::new);
+    let description =
+        if !description.is_empty() {
+            description
+        } else {
+            name.clone()
+        };
+    Ok(ProgramDetail {
+        path,
+        name,
+        description,
+    })
+}

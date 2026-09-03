@@ -1,4 +1,5 @@
-use euclid::default::*;
+use std::rc::Rc;
+use euclid::default::Rect;
 use smol_str::SmolStr;
 
 /// The current visual state of a native window.
@@ -16,40 +17,49 @@ pub enum WindowState {
 
 /// An immutable native window snapshot used by classification and rendering.
 pub struct WindowInfo<H> {
-    /// Native handle identifying the exact enumerated window.
+    /// The native handle identifying the exact enumerated window.
     pub handle: H,
-    /// Case-sensitive window title.
+    /// The title of the window, or an empty string if the window has no title or
+    /// the title could not be obtained.
     pub title: SmolStr,
-    /// Current normal, maximized, or minimized state.
+    /// The current normal, maximized, or minimized state.
     pub state: WindowState,
     /// Complete window details from this snapshot, or an error if any detail
     /// could not be obtained.
     pub detail: anyhow::Result<WindowDetail>,
 }
 
-/// Complete geometry, matching identity, and display metadata for native controls.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Extra information about a native window that may fail to be obtained.
+#[derive(Debug, Clone)]
 pub struct WindowDetail {
-    /// Current monitor work area in physical screen coordinates, excluding taskbars.
+    /// Current monitor work area in physical screen coordinates, excluding
+    /// taskbars.
     pub monitor_rect: Rect<i32>,
     /// Controllable client-area rectangle in physical screen coordinates.
     /// Minimized/maximized windows use their restored geometry.
     pub content_rect: Rect<i32>,
-
-    /// Successfully queried owning process identifier.
+    /// Process ID owning the window.
     pub process_id: u32,
-    /// Windows-supplied program path with backslashes replaced by forward slashes.
-    pub program_path: SmolStr,
-    /// Program filename used by configuration matching.
-    pub program_name: SmolStr,
-    /// Human-facing executable description, falling back to [`Self::program_name`].
-    pub program_description: SmolStr,
+    /// Program details of the executable owning the window.
+    ///
+    /// [`Rc`] is here used to allow sharing between multiple windows of
+    /// the same program. Exact sharing behavior depends on the platform
+    /// [`Backend`](crate::Backend).
+    ///
+    /// Encountering invalid utf-8 strings in any of the fields is considered
+    /// an error and will be reported as a failure to obtain the window detail.
+    pub program: Rc<ProgramDetail>,
 }
 
-impl WindowDetail {
-    /// Returns whether the controllable client area is centered in the work area.
-    /// Integer centers allow the unavoidable half-pixel difference for odd sizes.
-    pub fn is_centered(&self) -> bool {
-        self.content_rect.center() == self.monitor_rect.center()
-    }
+/// Information about a program executable owning one or more windows.
+#[derive(Debug, Clone)]
+pub struct ProgramDetail {
+    /// Platform-provided path to the program executable, normalized to use
+    /// forward slashes.
+    pub path: SmolStr,
+    /// Platform-provided filename of the program executable.
+    pub name: SmolStr,
+    /// Platform-provided description of the program executable, or an empty
+    /// string if not available.
+    pub description: SmolStr,
 }

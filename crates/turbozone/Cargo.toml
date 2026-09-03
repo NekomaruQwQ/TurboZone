@@ -1,0 +1,23 @@
+[package]
+name = "turbozone"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+turbozone-core = { path = "../turbozone-core" }
+turbozone-windows = { path = "../turbozone-windows" }
+turbozone-ui = { path = "../turbozone-ui" }
+
+anyhow = { workspace = true }
+eframe = { workspace = true }
+euclid = { workspace = true }
+log = { workspace = true }
+smol_str = { workspace = true }
+
+clap = { version = "4.6.6", features = ["derive", "env"] }
+pretty_env_logger = "0.5.0"

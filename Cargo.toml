@@ -13,6 +13,7 @@ anyhow = "1.0"
 eframe = { version = "0.36.1", default-features = false, features = ["glow"] }
 euclid = "0.22.14"
 log = "0.4.34"
+tap = "1.0"
 smol_str = { version = "0.3.6", features = ["serde"] }
 
 [workspace.lints.clippy]

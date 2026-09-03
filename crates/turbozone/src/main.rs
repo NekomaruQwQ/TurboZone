@@ -1,13 +1,12 @@
 //! Entry point of TurboZone for Windows.
 
 use turbozone_core::constants::*;
+use turbozone_windows::Backend;
 use turbozone_ui::{
     app::App,
     config::load_config,
     ui::setup_style,
 };
-
-use turbozone_windows::Backend;
 
 use std::path::PathBuf;
 

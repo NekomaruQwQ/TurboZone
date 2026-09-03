@@ -6,12 +6,12 @@
 !/crates/turbozone-core/src/bin/
 !/crates/turbozone-core/src/bin/generate_schema.rs
 
-# `turbozone-ui`
-/crates/turbozone-ui/src/
-
 # `turbozone-windows`
 /crates/turbozone-windows/src/native.rs
 /crates/turbozone-windows/src/window.rs
+
+# `turbozone-ui`
+/crates/turbozone-ui/src/
 
 # Tests are maintained exclusively by agents
 tests/
@@ -23,7 +23,3 @@ tests/
 LICENSE
 *.lock
 *.schema.json
-
-# BEGIN agent
-/crates/turbozone-windows/src/backend.rs
-# END agent

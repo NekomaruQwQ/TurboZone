@@ -4,25 +4,17 @@ version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
 
-[[bin]]
-name = "turbozone"
-path = "src/main.rs"
-
 [lints]
 workspace = true
 
 [dependencies]
 turbozone-core = { path = "../turbozone-core" }
-turbozone-ui = { path = "../turbozone-ui" }
 
 anyhow = { workspace = true }
-eframe = { workspace = true }
 euclid = { workspace = true }
 log = { workspace = true }
+tap = { workspace = true }
 smol_str = { workspace = true }
-
-clap = { version = "4.6.6", features = ["derive", "env"] }
-pretty_env_logger = "0.5.0"
 win32-version-info = "0.3.0"
 
 [dependencies.windows]

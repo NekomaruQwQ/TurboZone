@@ -139,7 +139,7 @@ impl<B: Backend> Engine<B> {
             format_smolstr!(
                 "{handle:?} title={:?} executable={:?}",
                 window.title,
-                detail.program_path)
+                detail.program.path)
         } else {
             format_smolstr!("{handle:?} title={:?}", window.title)
         }
@@ -167,8 +167,8 @@ pub fn group_windows<H>(
     let mut matched = BTreeMap::<SmolStr, BTreeMap<SmolStr, Vec<WindowInfo<H>>>>::new();
     for window in windows {
         let Ok(ref detail) = window.detail else { continue; };
-        let program_path = detail.program_path.to_lowercase_smolstr();
-        let program_name = detail.program_name.to_lowercase_smolstr();
+        let program_path = detail.program.path.to_lowercase_smolstr();
+        let program_name = detail.program.name.to_lowercase_smolstr();
         let Some(rule_name) = config.matching_rule_name(
             Some(&program_name), &program_path, &window.title, Some(detail.content_rect.size)) else {
             continue;

@@ -2,12 +2,12 @@ use std::cell::Cell;
 
 use smol_str::SmolStr;
 
-use super::ProgramDescriptions;
+use super::ProgramDescriptionMap;
 
 #[test]
 fn cache_reuses_description_for_case_insensitive_program_path() {
     let lookups = Cell::new(0);
-    let mut descriptions = ProgramDescriptions::default();
+    let mut descriptions = ProgramDescriptionMap::default();
     let program_name = SmolStr::new_static("app.exe");
     let first = descriptions.get_or_insert_with(
         "C:/Apps/App.exe",
@@ -29,7 +29,7 @@ fn cache_reuses_description_for_case_insensitive_program_path() {
 
 #[test]
 fn cache_uses_program_name_when_description_is_unavailable() {
-    let mut descriptions = ProgramDescriptions::default();
+    let mut descriptions = ProgramDescriptionMap::default();
     let program_name = SmolStr::new_static("app.exe");
 
     let description = descriptions.get_or_insert_with(
@@ -42,7 +42,7 @@ fn cache_uses_program_name_when_description_is_unavailable() {
 
 #[test]
 fn cache_uses_program_name_when_description_is_empty() {
-    let mut descriptions = ProgramDescriptions::default();
+    let mut descriptions = ProgramDescriptionMap::default();
     let program_name = SmolStr::new_static("app.exe");
 
     let description = descriptions.get_or_insert_with(
@@ -55,7 +55,7 @@ fn cache_uses_program_name_when_description_is_empty() {
 
 #[test]
 fn cache_evicts_program_paths_not_observed_in_the_latest_snapshot() {
-    let mut descriptions = ProgramDescriptions::default();
+    let mut descriptions = ProgramDescriptionMap::default();
     let program_name = SmolStr::new_static("app.exe");
     descriptions.get_or_insert_with(
         "C:/Apps/Retained.exe",

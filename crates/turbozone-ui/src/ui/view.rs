@@ -150,7 +150,7 @@ where
     let mut actions = Vec::new();
     if let Some(detail) = section.windows.first()
         .and_then(|window| window.detail.as_ref().ok()) {
-        ui.add(Label::new(RichText::new(detail.program_path.as_str()).small().weak()).truncate());
+        ui.add(Label::new(RichText::new(detail.program.path.as_str()).small().weak()).truncate());
         ui.add_space(4.0);
     }
     for window in &section.windows {
@@ -195,7 +195,7 @@ fn window_controls<H: Copy>(
     // Incomplete snapshots remain visible to diagnostics but never become actionable.
     let Ok(ref detail) = window.detail else { return; };
     if rule.relocate {
-        if !detail.is_centered() {
+        if detail.monitor_rect.center() != detail.content_rect.center() {
             if ui.button("CENTER").clicked() {
                 actions.push(WindowAction::MoveToCenter(window.handle));
             }
@@ -269,7 +269,7 @@ fn window_metadata<H>(ui: &mut Ui, window: &WindowInfo<H>) {
     ui.horizontal(|ui| {
         ui.add_space(4.0);
         ui.label(RichText::new(format!("PID {}", detail.process_id)).small().weak());
-        ui.label(RichText::new(detail.program_description.as_str()).small().weak());
+        ui.label(RichText::new(detail.program.description.as_str()).small().weak());
         let size = detail.content_rect.size;
         let text = RichText::new(format!("{}x{}", size.width, size.height)).small();
         let known = STANDARD_SIZE.iter()
