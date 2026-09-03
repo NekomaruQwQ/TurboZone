@@ -61,7 +61,7 @@ or `resize.exact = [0, 900]`. An exact resize cannot be combined with selector f
 The schema uses JSON Schema Draft 2020-12 with `$defs` internal references, without additional downloads.
 It describes input structure, defaults, renamed keys, untagged alternatives, and rejected unknown
 fields. Sizes use `[i32; 2]`, serialized as `[width, height]` in physical pixels. Schemars derives the
-fixed array length; per-element annotations require positive integers no greater than `i32::MAX`.
+fixed array length; per-element annotations require integers from `1` through `16,384`.
 Optional Rust fields can include JSON `null` in the schema; TOML has no null, so omit them instead.
 
 `turbozone-core::parse_config()` parses the document and compiles rules independently. Invalid
@@ -70,8 +70,8 @@ valid rules keep their relative order. Diagnostics use original zero-based rule 
 the first valid rule reserves its name, and later duplicates are skipped. Empty config is valid.
 
 The compiler checks rule-name grammar, duplicates, nonempty partial patterns, forward slashes
-in program paths, positive dimensions, and `min <= max`. `compile_config()` offers the same
-compiler for callers that already have a typed `Config`. Neither function performs I/O or logs;
+in program paths, dimensions from `1` through `16,384`, and `min <= max`. `compile_config()`
+offers the same compiler for callers that already have a typed `Config`. Neither function performs I/O or logs;
 the executable reports diagnostics without TOML source excerpts. Editor checks do not replace
 runtime validation.
 

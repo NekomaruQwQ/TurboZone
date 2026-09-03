@@ -42,7 +42,7 @@ are skipped. An empty document, or a document with no usable rules, is valid.
    endings. Create a missing file exclusively with only the canonical remote `#:schema` comment.
    Parent directories must already exist. Concurrent creation never authorizes overwriting the file.
 3. Parse and compile via `turbozone-core`, log rejected rules and the loaded/skipped counts,
-   then launch the UI with a `RuntimeConfig`.
+   then launch the UI with source-ordered `RuntimeRule` values owned directly by `Engine`.
 
 Unreadable config, creation failure, and malformed documents exit nonzero before the UI opens.
 Startup never generates schemas, and user-authored config is never rewritten automatically.
@@ -70,8 +70,9 @@ False or omission disables centering.
 | `resize = { default = [1440, 900], min = [960, 540], max = [3840, 2400] }` | None | Those settings | Primary button plus selector |
 
 Selector `default`, `min`, and `max` are all optional. Exact and selector fields cannot be
-mixed. All sizes are two-element arrays `[width, height]` of positive physical-pixel integers;
-incomplete pairs, extra components, and fractional dimensions are rejected.
+mixed. All sizes are two-element arrays `[width, height]` of physical-pixel integers from `1`
+through `16,384`; incomplete pairs, extra components, fractional dimensions, and larger values
+are rejected.
 
 Minimum bounds must not exceed maximum bounds on either axis. Selector bounds filter built-in
 menu choices, not the independently configured primary target. A default or exact target need
@@ -81,6 +82,9 @@ message.
 Position and resize permissions are independent. A matched rule with neither action remains an
 intentional read-only section. Native controls require both a successful window-detail query
 and a matching rule that enables the action.
+Configuration validation prevents pathological dimensions but does not guarantee that every
+accepted size can be applied. Native resize operations remain fallible because the compositor
+or target application may impose a smaller dynamic limit.
 
 ## Patterns and rule selection
 
@@ -89,31 +93,32 @@ A pattern string matches exactly. A partial object supports `starts_with`, `ends
 objects, regexes, and globs are not accepted.
 
 Configuration matching compares program paths and names case-insensitively. Configured patterns
-are lowercased once during validation; native candidates are lowercased once per snapshot. This
-matching normalization is independent of platform-backend cache identity. Titles stay
-case-sensitive. Runtime `ProgramFilter<Vec<PatternMatcher>>` and
+are lowercased once during validation; `matches_program()` lowercases each aggregate `ProgramInfo`
+candidate before applying compiled predicates. This matching normalization is independent of
+platform-backend cache identity. Titles stay case-sensitive. Runtime `ProgramFilter<Vec<PatternMatcher>>` and
 `WindowFilter<Vec<PatternMatcher>>` retain absent filters as `None`. Each matcher pairs an
 immutable `SmolStr` with a function pointer. `Pattern::to_matchers()` compiles literal
 case-sensitive predicates; the config compiler supplies normalized program patterns and rejects
 empty partials before calling it. No regex engine or trait objects are involved.
 
-`RuntimeConfig` keeps one source-order vector but exposes rules by stable name rather than array
-position. For each window with complete details:
+`Engine` directly owns one source-order `Vec<RuntimeRule>` and exposes it as a borrowed slice.
+For each `WindowInfo` with complete details:
 
 1. Scan all rules in source order.
 2. AND all configured filters.
 3. Replace the winner only when a matching rule has strictly greater priority.
 4. Equal priority therefore favors the first rule.
 
-`matching_rule_name()` returns the winning name and `rule(name)` resolves it. This straightforward
-scan preserves source-order UI sections without allowing array positions to escape as identity.
-No additional priority index is needed for the expected rule/window counts at the 10 Hz logic rate.
+`matching_rule_name(rules, window)` returns the winning name and `find_rule(rules, name)` resolves
+it. These engine-owned free functions preserve source-order UI sections without allowing array
+positions to escape as identity. No additional priority index is needed for the expected
+rule/window counts at the 10 Hz logic rate.
 
 ## Window geometry and snapshots
 
-The core crate owns `WindowInfo<H>`, `WindowDetail`, `ProgramDetail`, `WindowState`, and the
+The core crate owns `WindowInfo<H>`, `WindowDetail`, `ProgramInfo`, `WindowState`, and the
 generic `Backend` contract. The Windows crate owns the concrete `Handle<HWND>` and returns
-`WindowInfo<Handle<HWND>>`. A `WindowDetail` holds its immutable `ProgramDetail` through `Rc`,
+`WindowInfo<Handle<HWND>>`. A `WindowDetail` holds its immutable `ProgramInfo` through `Rc`,
 allowing a backend to share one program snapshot between multiple windows. Owned UTF-8 text
 crossing TurboZone API boundaries uses `SmolStr`, including serialized config values,
 diagnostics, startup file contents, runtime names, titles, paths, and matcher literals.
@@ -151,7 +156,7 @@ may disappear, and process IDs may be reused.
 
 The Windows `Backend` separately caches complete program results by the exact native `OsString`
 path. It does not case-fold or normalize separators for cache identity. Successful entries share an
-immutable `Rc<ProgramDetail>`; deterministic path-conversion failures can occupy the same cache.
+immutable `Rc<ProgramInfo>`; deterministic path-conversion failures can occupy the same cache.
 Missing, empty, or unreadable version metadata produces a successful program detail whose display
 description falls back to the program filename. Program-cache retention is an internal backend
 policy rather than part of the core snapshot contract. Existing snapshots keep their program
@@ -162,9 +167,10 @@ details alive independently through `Rc`. Native actions query current geometry 
 `window.min` and `window.max` filter rule eligibility using `content_rect.size`.
 They are independent of `resize.min` and `resize.max`, which filter selector choices.
 
-Bounds are inclusive on both axes, positive when present, and otherwise unrestricted. Normal
-windows use live client size; minimized/maximized windows use restored client size. Any
-detail-query failure excludes the whole snapshot from matching, even for unfiltered rules.
+Bounds are inclusive on both axes, limited to `1` through `16,384` when present, and otherwise
+unrestricted. Normal windows use live client size; minimized/maximized windows use restored
+client size. Any detail-query failure excludes the whole snapshot from matching, even for
+unfiltered rules.
 
 Matching is reevaluated on every snapshot, so moving, resizing, or query recovery may change a
 window's winning rule.

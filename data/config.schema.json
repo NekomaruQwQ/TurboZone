@@ -84,12 +84,12 @@
           "type": "object",
           "properties": {
             "exact": {
-              "description": "Positive client-area `[width, height]` in physical pixels, independent of selector limits.",
+              "description": "Supported client-area `[width, height]` in physical pixels, independent of selector limits.",
               "type": "array",
               "items": {
                 "type": "integer",
                 "format": "int32",
-                "maximum": 2147483647,
+                "maximum": 16384,
                 "minimum": 1
               },
               "maxItems": 2,
@@ -107,7 +107,7 @@
           "items": {
             "type": "integer",
             "format": "int32",
-            "maximum": 2147483647,
+            "maximum": 16384,
             "minimum": 1
           },
           "maxItems": 2,
@@ -131,7 +131,9 @@
           ],
           "items": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "maximum": 16384,
+            "minimum": 1
           },
           "maxItems": 2,
           "minItems": 2
@@ -144,7 +146,9 @@
           ],
           "items": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "maximum": 16384,
+            "minimum": 1
           },
           "maxItems": 2,
           "minItems": 2
@@ -157,7 +161,9 @@
           ],
           "items": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "maximum": 16384,
+            "minimum": 1
           },
           "maxItems": 2,
           "minItems": 2
@@ -209,27 +215,31 @@
       "type": "object",
       "properties": {
         "max": {
-          "description": "Inclusive maximum client-area `[width, height]` in positive physical pixels.",
+          "description": "Inclusive maximum client-area `[width, height]` in supported physical pixels.",
           "type": [
             "array",
             "null"
           ],
           "items": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "maximum": 16384,
+            "minimum": 1
           },
           "maxItems": 2,
           "minItems": 2
         },
         "min": {
-          "description": "Inclusive minimum client-area `[width, height]` in positive physical pixels.",
+          "description": "Inclusive minimum client-area `[width, height]` in supported physical pixels.",
           "type": [
             "array",
             "null"
           ],
           "items": {
             "type": "integer",
-            "format": "int32"
+            "format": "int32",
+            "maximum": 16384,
+            "minimum": 1
           },
           "maxItems": 2,
           "minItems": 2

@@ -37,7 +37,7 @@ fn stderr(output: &Output) -> SmolStr {
 fn missing_config_is_created_empty_with_the_remote_schema_directive() {
     let directory = TempDir::new();
     let path = directory.path().join("local.config.toml");
-    assert!(load_config(&path).unwrap().rules.is_empty());
+    assert!(load_config(&path).unwrap().is_empty());
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
         "#:schema https://raw.githubusercontent.com/NekomaruQwQ/TurboZone/refs/heads/main/data/config.schema.json\n\n");
@@ -54,7 +54,7 @@ fn existing_config_and_unrelated_schema_bytes_are_preserved() {
     ] {
         fs::write(&path, source).unwrap();
         fs::write(path.with_extension("schema.json"), "stale schema").unwrap();
-        assert_eq!(load_config(&path).unwrap().rules[0].name, "app");
+        assert_eq!(load_config(&path).unwrap()[0].name, "app");
         assert_eq!(fs::read(&path).unwrap(), source.as_bytes());
         assert_eq!(fs::read_to_string(path.with_extension("schema.json")).unwrap(), "stale schema");
     }
@@ -66,9 +66,9 @@ fn invalid_rules_do_not_prevent_valid_rules_from_loading() {
     let path = directory.path().join("private.toml");
     let source = "[[rules]]\nname = 'broken'\nresize.exact = [0, 900]\n[[rules]]\nname = 'usable'\n";
     fs::write(&path, source).unwrap();
-    let config = load_config(&path).unwrap();
-    assert_eq!(config.rules.len(), 1);
-    assert_eq!(config.rules[0].name, "usable");
+    let rules = load_config(&path).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].name, "usable");
     assert_eq!(fs::read_to_string(&path).unwrap(), source);
 }
 

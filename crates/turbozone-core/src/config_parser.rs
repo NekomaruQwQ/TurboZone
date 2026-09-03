@@ -14,7 +14,7 @@ use thiserror::Error;
 
 use crate::{
     Config, Pattern, PatternMatcher, ProgramFilter, ResizeRule, ResizeSelector, Rule,
-    RuntimeRule, WindowFilter,
+    RuntimeRule, WindowFilter, MAX_SIZE_DIMENSION,
 };
 
 /// Usable rules and source-ordered diagnostics for the rules that were excluded.
@@ -150,8 +150,10 @@ pub enum ConfigError {
         /// Configuration field containing the invalid path pattern.
         field: SmolStr,
     },
-    /// A configured dimension was not positive.
-    #[error("{field} must be positive, found {value}")]
+    /// A configured dimension was outside TurboZone's supported range.
+    #[error(
+        "{field} must be between 1 and {} inclusive, found {value}",
+        MAX_SIZE_DIMENSION)]
     InvalidDimension {
         /// Configuration field containing the invalid dimension.
         field: SmolStr,
@@ -328,7 +330,7 @@ fn validate_size([width, height]: [i32; 2], field: &str) -> Result<(), ConfigErr
     validate_dimension(height, &format_smolstr!("{field}[1]"))
 }
 
-/// Checks positive bounds and rejects inverted axes when both bounds are present.
+/// Checks supported bounds and rejects inverted axes when both bounds are present.
 fn validate_size_bounds(
     min: Option<[i32; 2]>,
     max: Option<[i32; 2]>,
@@ -353,9 +355,9 @@ fn validate_size_bounds(
     Ok(())
 }
 
-/// Rejects zero and negative physical-pixel dimensions.
+/// Rejects physical-pixel dimensions outside TurboZone's configuration contract.
 fn validate_dimension(value: i32, field: &str) -> Result<(), ConfigError> {
-    if value <= 0 {
+    if !(1..=MAX_SIZE_DIMENSION).contains(&value) {
         Err(ConfigError::InvalidDimension {
             field: field.into(),
             value,

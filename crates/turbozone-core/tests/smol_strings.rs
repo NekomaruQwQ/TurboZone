@@ -1,6 +1,12 @@
+use std::rc::Rc;
+
+use euclid::default::{Point2D, Rect, Size2D};
 use schemars::generate::SchemaSettings;
 use smol_str::format_smolstr;
-use turbozone_core::{Config, Pattern, parse_config};
+use turbozone_core::{
+    Config, Pattern, ProgramInfo, WindowDetail, WindowInfo, WindowState, matches_rule,
+    parse_config,
+};
 
 const DESCRIPTION: &str =
     "A deliberately long Unicode description for \u{5de5}\u{5177} windows";
@@ -68,9 +74,24 @@ fn schema_represents_smol_strings_as_json_strings() {
 fn compiler_normalizes_long_unicode_patterns_without_truncation() {
     let source = format_smolstr!("[[rules]]\nname = 'app'\nprogram.name = '{STARTS_WITH}'");
     let report = parse_config(&source).unwrap();
-    let rule = &report.runtime.rules[0];
+    let rule = &report.rules[0];
+    let window = WindowInfo {
+        handle: (),
+        title: "Tool".into(),
+        state: WindowState::Normal,
+        detail: Ok(WindowDetail {
+            monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
+            content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
+            process_id: 42,
+            program: Rc::new(ProgramInfo {
+                path: "c:/apps/tool.exe".into(),
+                name: "\u{e4}bcdefghijklmnopqrstuvwxyz".into(),
+                description: "Tool".into(),
+            }),
+        }),
+    };
 
-    assert!(rule.matches(Some("\u{e4}bcdefghijklmnopqrstuvwxyz"), "", "", None));
+    assert!(matches_rule(rule, &window));
 }
 
 /// Diagnostic payload storage is not observable; its stable text remains the

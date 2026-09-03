@@ -4,10 +4,17 @@ use euclid::default::Size2D;
 use schemars::*;
 use smol_str::SmolStr;
 
+/// Largest physical-pixel dimension accepted from serialized configuration.
+///
+/// This is a product sanity bound rather than a native-platform guarantee.
+/// Window operations remain fallible because compositors and applications
+/// may impose lower limits dynamically.
+pub const MAX_SIZE_DIMENSION: i32 = 0x4000;
+
 /// Returns whether a value is the default value of its type.
 ///
-/// This is useful for `skip_serializing_if` and `skip_deserializing_if` attributes
-/// on serde fields.
+/// This is useful for `skip_serializing_if` and `skip_deserializing_if`
+/// attributes on serde fields.
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     value == &T::default()
 }
@@ -32,9 +39,11 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 pub struct Rule {
     // ---- Metadata ----
-    /// Unique stable identifier retained in the same compact representation at runtime.
+    /// Unique stable identifier retained in the same compact representation
+    /// at runtime.
     pub name: SmolStr,
-    /// Compact user-facing section name, falling back to the rule name when empty.
+    /// Compact user-facing section name, falling back to the rule name when
+    /// empty.
     #[serde(default, skip_serializing_if = "is_default")]
     pub description: SmolStr,
 
@@ -61,8 +70,9 @@ pub struct Rule {
 
 /// A validated rule ready for matching and UI rendering.
 ///
-/// This compiled counterpart to [`Rule`] keeps runtime-only predicates beside the
-/// serialized configuration contract while leaving rule selection to the engine.
+/// This compiled counterpart to [`Rule`] keeps runtime-only predicates
+/// beside the serialized configuration contract while leaving rule selection
+/// to the engine.
 #[derive(Debug)]
 pub struct RuntimeRule {
     // --- Metadata ----
@@ -104,16 +114,19 @@ pub enum ResizeRule {
     Boolean(bool),
     /// Exact target size. The selector is disabled in this mode.
     Exact {
-        /// Positive client-area `[width, height]` in physical pixels, independent of selector limits.
-        #[schemars(inner(range(min = 1, max = i32::MAX)))]
+        /// Supported client-area `[width, height]` in physical pixels,
+        /// independent of selector limits.
+        #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
         exact: [i32; 2],
     },
-    /// Selector properties with only a default size, no minimum, and no maximum.
+    /// Selector properties with only a default size, no minimum, and
+    /// no maximum.
     SelectorDefault(
-        #[schemars(inner(range(min = 1, max = i32::MAX)))]
+        #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
         [i32; 2],
     ),
-    /// Selector properties, including optional default, minimum, and maximum sizes.
+    /// Selector properties, including optional default, minimum, and
+    /// maximum sizes.
     Selector(ResizeSelector),
 }
 
@@ -124,11 +137,15 @@ pub enum ResizeRule {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResizeSelector {
-    /// Primary `[width, height]` in physical pixels, independent of selector bounds.
+    /// Primary `[width, height]` in physical pixels, independent of selector
+    /// bounds.
+    #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
     pub default: Option<[i32; 2]>,
     /// Minimum `[width, height]` offered by the selector, in physical pixels.
+    #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
     pub min: Option<[i32; 2]>,
     /// Maximum `[width, height]` offered by the selector, in physical pixels.
+    #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
     pub max: Option<[i32; 2]>,
 }
 
@@ -182,21 +199,28 @@ pub struct WindowFilter<S> {
     /// Optional case-sensitive window-title matcher.
     #[educe(Default = None)]
     pub title: Option<S>,
-    /// Inclusive minimum client-area `[width, height]` in positive physical pixels.
+    /// Inclusive minimum client-area `[width, height]` in supported
+    /// physical pixels.
     #[educe(Default = None)]
+    #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
     pub min: Option<[i32; 2]>,
-    /// Inclusive maximum client-area `[width, height]` in positive physical pixels.
+    /// Inclusive maximum client-area `[width, height]` in supported
+    /// physical pixels.
     #[educe(Default = None)]
+    #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
     pub max: Option<[i32; 2]>,
 }
 
-/// An immutable literal pattern paired with its case-sensitive string predicate.
+/// An immutable literal pattern paired with its case-sensitive string
+/// predicate.
 ///
-/// Compiled literals use [`SmolStr`] because they are cloned into long-lived runtime
+/// Compiled literals use [`SmolStr`] because they are cloned into long-
+/// lived runtime
 /// rules but are usually short enough to remain inline.
 #[derive(Debug, Clone)]
 pub struct PatternMatcher(
-    /// Literal text, already normalized by the config compiler when appropriate.
+    /// Literal text, already normalized by the config compiler when
+    /// appropriate.
     SmolStr,
     /// Predicate chosen once during compilation.
     fn(input: &str, pattern: &str) -> bool);
@@ -208,8 +232,9 @@ impl PatternMatcher {
 
 /// An exact string or a conjunction of nonempty literal partial patterns.
 ///
-/// Serialized and compiled literals share [`SmolStr`] so parsing, validation, and
-/// runtime matching keep one owned representation without changing their wire format.
+/// Serialized and compiled literals share [`SmolStr`] so parsing,
+/// validation, and runtime matching keep one owned representation without
+/// changing their wire format.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[derive(Deserialize, Serialize)]
 #[derive(schemars::JsonSchema)]

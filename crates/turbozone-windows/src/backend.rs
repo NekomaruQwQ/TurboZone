@@ -199,7 +199,7 @@ fn snapshot_window_detail(
     })
 }
 
-/// Snapshots the [`ProgramDetail`] for a given program.
+/// Snapshots the [`ProgramInfo`] for a given program.
 ///
 /// This function does not cache the result; use [`SnapshotContext::get_program_detail`]
 /// to avoid repeated queries for the same path.

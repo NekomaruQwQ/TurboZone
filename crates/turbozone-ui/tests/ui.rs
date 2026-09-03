@@ -9,11 +9,11 @@ use fixture::window;
 
 /// Runs the public view headlessly; snapshots are never sent to native actions.
 fn rendered_text(source: &str) -> Vec<SmolStr> {
-    let config = parse_config(source).unwrap().runtime;
-    let sections = group_windows(&config, vec![window("C:/Apps/App.exe", "Application")]);
+    let rules = parse_config(source).unwrap().rules;
+    let sections = group_windows(&rules, vec![window("C:/Apps/App.exe", "Application")]);
     let mut actions = None;
     let mut output = Context::default().run_ui(RawInput::default(), |ui| {
-        actions = Some(app_ui(ui, &sections, &config));
+        actions = Some(app_ui(ui, &sections, &rules));
     });
     assert!(actions.unwrap().is_empty(), "rendering without interaction must not queue native actions");
     // No renderer consumes texture uploads in this integration test.

@@ -52,10 +52,10 @@ fn window(handle: u64) -> WindowInfo<u64> {
 
 #[test]
 fn tick_forwards_actions_in_queue_order_before_refreshing() {
-    let config = parse_config("[[rules]]\nname = 'all'").unwrap().runtime;
+    let rules = parse_config("[[rules]]\nname = 'all'").unwrap().rules;
     let mut backend = FakeBackend::default();
     backend.snapshots.push_back(Ok(vec![window(1)]));
-    let mut engine = Engine::new(config, backend);
+    let mut engine = Engine::new(rules, backend);
     engine.queue(WindowAction::MoveToCenter(1));
     engine.queue(WindowAction::Resize(1, Size2D::new(1280, 720)));
 
@@ -69,10 +69,10 @@ fn tick_forwards_actions_in_queue_order_before_refreshing() {
 
 #[test]
 fn failed_action_does_not_prevent_later_targets_or_refresh() {
-    let config = parse_config("[[rules]]\nname = 'all'").unwrap().runtime;
+    let rules = parse_config("[[rules]]\nname = 'all'").unwrap().rules;
     let mut backend = FakeBackend { failing_handle: Some(1), ..Default::default() };
     backend.snapshots.push_back(Ok(vec![window(2)]));
-    let mut engine = Engine::new(config, backend);
+    let mut engine = Engine::new(rules, backend);
     engine.queue(WindowAction::MoveToCenter(1));
     engine.queue(WindowAction::MoveToCenter(2));
 
@@ -84,11 +84,11 @@ fn failed_action_does_not_prevent_later_targets_or_refresh() {
 
 #[test]
 fn failed_snapshot_clears_previously_visible_sections() {
-    let config = parse_config("[[rules]]\nname = 'all'").unwrap().runtime;
+    let rules = parse_config("[[rules]]\nname = 'all'").unwrap().rules;
     let mut backend = FakeBackend::default();
     backend.snapshots.push_back(Ok(vec![window(1)]));
     backend.snapshots.push_back(Err(anyhow::anyhow!("enumeration unavailable")));
-    let mut engine = Engine::new(config, backend);
+    let mut engine = Engine::new(rules, backend);
     engine.tick();
     assert_eq!(engine.sections().len(), 1);
 

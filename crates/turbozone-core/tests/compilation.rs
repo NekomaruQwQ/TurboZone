@@ -1,10 +1,40 @@
-use euclid::default::Size2D;
+use std::rc::Rc;
+
+use euclid::default::{Point2D, Rect, Size2D};
 use smol_str::{SmolStr, format_smolstr};
 use turbozone_core::*;
 
 /// Deserializes fixtures that exercise compilation separately from document parsing.
 fn parse(source: &str) -> Config {
     toml::from_str(source).expect("test configuration must deserialize")
+}
+
+/// Builds the complete aggregate snapshot consumed by engine matching.
+fn window(program_name: &str, program_path: &str, title: &str) -> WindowInfo<()> {
+    window_with_size(program_name, program_path, title, Size2D::new(640, 480))
+}
+
+/// Varies client geometry without bypassing the snapshot boundary under test.
+fn window_with_size(
+    program_name: &str,
+    program_path: &str,
+    title: &str,
+    size: Size2D<i32>) -> WindowInfo<()> {
+    WindowInfo {
+        handle: (),
+        title: title.into(),
+        state: WindowState::Normal,
+        detail: Ok(WindowDetail {
+            monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
+            content_rect: Rect::new(Point2D::zero(), size),
+            process_id: 42,
+            program: Rc::new(ProgramInfo {
+                path: program_path.into(),
+                name: program_name.into(),
+                description: program_name.into(),
+            }),
+        }),
+    }
 }
 
 #[test]
@@ -49,7 +79,7 @@ fn validate_rejects_duplicate_rule_names() {
 
 #[test]
 fn explicit_action_fields_enable_controls() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "app"
@@ -58,7 +88,7 @@ fn explicit_action_fields_enable_controls() {
     "#,
     ))
     .expect("explicit action fields must validate");
-    let rule = &runtime.rules[0];
+    let rule = &rules[0];
 
     assert_eq!(
         (rule.relocate, rule.resize_selector.is_some()),
@@ -68,14 +98,14 @@ fn explicit_action_fields_enable_controls() {
 
 #[test]
 fn omitted_action_fields_disable_controls() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "app"
     "#,
     ))
     .expect("omitted action fields must use defaults");
-    let rule = &runtime.rules[0];
+    let rule = &rules[0];
 
     assert_eq!(
         (
@@ -89,7 +119,7 @@ fn omitted_action_fields_disable_controls() {
 
 #[test]
 fn exact_resize_disables_selector() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "app"
@@ -100,8 +130,8 @@ fn exact_resize_disables_selector() {
 
     assert_eq!(
         (
-            runtime.rules[0].resize_exact,
-            runtime.rules[0].resize_selector.as_ref()
+            rules[0].resize_exact,
+            rules[0].resize_selector.as_ref()
         ),
         (Some(Size2D::new(1440, 900)), None)
     );
@@ -109,7 +139,7 @@ fn exact_resize_disables_selector() {
 
 #[test]
 fn selector_default_is_independent_of_selector_bounds() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "app"
@@ -120,7 +150,7 @@ fn selector_default_is_independent_of_selector_bounds() {
     .expect("default target need not be in selector bounds");
 
     assert_eq!(
-        runtime.rules[0]
+        rules[0]
             .resize_selector
             .as_ref()
             .and_then(|selector| selector.default),
@@ -130,10 +160,10 @@ fn selector_default_is_independent_of_selector_bounds() {
 
 #[test]
 fn selector_default_shorthand_enables_an_unbounded_selector() {
-    let runtime = validate(parse("[[rules]]\nname = 'app'\nresize = [1440, 900]")).unwrap();
+    let rules = validate(parse("[[rules]]\nname = 'app'\nresize = [1440, 900]")).unwrap();
 
     assert_eq!(
-        runtime.rules[0].resize_selector,
+        rules[0].resize_selector,
         Some(ResizeSelector {
             default: Some([1440, 900]),
             min: None,
@@ -144,7 +174,7 @@ fn selector_default_shorthand_enables_an_unbounded_selector() {
 
 #[test]
 fn empty_trimmed_description_uses_rule_name_fallback() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "app"
@@ -153,13 +183,13 @@ fn empty_trimmed_description_uses_rule_name_fallback() {
     ))
     .expect("empty trimmed description must remain valid");
 
-    assert_eq!(runtime.rules[0].description, None);
+    assert_eq!(rules[0].description, None);
 }
 
 /// Selector bounds apply independently to both axes and include their endpoints.
 #[test]
 fn selector_limits_check_both_axes_and_reject_nonpositive_sizes() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "app"
@@ -168,7 +198,7 @@ fn selector_limits_check_both_axes_and_reject_nonpositive_sizes() {
     "#,
     ))
     .expect("selector limits must validate");
-    let resize = runtime.rules[0]
+    let resize = rules[0]
         .resize_selector
         .as_ref()
         .expect("selector must be enabled");
@@ -196,7 +226,7 @@ fn selector_limits_check_both_axes_and_reject_nonpositive_sizes() {
 
 #[test]
 fn partial_matcher_ands_every_predicate() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "tool"
@@ -206,14 +236,14 @@ fn partial_matcher_ands_every_predicate() {
     "#,
     ))
     .expect("partial matcher must validate");
-    let rule = &runtime.rules[0];
+    let rule = &rules[0];
 
-    assert!(rule.matches(None, "c:/tool.exe", "Tool - Ready", None));
+    assert!(matches_rule(rule, &window("tool.exe", "c:/tool.exe", "Tool - Ready")));
 }
 
 #[test]
 fn partial_matcher_ignores_empty_components() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "tool"
@@ -223,12 +253,14 @@ fn partial_matcher_ignores_empty_components() {
     ))
     .expect("empty partial components must behave as omitted");
 
-    assert!(runtime.rules[0].matches(None, "c:/tool.exe", "Tool Ready", None));
+    assert!(matches_rule(
+        &rules[0],
+        &window("tool.exe", "c:/tool.exe", "Tool Ready")));
 }
 
 #[test]
 fn string_matcher_is_exact() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "tool"
@@ -237,7 +269,9 @@ fn string_matcher_is_exact() {
     ))
     .expect("bare matcher must validate");
 
-    assert!(!runtime.rules[0].matches(None, "c:/tool.exe", "Tool Window", None));
+    assert!(!matches_rule(
+        &rules[0],
+        &window("tool.exe", "c:/tool.exe", "Tool Window")));
 }
 
 #[test]
@@ -273,7 +307,7 @@ fn empty_partial_matcher_is_rejected() {
 
 #[test]
 fn program_matchers_are_case_insensitive() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "tool"
@@ -283,7 +317,9 @@ fn program_matchers_are_case_insensitive() {
     ))
     .expect("program matcher must validate");
 
-    assert!(runtime.rules[0].matches(Some("tool.exe"), "c:/apps/tool.exe", "Tool", None));
+    assert!(matches_rule(
+        &rules[0],
+        &window("tool.exe", "c:/apps/tool.exe", "Tool")));
 }
 
 #[test]
@@ -306,7 +342,7 @@ fn program_path_matcher_rejects_backslashes() {
 
 #[test]
 fn window_title_matchers_are_case_sensitive() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "tool"
@@ -315,12 +351,14 @@ fn window_title_matchers_are_case_sensitive() {
     ))
     .expect("title matcher must validate");
 
-    assert!(!runtime.rules[0].matches(None, "c:/tool.exe", "tool", None));
+    assert!(!matches_rule(
+        &rules[0],
+        &window("tool.exe", "c:/tool.exe", "tool")));
 }
 
 #[test]
 fn matching_rule_prefers_higher_priority_over_source_order() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "first"
@@ -334,7 +372,7 @@ fn matching_rule_prefers_higher_priority_over_source_order() {
     .expect("rules must validate");
 
     assert_eq!(
-        runtime.matching_rule_name(None, "c:/app.exe", "App", None)
+        matching_rule_name(&rules, &window("app.exe", "c:/app.exe", "App"))
             .map(SmolStr::as_str),
         Some("second")
     );
@@ -342,7 +380,7 @@ fn matching_rule_prefers_higher_priority_over_source_order() {
 
 #[test]
 fn matching_rule_uses_source_order_for_equal_priority() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "first"
@@ -356,15 +394,15 @@ fn matching_rule_uses_source_order_for_equal_priority() {
     .expect("rules must validate");
 
     assert_eq!(
-        runtime.matching_rule_name(None, "c:/app.exe", "App", None)
+        matching_rule_name(&rules, &window("app.exe", "c:/app.exe", "App"))
             .map(SmolStr::as_str),
         Some("first")
     );
 }
 
 #[test]
-fn size_filtered_rule_rejects_missing_client_size() {
-    let runtime = validate(parse(
+fn size_filtered_rule_rejects_incomplete_window_details() {
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "large"
@@ -373,16 +411,16 @@ fn size_filtered_rule_rejects_missing_client_size() {
     ))
     .expect("size matcher must validate");
 
-    assert_eq!(
-        runtime.matching_rule_name(None, "c:/app.exe", "App", None),
-        None
-    );
+    let mut candidate = window("app.exe", "c:/app.exe", "App");
+    candidate.detail = Err(anyhow::anyhow!("client size unavailable"));
+
+    assert_eq!(matching_rule_name(&rules, &candidate), None);
 }
 
 /// Native geometry must satisfy both array bounds, including equal endpoints.
 #[test]
 fn size_bounds_are_inclusive() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "bounded"
@@ -393,14 +431,18 @@ fn size_bounds_are_inclusive() {
     .expect("equal inclusive bounds must validate");
 
     assert_eq!(
-        runtime.matching_rule_name(None, "c:/app.exe", "App", Some(Size2D::new(640, 480)))
+        matching_rule_name(
+            &rules,
+            &window_with_size("app.exe", "c:/app.exe", "App", Size2D::new(640, 480)))
             .map(SmolStr::as_str),
         Some("bounded")
     );
 
     for size in [[639, 480], [640, 479], [641, 480], [640, 481]] {
         assert_eq!(
-            runtime.matching_rule_name(None, "c:/app.exe", "App", Some(Size2D::from(size))),
+            matching_rule_name(
+                &rules,
+                &window_with_size("app.exe", "c:/app.exe", "App", Size2D::from(size))),
             None,
             "size {size:?} must fail one of the bounds"
         );
@@ -479,8 +521,8 @@ fn documented_example_validates() {
 
 #[test]
 fn explicit_false_disables_all_resize_controls() {
-    let runtime = validate(parse("[[rules]]\nname = 'app'\nresize = false")).unwrap();
-    let rule = &runtime.rules[0];
+    let rules = validate(parse("[[rules]]\nname = 'app'\nresize = false")).unwrap();
+    let rule = &rules[0];
     assert_eq!(
         (rule.resize_exact, rule.resize_selector.as_ref()),
         (None, None)
@@ -489,16 +531,16 @@ fn explicit_false_disables_all_resize_controls() {
 
 #[test]
 fn empty_selector_is_enabled_and_unbounded() {
-    let runtime = validate(parse("[[rules]]\nname = 'app'\nresize = {}")).unwrap();
+    let rules = validate(parse("[[rules]]\nname = 'app'\nresize = {}")).unwrap();
     assert_eq!(
-        runtime.rules[0].resize_selector,
+        rules[0].resize_selector,
         Some(ResizeSelector::default())
     );
 }
 
-/// Array validation keeps field- and axis-specific errors for every configured size.
+/// Array validation keeps field- and axis-specific errors outside the supported range.
 #[test]
-fn configured_sizes_reject_nonpositive_dimensions() {
+fn configured_sizes_reject_dimensions_outside_supported_range() {
     for field in [
         "resize",
         "resize.exact",
@@ -513,6 +555,8 @@ fn configured_sizes_reject_nonpositive_dimensions() {
             ([1440, 0], 1),
             ([-1, 900], 0),
             ([1440, -1], 1),
+            ([MAX_SIZE_DIMENSION + 1, 900], 0),
+            ([1440, MAX_SIZE_DIMENSION + 1], 1),
         ] {
             let source = format!("[[rules]]\nname = 'app'\n{field} = {size:?}");
             assert_eq!(
@@ -630,7 +674,7 @@ fn config_round_trip_preserves_all_resize_modes_and_generic_filters() {
 
 #[test]
 fn partial_matcher_rejects_a_candidate_missing_any_predicate() {
-    let runtime = validate(parse(
+    let rules = validate(parse(
         r#"
         [[rules]]
         name = "tool"
@@ -638,13 +682,15 @@ fn partial_matcher_rejects_a_candidate_missing_any_predicate() {
     "#,
     ))
     .unwrap();
-    assert!(!runtime.rules[0].matches(None, "c:/tool.exe", "Tool Ready", None));
+    assert!(!matches_rule(
+        &rules[0],
+        &window("tool.exe", "c:/tool.exe", "Tool Ready")));
 }
 
 #[test]
 fn absent_filters_remain_absent_after_compilation() {
-    let runtime = validate(parse("[[rules]]\nname = 'app'")).unwrap();
-    let rule = &runtime.rules[0];
+    let rules = validate(parse("[[rules]]\nname = 'app'")).unwrap();
+    let rule = &rules[0];
     assert!(
         rule.program_filters.name.is_none()
             && rule.program_filters.path.is_none()
@@ -674,7 +720,6 @@ fn parser_recovers_whole_rules_in_source_order_and_only_valid_names_are_reserved
     "#).unwrap();
     assert_eq!(
         report
-            .runtime
             .rules
             .iter()
             .map(|rule| rule.name.as_str())
@@ -702,9 +747,9 @@ fn parser_recovers_whole_rules_in_source_order_and_only_valid_names_are_reserved
         ConfigError::DuplicateRuleName { .. }
     ));
     assert_eq!(
-        report
-            .runtime
-            .matching_rule_name(None, "c:/app.exe", "App", None)
+        matching_rule_name(
+            &report.rules,
+            &window("app.exe", "c:/app.exe", "App"))
             .map(SmolStr::as_str),
         Some("reused")
     );
@@ -723,8 +768,8 @@ fn malformed_document_envelopes_are_fatal_but_bad_rule_values_are_recoverable() 
     let report =
         parse_config("rules = ['bad', { name = 'good' }, { name = 'bad', unknown = true }]")
             .unwrap();
-    assert_eq!(report.runtime.rules.len(), 1);
-    assert_eq!(report.runtime.rules[0].name, "good");
+    assert_eq!(report.rules.len(), 1);
+    assert_eq!(report.rules[0].name, "good");
     assert_eq!(
         report
             .diagnostics
@@ -739,10 +784,10 @@ fn malformed_document_envelopes_are_fatal_but_bad_rule_values_are_recoverable() 
 fn empty_documents_and_documents_with_only_rejected_rules_remain_usable() {
     for source in ["", "# Just comments\n", "rules = []"] {
         let report = parse_config(source).unwrap();
-        assert!(report.runtime.rules.is_empty() && report.diagnostics.is_empty());
+        assert!(report.rules.is_empty() && report.diagnostics.is_empty());
     }
     let report = parse_config("[[rules]]\nname = 'INVALID'").unwrap();
-    assert!(report.runtime.rules.is_empty());
+    assert!(report.rules.is_empty());
     assert_eq!(report.diagnostics.len(), 1);
 }
 
@@ -757,10 +802,16 @@ fn parser_checks_each_partial_program_component_without_folding_titles() {
         window.title = { starts_with = "Tool", ends_with = "Ready", contains = " - " }
     "#).unwrap();
     assert!(report.diagnostics.is_empty());
-    let rule = &report.runtime.rules[0];
-    assert!(rule.matches(Some("tool.exe"), "c:/apps/tool.exe", "Tool - Ready", None));
-    assert!(!rule.matches(Some("tool.exe"), "c:/other/tool.exe", "Tool - Ready", None));
-    assert!(!rule.matches(Some("tool.exe"), "c:/apps/tool.exe", "tool - Ready", None));
+    let rule = &report.rules[0];
+    assert!(matches_rule(
+        rule,
+        &window("tool.exe", "c:/apps/tool.exe", "Tool - Ready")));
+    assert!(!matches_rule(
+        rule,
+        &window("tool.exe", "c:/other/tool.exe", "Tool - Ready")));
+    assert!(!matches_rule(
+        rule,
+        &window("tool.exe", "c:/apps/tool.exe", "tool - Ready")));
 }
 
 #[test]
@@ -778,7 +829,7 @@ fn parser_rejects_oversized_arrays_before_compilation() {
             format!("[[rules]]\nname = 'bad'\n{field} = [640, 480, 1]\n[[rules]]\nname = 'good'");
         let report = parse_config(&source).unwrap();
         assert_eq!(report.diagnostics.len(), 1, "{field}");
-        assert_eq!(report.runtime.rules[0].name, "good");
+        assert_eq!(report.rules[0].name, "good");
     }
 }
 
@@ -791,10 +842,10 @@ fn parser_errors_retain_locations_without_private_source_excerpts() {
 }
 
 /// Adapts a compilation report to the strict assertions used by these fixtures.
-fn validate(config: Config) -> Result<RuntimeConfig, ConfigError> {
+fn validate(config: Config) -> Result<Vec<RuntimeRule>, ConfigError> {
     let report = compile_config(config);
     match report.diagnostics.into_iter().next() {
         Some(diagnostic) => Err(diagnostic.error),
-        None => Ok(report.runtime),
+        None => Ok(report.rules),
     }
 }

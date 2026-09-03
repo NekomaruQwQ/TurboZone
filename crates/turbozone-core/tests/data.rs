@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use euclid::default::{Point2D, Rect, Size2D};
 use turbozone_core::{
-    ProgramInfo, WindowDetail, WindowInfo, WindowState, group_windows, parse_config,
+    ProgramInfo, WindowDetail, WindowInfo, WindowState, find_rule, group_windows, parse_config,
 };
 
 /// Makes complete snapshots whose handles remain opaque to core grouping.
@@ -26,15 +26,15 @@ fn window(handle: u64, path: &str, title: &str) -> WindowInfo<u64> {
 
 #[test]
 fn grouping_keeps_only_complete_matches_and_uses_case_insensitive_program_identity() {
-    let config = parse_config(r#"
+    let rules = parse_config(r#"
         [[rules]]
         name = "tool"
         program.name = "TOOL.EXE"
         window.title.starts_with = "Tool"
-    "#).unwrap().runtime;
+    "#).unwrap().rules;
     let mut failed = window(5, "C:/Apps/Tool.exe", "Tool failed");
     failed.detail = Err(anyhow::anyhow!("Client query failed"));
-    let sections = group_windows(&config, vec![
+    let sections = group_windows(&rules, vec![
         window(1, "C:/Apps/Tool.exe", "Tool one"),
         window(2, "c:/apps/tool.EXE", "Tool two"),
         window(3, "C:/Apps/Tool.exe", "tool lowercase title"),
@@ -51,25 +51,25 @@ fn grouping_keeps_only_complete_matches_and_uses_case_insensitive_program_identi
 
 #[test]
 fn failed_details_never_match_even_unfiltered_rules_and_recovery_uses_new_details() {
-    let config = parse_config("[[rules]]\nname = 'all'").unwrap().runtime;
+    let rules = parse_config("[[rules]]\nname = 'all'").unwrap().rules;
     let mut failed = window(1, "C:/Apps/Tool.exe", "Tool");
     failed.detail = Err(anyhow::anyhow!("Program access denied"));
-    assert!(group_windows(&config, vec![failed]).is_empty());
-    let sections = group_windows(&config, vec![window(2, "C:/Apps/Other.exe", "Recovered")]);
+    assert!(group_windows(&rules, vec![failed]).is_empty());
+    let sections = group_windows(&rules, vec![window(2, "C:/Apps/Other.exe", "Recovered")]);
     assert_eq!(sections[0].program_path, "c:/apps/other.exe");
 }
 
 #[test]
 fn sections_retain_stable_names_and_source_order_after_rule_reordering() {
-    let config = parse_config(r#"
+    let rules = parse_config(r#"
         [[rules]]
         name = "fallback"
         [[rules]]
         name = "specific"
         priority = 10
         window.title = "Specific"
-    "#).unwrap().runtime;
-    let sections = group_windows(&config, vec![
+    "#).unwrap().rules;
+    let sections = group_windows(&rules, vec![
         window(1, "C:/Apps/Tool.exe", "Specific"),
         window(2, "C:/Apps/Tool.exe", "Fallback"),
     ]);
@@ -83,6 +83,6 @@ fn sections_retain_stable_names_and_source_order_after_rule_reordering() {
         window.title = "Specific"
         [[rules]]
         name = "fallback"
-    "#).unwrap().runtime;
-    assert_eq!(reordered.rule(&sections[0].rule_name).unwrap().name, "fallback");
+    "#).unwrap().rules;
+    assert_eq!(find_rule(&reordered, &sections[0].rule_name).unwrap().name, "fallback");
 }

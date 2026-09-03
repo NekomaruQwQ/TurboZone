@@ -104,7 +104,7 @@ fn size_schema_matches_array_serialization_and_runtime_bounds() {
         .find_map(|variant| variant.pointer("/properties/exact"))
         .unwrap();
     let serialized = serde_json::to_value(ResizeRule::Exact {
-        exact: [1, i32::MAX],
+        exact: [1, MAX_SIZE_DIMENSION],
     })
     .unwrap();
     let serialized_size = &serialized["exact"];

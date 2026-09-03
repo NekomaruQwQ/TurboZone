@@ -1,4 +1,4 @@
-/** Positive integer client-area dimensions in physical pixels. */
+/** Integer client-area dimensions from 1 through 16,384 physical pixels. */
 export type Size = [width: number, height: number];
 
 /**
@@ -114,22 +114,19 @@ export interface RuntimeRule {
     resize_limits?: ResizeLimits;
 }
 
-/** Rules stay in source order, without a separate priority index. */
-export interface RuntimeConfig {
-    rules: RuntimeRule[];
-}
+// Core's Engine owns RuntimeRule[] directly in source order and exposes it as a borrowed slice.
 
 /*
 Matching and UI semantics:
 
 1. Only snapshots with Ok(WindowDetail) participate in matching and native actions.
 2. All filters in a rule are ANDed; highest priority wins, then source order.
-3. Program candidates are lowercased once per snapshot for matching.
+3. ProgramInfo candidates are lowercased at the aggregate program-matching boundary.
 4. Titles retain their original case; native paths only replace backslashes with forward slashes.
 5. A matched section is identified by (rule.name, lowercase program path).
 6. An actionless matched rule remains an intentional read-only section.
 7. Unmatched windows are discarded normally; failed details are reported to stderr before discarding.
 8. Failed snapshots retain handle, title, state, and the first error; the next refresh retries.
-9. Size tuples must contain exactly two positive integers; no partial target is accepted.
+9. Size tuples must contain exactly two integers from 1 through 16,384; no partial target is accepted.
 10. No configurable section abstraction, inheritance, or legacy schema aliases exist.
 */
