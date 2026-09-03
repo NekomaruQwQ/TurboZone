@@ -244,8 +244,9 @@ rendering, and the public Windows snapshot, action, error, and restored-geometry
 startup tests live with the `turbozone` composition root. Windows tests mutate only fixture-owned
 windows. The monitor and process-path caches remain private implementation details; their
 snapshot-local ownership is documented rather than instrumented directly. Public snapshot tests
-cover the filename fallback when version metadata is unavailable. Program-cache identity and
-retention do not yet have direct unit coverage.
+cover the filename fallback when version metadata is unavailable. Core integration tests cover the
+generic cache's lazy insertion, key identity, hit refresh, and eviction boundary. Windows-specific
+program-cache identity and its 600-tick retention policy do not yet have direct instrumentation.
 
 The schema generator is an explicit core integration-test target, and the TOML example is parsed
 and compiled by a core regression test. Core fake-backend tests verify
