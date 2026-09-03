@@ -12,14 +12,26 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-turbozone-core = { workspace = true }
-turbozone-ui = { workspace = true }
+turbozone-core = { path = "../turbozone-core" }
+turbozone-ui = { path = "../turbozone-ui" }
 
 anyhow = { workspace = true }
-clap = { workspace = true }
 eframe = { workspace = true }
 euclid = { workspace = true }
 log = { workspace = true }
-pretty_env_logger = { workspace = true }
 smol_str = { workspace = true }
-windows = { workspace = true }
+
+clap = { version = "4.6.6", features = ["derive", "env"] }
+pretty_env_logger = "0.5.0"
+win32-version-info = "0.3.0"
+
+[dependencies.windows]
+version = "0.62.2"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+]

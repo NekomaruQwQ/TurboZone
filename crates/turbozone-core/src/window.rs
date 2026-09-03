@@ -42,6 +42,8 @@ pub struct WindowDetail {
     pub program_path: SmolStr,
     /// Program filename used by configuration matching.
     pub program_name: SmolStr,
+    // The program description from the executable metadata, if available.
+    // pub program_description: SmolStr,
 }
 
 impl WindowDetail {

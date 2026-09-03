@@ -45,6 +45,7 @@ const IGNORE_WINDOWS: &[Pred<WindowInfo>] = &[
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct Backend;
+// program_description_cache: HashMap<SmolStr, SmolStr>
 
 impl CoreBackend for Backend {
     type Handle = Handle<HWND>;

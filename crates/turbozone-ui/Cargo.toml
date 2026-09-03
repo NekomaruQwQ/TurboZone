@@ -8,11 +8,10 @@ license = { workspace = true }
 workspace = true
 
 [dependencies]
-turbozone-core = { workspace = true }
+turbozone-core = { path = "../turbozone-core" }
 
 anyhow = { workspace = true }
 eframe = { workspace = true }
 euclid = { workspace = true }
 log = { workspace = true }
 smol_str = { workspace = true }
-tap = { workspace = true }
