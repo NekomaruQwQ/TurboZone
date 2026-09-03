@@ -1,6 +1,8 @@
+use std::rc::Rc;
+
 use euclid::default::{Point2D, Rect, Size2D};
 use turbozone_core::{
-    WindowDetail, WindowInfo, WindowState, group_windows, parse_config,
+    ProgramDetail, WindowDetail, WindowInfo, WindowState, group_windows, parse_config,
 };
 
 /// Makes complete snapshots whose handles remain opaque to core grouping.
@@ -13,9 +15,11 @@ fn window(handle: u64, path: &str, title: &str) -> WindowInfo<u64> {
             monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
             content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
             process_id: 42,
-            program_name: path.rsplit('/').next().unwrap().into(),
-            program_description: "Tool".into(),
-            program_path: path.into(),
+            program: Rc::new(ProgramDetail {
+                path: path.into(),
+                name: path.rsplit('/').next().unwrap().into(),
+                description: "Tool".into(),
+            }),
         }),
     }
 }
@@ -41,7 +45,7 @@ fn grouping_keeps_only_complete_matches_and_uses_case_insensitive_program_identi
     assert_eq!(sections[0].rule_name, "tool");
     assert_eq!(sections[0].program_path, "c:/apps/tool.exe");
     assert_eq!(sections[0].windows.len(), 2);
-    assert_eq!(sections[0].windows[0].detail.as_ref().unwrap().program_path, "C:/Apps/Tool.exe");
+    assert_eq!(sections[0].windows[0].detail.as_ref().unwrap().program.path, "C:/Apps/Tool.exe");
     assert_eq!(sections[1].program_path, "c:/other/tool.exe");
 }
 

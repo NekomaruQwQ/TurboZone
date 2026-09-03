@@ -1,3 +1,8 @@
+//! Temporary-directory ownership for startup integration tests.
+//!
+//! Exclusive creation lets each parallel test clean up only the directory it owns without
+//! changing process-global environment or the working directory.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};

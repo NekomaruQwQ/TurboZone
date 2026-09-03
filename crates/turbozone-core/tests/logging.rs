@@ -1,9 +1,10 @@
+use std::rc::Rc;
 use std::sync::Mutex;
 
 use euclid::default::{Point2D, Rect, Size2D};
 use log::{LevelFilter, Log, Metadata, Record};
 use smol_str::{SmolStr, format_smolstr};
-use turbozone_core::{SnapshotLogging, WindowDetail, WindowInfo, WindowState};
+use turbozone_core::{ProgramDetail, SnapshotLogging, WindowDetail, WindowInfo, WindowState};
 
 /// Captures logging transitions without installing a terminal logger.
 struct CapturedLogs(Mutex<Vec<SmolStr>>);
@@ -28,9 +29,11 @@ fn window(title: &str) -> WindowInfo<u64> {
             monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
             content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
             process_id: 42,
-            program_name: "tool.exe".into(),
-            program_description: "Tool".into(),
-            program_path: "C:/Private/Tool.exe".into(),
+            program: Rc::new(ProgramDetail {
+                path: "C:/Private/Tool.exe".into(),
+                name: "tool.exe".into(),
+                description: "Tool".into(),
+            }),
         }),
     }
 }

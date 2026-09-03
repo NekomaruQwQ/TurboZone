@@ -1,3 +1,8 @@
+//! Integration coverage for configuration startup and the composed TurboZone executable.
+//!
+//! The subprocess cases live with the binary package so Cargo supplies its executable path;
+//! direct configuration cases stay here to verify the same startup boundary without a GUI.
+
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};

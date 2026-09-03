@@ -27,9 +27,9 @@ fn snapshot_returns_complete_details_for_an_owned_visible_window() {
             detail.process_id,
             detail.monitor_rect,
             detail.content_rect,
-            detail.program_path.is_empty(),
-            detail.program_name.is_empty(),
-            detail.program_description.is_empty(),
+            detail.program.path.is_empty(),
+            detail.program.name.is_empty(),
+            detail.program.description.is_empty(),
         ),
         (
             window.title(),
@@ -52,7 +52,7 @@ fn snapshot_uses_program_name_when_executable_has_no_description() {
         .detail
         .unwrap();
 
-    assert_eq!(detail.program_description, detail.program_name);
+    assert_eq!(detail.program.description, detail.program.name);
 }
 
 #[test]

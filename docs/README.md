@@ -88,13 +88,14 @@ A pattern string matches exactly. A partial object supports `starts_with`, `ends
 `contains`; all nonempty components are ANDed, and at least one must be nonempty. Exact-string
 objects, regexes, and globs are not accepted.
 
-Program paths and names compare case-insensitively. Configured patterns are lowercased once
-during validation; native candidates are lowercased once per snapshot. Titles stay case-sensitive.
-Runtime `ProgramFilter<Vec<PatternMatcher>>` and `WindowFilter<Vec<PatternMatcher>>`
-retain absent filters as `None`. Each matcher pairs an immutable `SmolStr` with a function pointer.
-`Pattern::to_matchers()` compiles literal case-sensitive predicates; the config compiler supplies
-normalized program patterns and rejects empty partials before calling it. No regex engine or
-trait objects are involved.
+Configuration matching compares program paths and names case-insensitively. Configured patterns
+are lowercased once during validation; native candidates are lowercased once per snapshot. This
+matching normalization is independent of platform-backend cache identity. Titles stay
+case-sensitive. Runtime `ProgramFilter<Vec<PatternMatcher>>` and
+`WindowFilter<Vec<PatternMatcher>>` retain absent filters as `None`. Each matcher pairs an
+immutable `SmolStr` with a function pointer. `Pattern::to_matchers()` compiles literal
+case-sensitive predicates; the config compiler supplies normalized program patterns and rejects
+empty partials before calling it. No regex engine or trait objects are involved.
 
 `RuntimeConfig` keeps one source-order vector but exposes rules by stable name rather than array
 position. For each window with complete details:
@@ -110,12 +111,14 @@ No additional priority index is needed for the expected rule/window counts at th
 
 ## Window geometry and snapshots
 
-The core crate owns `WindowInfo<H>`, `WindowDetail`, `WindowState`, and the generic `Backend`
-contract. The Windows crate owns the concrete `Handle<HWND>` and returns
-`WindowInfo<Handle<HWND>>`. Owned UTF-8 text crossing TurboZone API boundaries uses `SmolStr`,
-including serialized config values, diagnostics, startup file contents, runtime names, titles,
-paths, and matcher literals. Standard-library and serializer helpers may construct temporary
-buffers before conversion; persisted bytes and external string formats remain unchanged.
+The core crate owns `WindowInfo<H>`, `WindowDetail`, `ProgramDetail`, `WindowState`, and the
+generic `Backend` contract. The Windows crate owns the concrete `Handle<HWND>` and returns
+`WindowInfo<Handle<HWND>>`. A `WindowDetail` holds its immutable `ProgramDetail` through `Rc`,
+allowing a backend to share one program snapshot between multiple windows. Owned UTF-8 text
+crossing TurboZone API boundaries uses `SmolStr`, including serialized config values,
+diagnostics, startup file contents, runtime names, titles, paths, and matcher literals.
+Standard-library and serializer helpers may construct temporary buffers before conversion;
+persisted bytes and external string formats remain unchanged.
 
 Every snapshot retains its handle, title, and visual state. Its `detail` is either:
 
@@ -140,15 +143,19 @@ and [DPI-aware frame calculation](https://learn.microsoft.com/en-us/windows/win3
 Custom non-client layouts and wrapped menus are not fully inferable from window styles; restored
 client geometry retains this limitation of the standard-frame approach.
 
-The Windows `Backend` retains only a program-description cache keyed by lowercase normalized path.
-Version metadata is queried once while a path remains observable; missing, empty, or unreadable
-metadata caches the program filename as its display fallback. A successful enumeration evicts paths
-that are no longer present, while an enumeration failure preserves the cache because absence was not
-established. Each `Backend::snapshot()` call separately owns a monitor cache shared by all
-window-detail queries in that snapshot, including successful and failed monitor results. The monitor
-cache is discarded when the call returns, so work-area changes and monitor removal are not carried
-across refreshes. Native actions query current geometry separately. Failed required details are
-retried by the next scheduled snapshot, without extra retry loops.
+Each `Backend::snapshot()` call owns call-local monitor and process-path caches. Monitor results are
+shared by all window-detail queries for that monitor, including failures. Process-path results are
+shared by process ID so multiple windows from one process issue only one path query during the
+snapshot. Both caches are discarded when the call returns: monitor work areas may change, monitors
+may disappear, and process IDs may be reused.
+
+The Windows `Backend` separately caches complete program results by the exact native `OsString`
+path. It does not case-fold or normalize separators for cache identity. Successful entries share an
+immutable `Rc<ProgramDetail>`; deterministic path-conversion failures can occupy the same cache.
+Missing, empty, or unreadable version metadata produces a successful program detail whose display
+description falls back to the program filename. Program-cache retention is an internal backend
+policy rather than part of the core snapshot contract. Existing snapshots keep their program
+details alive independently through `Rc`. Native actions query current geometry separately.
 
 ## Size filters
 
@@ -190,9 +197,10 @@ page navigation, error card, diagnostic count, or configuration-path heading.
 
 ## Native paths and actions
 
-Windows is assumed to return already normalized paths with backslash separators. The Windows
-adapter converts non-Unicode paths lossily and replaces backslashes with forward slashes,
-without lexical normalization or filesystem canonicalization. Display casing is preserved.
+Windows is assumed to return paths with backslash separators. The native path must be representable
+as Rust UTF-8 text; otherwise program-detail capture fails and the complete window detail is
+unavailable for that snapshot. After conversion, the adapter replaces backslashes with forward
+slashes without lexical normalization or filesystem canonicalization. Display casing is preserved.
 Configured patterns are not path-normalized, and backslashes in them are rejected.
 
 Centering aligns the client-area center with the monitor work-area center. Resizing preserves
@@ -222,20 +230,22 @@ failures are always logged and do not abort actions for the remaining targets.
    models, and product cadence constants. It performs no filesystem I/O and does not install a logger.
 2. `turbozone-ui/src/`: generic `App<B>`, egui presentation, and startup config filesystem
    operations. It has no dependency on the Windows crate.
-3. `turbozone-windows/src/`: native handles, stateless snapshot adaptation with call-local monitor
-   caching, geometry queries, `Backend`, CLI shape, Windows font setup, logger initialization, and
-   the `turbozone.exe` entry point.
+3. `turbozone-windows/src/`: native handles, snapshot adaptation and caching, geometry queries, and
+   the concrete Windows `Backend`. It has no dependency on the UI or executable crate.
+4. `turbozone/src/`: the Windows composition root, CLI, logger initialization, UI/backend assembly,
+   and the `turbozone.exe` entry point.
 
 ## Verification
 
 Integration tests cover schema/serialization, partial rule recovery, all resize modes, selector
 bounds, exact and partial matching, case sensitivity, priority ties, size filters, CLI/environment
 precedence, config preservation/creation, stderr output, error recurrence, grouping, headless UI
-rendering, and the public Windows snapshot, action, error, and restored-geometry contracts. Windows
-tests mutate only fixture-owned windows. The monitor cache remains a private implementation detail;
-its snapshot-local ownership and retry boundary are documented rather than instrumented for tests.
-Program-description tests cover case-insensitive cache reuse, live-path eviction, and filename
-fallback when version metadata is unavailable.
+rendering, and the public Windows snapshot, action, error, and restored-geometry contracts. Binary
+startup tests live with the `turbozone` composition root. Windows tests mutate only fixture-owned
+windows. The monitor and process-path caches remain private implementation details; their
+snapshot-local ownership is documented rather than instrumented directly. Public snapshot tests
+cover the filename fallback when version metadata is unavailable. Program-cache identity and
+retention do not yet have direct unit coverage.
 
 The schema generator is an explicit core integration-test target, and the TOML example is parsed
 and compiled by a core regression test. Core fake-backend tests verify

@@ -1,8 +1,10 @@
 use std::collections::VecDeque;
+use std::rc::Rc;
 
 use euclid::default::{Point2D, Rect, Size2D};
 use turbozone_core::{
-    WindowAction, Backend, Engine, WindowDetail, WindowInfo, WindowState, parse_config,
+    ProgramDetail, WindowAction, Backend, Engine, WindowDetail, WindowInfo, WindowState,
+    parse_config,
 };
 
 /// Records the action boundary independently of action variants and supplies scripted snapshots.
@@ -39,9 +41,11 @@ fn window(handle: u64) -> WindowInfo<u64> {
             monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
             content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
             process_id: 42,
-            program_name: "app.exe".into(),
-            program_description: "Application".into(),
-            program_path: "C:/Apps/app.exe".into(),
+            program: Rc::new(ProgramDetail {
+                path: "C:/Apps/app.exe".into(),
+                name: "app.exe".into(),
+                description: "Application".into(),
+            }),
         }),
     }
 }
