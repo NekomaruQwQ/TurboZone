@@ -59,6 +59,37 @@ pub struct Rule {
     pub resize: ResizeRule,
 }
 
+/// A validated rule ready for matching and UI rendering.
+///
+/// This compiled counterpart to [`Rule`] keeps runtime-only predicates beside the
+/// serialized configuration contract while leaving rule selection to the engine.
+#[derive(Debug)]
+pub struct RuntimeRule {
+    // --- Metadata ----
+    /// Stable unique rule identifier.
+    pub name: SmolStr,
+    /// Trimmed user-facing section name, when nonempty.
+    pub description: Option<SmolStr>,
+
+    // --- Filters ----
+    /// Predicates applied to program metadata.
+    pub program_filters:
+        ProgramFilter<Vec<PatternMatcher>>,
+    /// Predicates applied to window metadata.
+    pub window_filters:
+        WindowFilter<Vec<PatternMatcher>>,
+    /// Explicit or default matching priority.
+    pub priority: i64,
+
+    // ---- Actions ----
+    /// Whether centering controls are available.
+    pub relocate: bool,
+    /// Optional exact target size, disabling the selector when present.
+    pub resize_exact: Option<Size2D<i32>>,
+    /// Selector settings, or none when resizing is disabled or exact-only.
+    pub resize_selector: Option<ResizeSelector>,
+}
+
 /// Complete serialized resize behavior.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[derive(Educe)]

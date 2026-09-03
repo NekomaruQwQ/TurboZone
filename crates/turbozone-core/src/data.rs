@@ -48,12 +48,12 @@ pub struct WindowDetail {
     ///
     /// Encountering invalid utf-8 strings in any of the fields is considered
     /// an error and will be reported as a failure to obtain the window detail.
-    pub program: Rc<ProgramDetail>,
+    pub program: Rc<ProgramInfo>,
 }
 
 /// Information about a program executable owning one or more windows.
 #[derive(Debug, Clone)]
-pub struct ProgramDetail {
+pub struct ProgramInfo {
     /// Platform-provided path to the program executable, normalized to use
     /// forward slashes.
     pub path: SmolStr,

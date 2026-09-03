@@ -5,7 +5,7 @@ use turbozone_core::{
     WindowState,
     WindowDetail,
     WindowAction as CoreWindowAction,
-    ProgramDetail,
+    ProgramInfo,
 };
 
 use crate::window::*;
@@ -53,7 +53,7 @@ type MonitorCache = Cache<u64, Handle<HMONITOR>, NativeResult<MONITORINFO>>;
 type ProcessCache = Cache<u64, u32, NativeResult<Rc<Path>>>;
 
 /// Type for caching program details across snapshots.
-type ProgramCache = Cache<u64, OsString, Result<Rc<ProgramDetail>, &'static str>>;
+type ProgramCache = Cache<u64, OsString, Result<Rc<ProgramInfo>, &'static str>>;
 
 const TICK_BEFORE_EVICT: u64 = 600;
 
@@ -209,7 +209,7 @@ fn snapshot_window_detail(
 ///
 /// Failures to obtain the program description are not considered fatal, and
 /// the program name will be used instead.
-fn snapshot_program(native_path: &Path) -> Result<ProgramDetail, &'static str> {
+fn snapshot_program(native_path: &Path) -> Result<ProgramInfo, &'static str> {
     let name: SmolStr =
         native_path
             .file_name()
@@ -234,7 +234,7 @@ fn snapshot_program(native_path: &Path) -> Result<ProgramDetail, &'static str> {
         } else {
             name.clone()
         };
-    Ok(ProgramDetail {
+    Ok(ProgramInfo {
         path,
         name,
         description,

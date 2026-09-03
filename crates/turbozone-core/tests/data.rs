@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use euclid::default::{Point2D, Rect, Size2D};
 use turbozone_core::{
-    ProgramDetail, WindowDetail, WindowInfo, WindowState, group_windows, parse_config,
+    ProgramInfo, WindowDetail, WindowInfo, WindowState, group_windows, parse_config,
 };
 
 /// Makes complete snapshots whose handles remain opaque to core grouping.
@@ -15,7 +15,7 @@ fn window(handle: u64, path: &str, title: &str) -> WindowInfo<u64> {
             monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
             content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
             process_id: 42,
-            program: Rc::new(ProgramDetail {
+            program: Rc::new(ProgramInfo {
                 path: path.into(),
                 name: path.rsplit('/').next().unwrap().into(),
                 description: "Tool".into(),

@@ -1,6 +1,7 @@
 //! TOML parsing and validated rule compilation for platform-independent configuration.
 //!
-//! This module owns the transition from serialized [`Config`] values to [`RuntimeConfig`].
+//! This module owns the transition from serialized [`Config`] values to compiled
+//! [`RuntimeRule`] values.
 //! Malformed documents fail as a whole, while invalid rules are diagnosed and excluded
 //! independently. Filesystem access and report logging remain caller concerns.
 
@@ -13,14 +14,14 @@ use thiserror::Error;
 
 use crate::{
     Config, Pattern, PatternMatcher, ProgramFilter, ResizeRule, ResizeSelector, Rule,
-    RuntimeConfig, RuntimeRule, WindowFilter,
+    RuntimeRule, WindowFilter,
 };
 
 /// Usable rules and source-ordered diagnostics for the rules that were excluded.
 #[derive(Debug, Default)]
 pub struct ConfigReport {
     /// Successfully compiled rules, retaining their relative declaration order.
-    pub runtime: RuntimeConfig,
+    pub rules: Vec<RuntimeRule>,
     /// One error per rejected rule; invalid rules are never partially applied.
     pub diagnostics: Vec<RuleDiagnostic>,
 }
@@ -95,7 +96,7 @@ fn compile_rules(rules: impl Iterator<Item = Result<Rule, ConfigError>>) -> Conf
         match rule {
             Ok(rule) => {
                 names.insert(rule.name.clone());
-                report.runtime.rules.push(rule);
+                report.rules.push(rule);
             }
             Err(error) => report.diagnostics.push(RuleDiagnostic { index, error }),
         }

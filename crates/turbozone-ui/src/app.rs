@@ -2,11 +2,10 @@
 
 use std::time::{Duration, Instant};
 
+use eframe::egui;
 use eframe::egui::{Context, Ui};
-use turbozone_core::{Backend, Engine, RuntimeConfig};
-use turbozone_core::constants::{
-    LOGIC_TICKS_PER_SECOND, RENDER_FRAMES_PER_SECOND,
-};
+use turbozone_core::{Backend, Engine, RuntimeRule};
+use crate::constants::*;
 
 use crate::ui;
 
@@ -29,16 +28,25 @@ pub struct App<B: Backend> {
 
 impl<B: Backend> App<B> {
     /// Combines validated rules with the platform adapter without native work.
-    pub fn new(config: RuntimeConfig, backend: B) -> Self {
+    pub fn new(rules: Vec<RuntimeRule>, backend: B) -> Self {
         Self {
-            engine: Engine::new(config, backend),
+            engine: Engine::new(rules, backend),
             last_logic_tick: None,
         }
     }
 
+    pub fn viewport() -> egui::ViewportBuilder {
+        egui::ViewportBuilder::default()
+            .with_inner_size(TURBOZONE_WINDOW_SIZE)
+            .with_min_inner_size(TURBOZONE_WINDOW_SIZE)
+            .with_max_inner_size(TURBOZONE_WINDOW_SIZE)
+            .with_resizable(false)
+            .with_maximize_button(false)
+    }
+
     /// Renders against one immutable snapshot, then queues all accepted actions.
     fn app_ui(&mut self, ui: &mut Ui) {
-        let actions = ui::app_ui(ui, self.engine.sections(), self.engine.config());
+        let actions = ui::app_ui(ui, self.engine.sections(), self.engine.rules());
         for action in actions {
             self.engine.queue(action);
         }

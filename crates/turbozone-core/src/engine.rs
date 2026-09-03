@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use euclid::default::Size2D;
 use smol_str::{SmolStr, StrExt as _, format_smolstr};
 
-use crate::{SnapshotLogging, RuntimeConfig, WindowInfo,};
+use crate::{ProgramInfo, RuntimeRule, SnapshotLogging, WindowInfo};
 
 /// One native side effect accepted from a rendered snapshot.
 ///
@@ -66,26 +66,26 @@ pub trait Backend {
 /// resulting snapshot reflects accepted user operations.
 pub struct Engine<B: Backend> {
     backend: B,
-    config: RuntimeConfig,
+    rules: Vec<RuntimeRule>,
     sections: Vec<WindowSection<B::Handle>>,
     pending_actions: Vec<WindowAction<B::Handle>>,
     logging: SnapshotLogging<B::Handle>,
 }
 
 impl<B: Backend> Engine<B> {
-    /// Creates an unticked engine with no stale native state.
-    pub fn new(config: RuntimeConfig, backend: B) -> Self {
+    /// Creates an unticked engine that owns the validated rule set and backend.
+    pub fn new(rules: Vec<RuntimeRule>, backend: B) -> Self {
         Self {
             backend,
-            config,
+            rules,
             sections: Vec::new(),
             pending_actions: Vec::new(),
             logging: SnapshotLogging::default(),
         }
     }
 
-    /// Returns the active validated configuration.
-    pub const fn config(&self) -> &RuntimeConfig { &self.config }
+    /// Returns the validated rules in configuration source order.
+    pub fn rules(&self) -> &[RuntimeRule] { &self.rules }
 
     /// Returns the latest successfully grouped snapshot.
     pub fn sections(&self) -> &[WindowSection<B::Handle>] { &self.sections }
@@ -118,7 +118,7 @@ impl<B: Backend> Engine<B> {
             },
         };
         self.logging.update(&windows);
-        self.sections = group_windows(&self.config, windows);
+        self.sections = group_windows(&self.rules, windows);
     }
 
     /// Returns the backend after consuming the engine, primarily for adapter tests.
@@ -156,21 +156,79 @@ pub struct WindowSection<H> {
     pub windows: Vec<WindowInfo<H>>,
 }
 
+/// Resolves a compiled rule through its stable configuration identity.
+pub fn find_rule<'a>(rules: &'a [RuntimeRule], name: &str) -> Option<&'a RuntimeRule> {
+    rules.iter().find(|rule| rule.name == name)
+}
+
+/// Returns the winning rule name for a complete native window snapshot.
+///
+/// Higher priorities replace an existing winner while equal priorities retain
+/// source order. Incomplete snapshots cannot match because their program and client
+/// geometry are not trustworthy inputs to the configured filters.
+pub fn matching_rule_name<'a, H>(
+    rules: &'a [RuntimeRule],
+    window: &WindowInfo<H>) -> Option<&'a SmolStr> {
+    let mut winner = None;
+    for rule in rules {
+        if !matches_rule(rule, window) {
+            continue;
+        }
+        if winner.is_none_or(|(_, priority)| rule.priority > priority) {
+            winner = Some((&rule.name, rule.priority));
+        }
+    }
+    winner.map(|(name, _)| name)
+}
+
+/// Returns whether every configured filter accepts a complete window snapshot.
+pub fn matches_rule<H>(rule: &RuntimeRule, window: &WindowInfo<H>) -> bool {
+    let Ok(detail) = window.detail.as_ref() else { return false; };
+    matches_program(rule, detail.program.as_ref()) && matches_window(rule, window)
+}
+
+/// Matches case-insensitive program filters against one executable snapshot.
+fn matches_program(rule: &RuntimeRule, program: &ProgramInfo) -> bool {
+    let name = program.name.to_lowercase_smolstr();
+    let path = program.path.to_lowercase_smolstr();
+    let filters = &rule.program_filters;
+    filters.name.as_ref().is_none_or(|predicates| {
+        predicates.iter().all(|predicate| predicate.matches(&name))
+    }) && filters.path.as_ref().is_none_or(|predicates| {
+        predicates.iter().all(|predicate| predicate.matches(&path))
+    })
+}
+
+/// Matches title and client-area filters against one complete window snapshot.
+fn matches_window<H>(rule: &RuntimeRule, window: &WindowInfo<H>) -> bool {
+    let Ok(detail) = window.detail.as_ref() else { return false; };
+    let filters = &rule.window_filters;
+    if !filters.title.as_ref().is_none_or(|predicates| {
+        predicates.iter().all(|predicate| predicate.matches(&window.title))
+    }) {
+        return false;
+    }
+    let size = detail.content_rect.size;
+    filters.min.is_none_or(|[min_width, min_height]| {
+        size.width >= min_width && size.height >= min_height
+    }) && filters.max.is_none_or(|[max_width, max_height]| {
+        size.width <= max_width && size.height <= max_height
+    })
+}
+
 /// Groups complete matches in rule source order and then program-path order.
 ///
 /// Rule names are the only durable lookup key. The nested map isolates program
 /// grouping from source order, allowing future config edits to reorder rules without
 /// redirecting an existing section through an unstable array position.
 pub fn group_windows<H>(
-    config: &RuntimeConfig,
+    rules: &[RuntimeRule],
     windows: Vec<WindowInfo<H>>) -> Vec<WindowSection<H>> {
     let mut matched = BTreeMap::<SmolStr, BTreeMap<SmolStr, Vec<WindowInfo<H>>>>::new();
     for window in windows {
         let Ok(ref detail) = window.detail else { continue; };
         let program_path = detail.program.path.to_lowercase_smolstr();
-        let program_name = detail.program.name.to_lowercase_smolstr();
-        let Some(rule_name) = config.matching_rule_name(
-            Some(&program_name), &program_path, &window.title, Some(detail.content_rect.size)) else {
+        let Some(rule_name) = matching_rule_name(rules, &window) else {
             continue;
         };
         matched.entry(rule_name.clone())
@@ -181,7 +239,7 @@ pub fn group_windows<H>(
     }
 
     let mut sections = Vec::new();
-    for rule in &config.rules {
+    for rule in rules {
         let Some(programs) = matched.remove(&rule.name) else { continue; };
         sections.extend(programs.into_iter().map(|(program_path, windows)| WindowSection {
             rule_name: rule.name.clone(),

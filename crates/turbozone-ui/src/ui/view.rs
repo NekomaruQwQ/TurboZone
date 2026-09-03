@@ -6,10 +6,10 @@ use std::hash::Hash;
 use eframe::egui::*;
 use euclid::default::Size2D;
 use turbozone_core::{
-    WindowAction, ResizeSelector, RuntimeConfig, RuntimeRule, WindowInfo,
-    WindowSection, WindowState,
-    constants::STANDARD_SIZE,
+    WindowAction, ResizeSelector, RuntimeRule, WindowInfo, WindowSection, WindowState,
+    find_rule,
 };
+use crate::constants::*;
 
 use super::color;
 use super::widget::Card;
@@ -21,7 +21,7 @@ use super::widget::Card;
 pub fn app_ui<H>(
     ui: &mut Ui,
     windows: &[WindowSection<H>],
-    config: &RuntimeConfig) -> Vec<WindowAction<H>>
+    rules: &[RuntimeRule]) -> Vec<WindowAction<H>>
 where
     H: Copy + Debug + Eq + Hash + 'static,
 {
@@ -34,7 +34,7 @@ where
             ScrollArea::vertical()
                 .auto_shrink(false)
                 .scroll_bar_visibility(scroll_area::ScrollBarVisibility::AlwaysHidden)
-                .show(ui, |ui| sections_page(ui, windows, config, &mut actions));
+                .show(ui, |ui| sections_page(ui, windows, rules, &mut actions));
         });
     actions
 }
@@ -43,7 +43,7 @@ where
 fn sections_page<H>(
     ui: &mut Ui,
     windows: &[WindowSection<H>],
-    config: &RuntimeConfig,
+    rules: &[RuntimeRule],
     actions: &mut Vec<WindowAction<H>>)
 where
     H: Copy + Debug + Eq + Hash + 'static,
@@ -55,7 +55,7 @@ where
         return;
     }
     for section in windows {
-        let Some(rule) = config.rule(&section.rule_name) else { continue; };
+        let Some(rule) = find_rule(rules, &section.rule_name) else { continue; };
         section_card(ui, section, rule, actions);
     }
 }

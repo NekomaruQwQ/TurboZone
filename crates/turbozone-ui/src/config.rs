@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use smol_str::{SmolStr, format_smolstr};
-use turbozone_core::RuntimeConfig;
+use turbozone_core::RuntimeRule;
 
 const CONFIG_SCHEMA_URL: &str =
     "https://raw.githubusercontent.com/NekomaruQwQ/TurboZone/refs/heads/main/data/config.schema.json";
@@ -21,7 +21,7 @@ const CONFIG_SCHEMA_URL: &str =
 /// configuration identity. Existing config bytes are never modified. Unreadable configs
 /// and malformed documents are fatal; rejected rules are logged individually and never
 /// written back to the file. Parent directories must exist.
-pub fn load_config(path: &Path) -> Result<RuntimeConfig> {
+pub fn load_config(path: &Path) -> Result<Vec<RuntimeRule>> {
     anyhow::ensure!(!path.as_os_str().is_empty(), "configuration path must not be empty");
     let path = resolve_config_path(path)?;
     anyhow::ensure!(path.file_name().is_some(), "configuration path must name a file");
@@ -33,8 +33,8 @@ pub fn load_config(path: &Path) -> Result<RuntimeConfig> {
     for diagnostic in &report.diagnostics {
         log::warn!("skipping rules[{}]: {}", diagnostic.index, diagnostic.error);
     }
-    log::info!("loaded {} rules; skipped {}", report.runtime.rules.len(), report.diagnostics.len());
-    Ok(report.runtime)
+    log::info!("loaded {} rules; skipped {}", report.rules.len(), report.diagnostics.len());
+    Ok(report.rules)
 }
 
 /// Resolves relative configuration paths against the executable that owns startup.

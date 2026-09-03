@@ -1,6 +1,5 @@
 //! Entry point of TurboZone for Windows.
 
-use turbozone_core::constants::*;
 use turbozone_windows::Backend;
 use turbozone_ui::{
     app::App,
@@ -36,20 +35,15 @@ fn main() {
     let config =
         load_config(&args.config)
             .expect("failed to load configuration file");
-    let viewport =
-        ViewportBuilder::default()
-            .with_inner_size(APP_WINDOW_SIZE)
-            .with_resizable(false)
-            .with_maximize_button(false);
+
     let options =
         NativeOptions {
-            viewport,
+            viewport: <App<Backend>>::viewport(),
             centered: true,
             ..NativeOptions::default()
         };
-
     let result =
-        eframe::run_native(APP_NAME, options, Box::new(move |cc| {
+        eframe::run_native("TurboZone", options, Box::new(move |cc| {
             let egui = &cc.egui_ctx;
             setup_fonts(egui);
             setup_style(egui);

@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use euclid::default::{Point2D, Rect, Size2D};
 use turbozone_core::{
-    ProgramDetail, WindowAction, Backend, Engine, WindowDetail, WindowInfo, WindowState,
+    ProgramInfo, WindowAction, Backend, Engine, WindowDetail, WindowInfo, WindowState,
     parse_config,
 };
 
@@ -41,7 +41,7 @@ fn window(handle: u64) -> WindowInfo<u64> {
             monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
             content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
             process_id: 42,
-            program: Rc::new(ProgramDetail {
+            program: Rc::new(ProgramInfo {
                 path: "C:/Apps/app.exe".into(),
                 name: "app.exe".into(),
                 description: "Application".into(),
