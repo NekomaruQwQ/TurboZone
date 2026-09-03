@@ -3,8 +3,8 @@
 ## Configuration contract
 
 TurboZone is rule-driven, without configurable groups or rule inheritance.
-The Rust config types define the accepted structure. Startup generates a schema beside the
-selected config for [editor completion and validation](Schema.md).
+The Rust config types define the accepted structure. A dedicated Cargo test generates the
+canonical schema referenced by configs for [editor completion and validation](Schema.md).
 [config.example.d.ts](config.example.d.ts) illustrates configuration and conceptual runtime
 types; [config.example.toml](config.example.toml) is a validated example.
 
@@ -37,18 +37,15 @@ are skipped. An empty document, or a document with no usable rules, is valid.
 ## Startup and diagnostics
 
 1. Require `--config <FILE>` or `TURBOZONE_CONFIG`; the CLI takes precedence. Empty values are
-   rejected. Relative paths resolve against the working directory; there is no implicit fallback.
-2. Refresh `config_path.with_extension("schema.json")` from `Config::schema()`. A write failure
-   is a warning, not a reason to reject an otherwise usable config.
-3. Leave existing config bytes untouched, including comments, schema directives, BOM, and line
-   endings. Create a missing file exclusively with only a relative `#:schema` comment. Parent
-   directories must already exist. Concurrent creation never authorizes overwriting the file.
-4. Parse and compile via `turbozone-core`, log rejected rules and the loaded/skipped counts,
+   rejected. Relative paths resolve against the executable's directory; there is no implicit fallback.
+2. Leave existing config bytes untouched, including comments, schema directives, BOM, and line
+   endings. Create a missing file exclusively with only the canonical remote `#:schema` comment.
+   Parent directories must already exist. Concurrent creation never authorizes overwriting the file.
+3. Parse and compile via `turbozone-core`, log rejected rules and the loaded/skipped counts,
    then launch the UI with a `RuntimeConfig`.
 
 Unreadable config, creation failure, and malformed documents exit nonzero before the UI opens.
-The generated schema is replaceable, but user-authored config is never rewritten automatically;
-there is no temporary-file replacement workflow.
+Startup never generates schemas, and user-authored config is never rewritten automatically.
 
 TurboZone assumes a terminal is available. The Windows binary installs
 `pretty_env_logger::init()` without a custom filter builder; `RUST_LOG` controls filtering.
@@ -214,14 +211,14 @@ failures are always logged and do not abort actions for the remaining targets.
 
 ## Source layout
 
-1. `turbozone-core/src/`: CLI shape, serialized config and schema, validation, runtime matching,
+1. `turbozone-core/src/`: serialized config and schema types, validation, runtime matching,
    backend contract, action queue, snapshot lifecycle, stable sections, log deduplication, window
    models, and product cadence constants. It performs no filesystem I/O and does not install a logger.
-2. `turbozone-ui/src/`: generic `App<B>`, egui presentation, and standard-library config/schema
-   filesystem operations. It has no dependency on the Windows crate.
+2. `turbozone-ui/src/`: generic `App<B>`, egui presentation, and startup config filesystem
+   operations. It has no dependency on the Windows crate.
 3. `turbozone-windows/src/`: native handles, stateless snapshot adaptation with call-local monitor
-   caching, geometry queries, `Backend`, Windows font setup, logger initialization, and the
-   `turbozone.exe` entry point.
+   caching, geometry queries, `Backend`, CLI shape, Windows font setup, logger initialization, and
+   the `turbozone.exe` entry point.
 
 ## Verification
 
@@ -232,7 +229,8 @@ rendering, and the public Windows snapshot, action, error, and restored-geometry
 tests mutate only fixture-owned windows. The monitor cache remains a private implementation detail;
 its snapshot-local ownership and retry boundary are documented rather than instrumented for tests.
 
-The TOML example is parsed and compiled by a core regression test. Core fake-backend tests verify
+The schema generator is an explicit core integration-test target, and the TOML example is parsed
+and compiled by a core regression test. Core fake-backend tests verify
 queue ordering, failure isolation, refresh behavior, name-based identity, grouping, and logging
 deduplication. Schema-only tests stay in the core integration suite. Verification uses release-mode
 workspace tests and Clippy with warnings denied. Formatting is manual; no formatter is run.

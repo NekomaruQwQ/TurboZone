@@ -1,3 +1,4 @@
+use schemars::generate::SchemaSettings;
 use smol_str::format_smolstr;
 use turbozone_core::{Config, Pattern, parse_config};
 
@@ -40,7 +41,11 @@ fn configuration_strings_round_trip_short_long_and_unicode_values() {
 /// continue advertising ordinary JSON strings for every configured text field.
 #[test]
 fn schema_represents_smol_strings_as_json_strings() {
-    let schema = Config::schema();
+    let schema =
+        SchemaSettings::draft2020_12()
+            .for_deserialize()
+            .into_generator()
+            .into_root_schema_for::<Config>();
     let value = schema.as_value();
     let rule = &value["$defs"]["Rule"]["properties"];
     let pattern_variants = value["$defs"]["Pattern"]["anyOf"].as_array().unwrap();

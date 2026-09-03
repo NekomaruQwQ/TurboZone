@@ -1,8 +1,8 @@
 # TOML editor support
 
-`turbozone_core::Config::schema()` generates the JSON Schema from Rust types, Serde attributes,
-and Rust doc comments. These supply field names, optionality, alternatives, and hover text.
-The TypeScript declarations in this directory are illustrative, not generator input.
+`turbozone_core::Config` derives its JSON Schema from Rust types, Serde attributes, and Rust doc
+comments. These supply field names, optionality, alternatives, and hover text. The TypeScript
+declarations in this directory are illustrative, not generator input.
 
 ## Explicit config source
 
@@ -12,14 +12,17 @@ Pass a file explicitly, or set `TURBOZONE_CONFIG`. The CLI wins when both are su
 cargo run --release -p turbozone-windows --bin turbozone -- --config D:/Private/TurboZone/local.config.toml
 ```
 
-Relative paths use the current working directory. There is no executable-adjacent default or
-search path. This lets private config live in its own local versioned directory. Parent directories
-must already exist; the app creates only the config file itself when it is missing.
+Relative paths use the executable's containing directory, independent of the launcher's working
+directory. There is no implicit default or search path; use an absolute path when private config
+lives elsewhere. Parent directories must already exist, and the app creates only the config file
+itself when it is missing.
 
-On startup, the app first writes the current schema to `config_path.with_extension("schema.json")`.
-For `local.config.toml`, this is `local.config.schema.json` beside it. Schema-write failure is a
-warning and loading continues. The schema is replaceable generated data; it is not a checked-in
-artifact and no standalone generation feature or example is required.
+Startup never generates or updates schemas. Maintainers regenerate the checked-in canonical schema
+explicitly from the repository root:
+
+```sh
+cargo test --release -p turbozone-core --test generate_schema
+```
 
 ## Use in an editor
 
@@ -29,14 +32,14 @@ artifact and no standalone generation feature or example is required.
 2. A newly created config contains only its schema directive and is a valid empty configuration:
 
    ```toml
-   #:schema ./local.config.schema.json
+   #:schema https://raw.githubusercontent.com/NekomaruQwQ/TurboZone/refs/heads/main/data/config.schema.json
    ```
 
 3. Existing configs are never rewritten automatically. To enable schema support, add or update
    the directive yourself, then add rules as needed:
 
    ```toml
-   #:schema ./local.config.schema.json
+   #:schema https://raw.githubusercontent.com/NekomaruQwQ/TurboZone/refs/heads/main/data/config.schema.json
 
    [[rules]]
    name = "vscode.main"
@@ -45,9 +48,9 @@ artifact and no standalone generation feature or example is required.
    resize.exact = [1440, 900]
    ```
 
-The schema path is relative to the TOML file. The [example configuration](config.example.toml)
-already names its generated sibling. Local schemas work offline. Do not add a `$schema` TOML
-key: unknown top-level fields are fatal; `#:schema` is a comment understood by the editor.
+The [example configuration](config.example.toml) references the canonical schema on the main
+branch. Editor validation therefore requires access to that URL. Do not add a `$schema` TOML key:
+unknown top-level fields are fatal; `#:schema` is a comment understood by the editor.
 
 For an editor check, request completion inside `[[rules]]`, hover `move`, and try an unknown key
 or `resize.exact = [0, 900]`. An exact resize cannot be combined with selector fields such as
@@ -58,7 +61,7 @@ or `resize.exact = [0, 900]`. An exact resize cannot be combined with selector f
 The schema uses JSON Schema Draft 2020-12 with `$defs` internal references, without additional downloads.
 It describes input structure, defaults, renamed keys, untagged alternatives, and rejected unknown
 fields. Sizes use `[i32; 2]`, serialized as `[width, height]` in physical pixels. Schemars derives the
-fixed array length; per-element annotations require positive integers no greater than 8192.
+fixed array length; per-element annotations require positive integers no greater than `i32::MAX`.
 Optional Rust fields can include JSON `null` in the schema; TOML has no null, so omit them instead.
 
 `turbozone-core::parse_config()` parses the document and compiles rules independently. Invalid
@@ -75,10 +78,12 @@ runtime validation.
 ## Verify
 
 ```sh
+cargo test --release -p turbozone-core --test generate_schema
 cargo test --release --workspace --all-features --locked
 cargo clippy --release --workspace --all-targets --all-features --locked -- -D warnings
 ```
 
-Tests compare generated JSON with serialization and runtime behavior, and verify that startup
-refreshes the sibling schema without changing existing config bytes. Schemars updates can alter
-the generated output; review schema behavior when updating the lockfile.
+The dedicated generator test rewrites `data/config.schema.json`; the remaining tests compare schema
+semantics with serialization and runtime behavior and verify that startup leaves existing config
+and sibling files untouched. Schemars updates can alter the generated output, so review schema
+behavior when updating the lockfile.

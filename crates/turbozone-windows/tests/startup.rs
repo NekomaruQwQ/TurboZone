@@ -1,8 +1,8 @@
 use std::fs;
+use std::path::Path;
 use std::process::{Command, Output};
 
 use smol_str::SmolStr;
-use turbozone_core::Config;
 use turbozone_ui::config::load_config;
 
 #[path = "support/temp_dir.rs"]
@@ -11,8 +11,13 @@ use temp_dir::TempDir;
 
 /// Isolates CLI environment in a child process; no GUI is launched by these failure cases.
 fn command(directory: &TempDir) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_turbozone"));
-    command.current_dir(directory.path())
+    command_from(Path::new(env!("CARGO_BIN_EXE_turbozone")), directory.path())
+}
+
+/// Creates an isolated command for either Cargo's binary or a relocated executable fixture.
+fn command_from(executable: &Path, directory: &Path) -> Command {
+    let mut command = Command::new(executable);
+    command.current_dir(directory)
         .env_remove("TURBOZONE_CONFIG")
         .env_remove("RUST_LOG");
     command
@@ -24,18 +29,18 @@ fn stderr(output: &Output) -> SmolStr {
 }
 
 #[test]
-fn missing_config_is_created_empty_with_its_current_sibling_schema() {
+fn missing_config_is_created_empty_with_the_remote_schema_directive() {
     let directory = TempDir::new();
     let path = directory.path().join("local.config.toml");
     assert!(load_config(&path).unwrap().rules.is_empty());
-    assert_eq!(fs::read_to_string(&path).unwrap(), "#:schema ./local.config.schema.json\n\n");
-    let schema: serde_json::Value = serde_json::from_slice(
-        &fs::read(path.with_extension("schema.json")).unwrap()).unwrap();
-    assert_eq!(schema, serde_json::to_value(Config::schema()).unwrap());
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "#:schema https://raw.githubusercontent.com/NekomaruQwQ/TurboZone/refs/heads/main/data/config.schema.json\n\n");
+    assert!(!path.with_extension("schema.json").exists());
 }
 
 #[test]
-fn existing_config_bytes_and_schema_directives_are_preserved() {
+fn existing_config_and_unrelated_schema_bytes_are_preserved() {
     let directory = TempDir::new();
     let path = directory.path().join("private.toml");
     for source in [
@@ -46,18 +51,14 @@ fn existing_config_bytes_and_schema_directives_are_preserved() {
         fs::write(path.with_extension("schema.json"), "stale schema").unwrap();
         assert_eq!(load_config(&path).unwrap().rules[0].name, "app");
         assert_eq!(fs::read(&path).unwrap(), source.as_bytes());
-        let schema: serde_json::Value = serde_json::from_slice(
-            &fs::read(path.with_extension("schema.json")).unwrap()).unwrap();
-        assert_eq!(schema, serde_json::to_value(Config::schema()).unwrap());
+        assert_eq!(fs::read_to_string(path.with_extension("schema.json")).unwrap(), "stale schema");
     }
 }
 
 #[test]
-fn schema_write_failure_does_not_prevent_config_creation_or_rule_recovery() {
+fn invalid_rules_do_not_prevent_valid_rules_from_loading() {
     let directory = TempDir::new();
     let path = directory.path().join("private.toml");
-    fs::create_dir_all(path.with_extension("schema.json")).unwrap();
-    assert!(load_config(&path).unwrap().rules.is_empty());
     let source = "[[rules]]\nname = 'broken'\nresize.exact = [0, 900]\n[[rules]]\nname = 'usable'\n";
     fs::write(&path, source).unwrap();
     let config = load_config(&path).unwrap();
@@ -97,22 +98,33 @@ fn cli_requires_a_nonempty_explicit_source_before_io() {
 }
 
 #[test]
-fn cli_overrides_environment_and_relative_paths_use_the_working_directory() {
+fn cli_overrides_environment_and_relative_paths_use_the_executable_directory() {
     let directory = TempDir::new();
+    let executable_directory = directory.path().join("bin");
+    let working_directory = directory.path().join("working");
+    fs::create_dir_all(&executable_directory).unwrap();
+    fs::create_dir_all(&working_directory).unwrap();
+    let executable = executable_directory.join("turbozone.exe");
+    fs::copy(env!("CARGO_BIN_EXE_turbozone"), &executable).unwrap();
+
     for name in ["cli.toml", "env.toml"] {
-        fs::write(directory.path().join(name), "[[rules").unwrap();
+        fs::write(executable_directory.join(name), "[[rules").unwrap();
+        fs::write(working_directory.join(name), "rules = [").unwrap();
     }
-    let output = command(&directory).env("TURBOZONE_CONFIG", "env.toml")
+    let output = command_from(&executable, &working_directory)
+        .env("TURBOZONE_CONFIG", "env.toml")
         .args(["--config", "cli.toml"]).output().unwrap();
     assert_eq!(output.status.code(), Some(101));
-    assert!(directory.path().join("cli.schema.json").is_file());
-    assert!(!directory.path().join("env.schema.json").exists());
-    assert!(stderr(&output).contains("cli.toml"));
+    let diagnostics = stderr(&output);
+    assert!(diagnostics.contains(executable_directory.join("cli.toml").to_string_lossy().as_ref()));
+    assert!(!diagnostics.contains(working_directory.join("cli.toml").to_string_lossy().as_ref()));
 
-    let output = command(&directory).env("TURBOZONE_CONFIG", "env.toml").output().unwrap();
+    let output = command_from(&executable, &working_directory)
+        .env("TURBOZONE_CONFIG", "env.toml").output().unwrap();
     assert_eq!(output.status.code(), Some(101));
-    assert!(directory.path().join("env.schema.json").is_file());
-    assert!(stderr(&output).contains("env.toml"));
+    let diagnostics = stderr(&output);
+    assert!(diagnostics.contains(executable_directory.join("env.toml").to_string_lossy().as_ref()));
+    assert!(!diagnostics.contains(working_directory.join("env.toml").to_string_lossy().as_ref()));
 }
 
 #[test]
@@ -128,21 +140,20 @@ fn help_hides_private_environment_values_and_performs_no_io() {
 }
 
 #[test]
-fn configured_stderr_reports_warnings_and_panic_chains_without_source_excerpts() {
+fn configured_stderr_reports_panic_chains_without_source_excerpts() {
     let directory = TempDir::new();
-    fs::write(directory.path().join("private.toml"), "rules = [ # PRIVATE_SOURCE_SENTINEL").unwrap();
-    fs::create_dir_all(directory.path().join("private.schema.json")).unwrap();
+    let path = directory.path().join("private.toml");
+    fs::write(&path, "rules = [ # PRIVATE_SOURCE_SENTINEL").unwrap();
     let output = command(&directory).env("RUST_LOG", "warn")
-        .args(["--config", "private.toml"]).output().unwrap();
+        .arg("--config").arg(&path).output().unwrap();
     assert_eq!(output.status.code(), Some(101));
     assert_eq!(output.stdout, b"");
     let diagnostics = stderr(&output);
-    assert!(diagnostics.contains("failed to refresh schema"));
     assert!(diagnostics.contains("failed to parse configuration"));
     assert!(!diagnostics.contains("PRIVATE_SOURCE_SENTINEL"));
 
     let output = command(&directory).env("RUST_LOG", "off")
-        .args(["--config", "private.toml"]).output().unwrap();
+        .arg("--config").arg(&path).output().unwrap();
     assert_eq!(output.status.code(), Some(101));
     let diagnostics = stderr(&output);
     assert!(diagnostics.contains("failed to load configuration"));

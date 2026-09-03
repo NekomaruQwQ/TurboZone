@@ -1,6 +1,16 @@
 use turbozone_core::*;
 
+use schemars::Schema;
+use schemars::generate::SchemaSettings;
 use serde_json::json;
+
+/// Derives the editor-facing schema with the same input-oriented settings as generation.
+fn config_schema() -> Schema {
+    SchemaSettings::draft2020_12()
+        .for_deserialize()
+        .into_generator()
+        .into_root_schema_for::<Config>()
+}
 
 /// Keeps editor completion aligned with Serde renames such as `relocate` to `move`.
 #[test]
@@ -15,7 +25,7 @@ fn schema_exposes_serialized_names_instead_of_rust_field_names() {
         ..Default::default()
     };
     let serialized = serde_json::to_value(rule).unwrap();
-    let schema = Config::schema();
+    let schema = config_schema();
     let properties = schema.pointer("/$defs/Rule/properties").unwrap();
     for name in serialized.as_object().unwrap().keys() {
         assert!(
@@ -29,7 +39,7 @@ fn schema_exposes_serialized_names_instead_of_rust_field_names() {
 /// Guards against making sizes required when annotating their array elements.
 #[test]
 fn optional_size_arrays_remain_nullable_and_not_required() {
-    let schema = Config::schema();
+    let schema = config_schema();
     for (definition, fields) in [
         ("ResizeSelector", ["default", "min", "max"].as_slice()),
         ("WindowFilter", ["min", "max"].as_slice()),
@@ -50,7 +60,7 @@ fn optional_size_arrays_remain_nullable_and_not_required() {
 /// Prevents completion and validation from treating distinct resize modes as one object.
 #[test]
 fn untagged_resize_schema_keeps_exact_and_selector_fields_separate() {
-    let schema = Config::schema();
+    let schema = config_schema();
     let variants = schema
         .pointer("/$defs/ResizeRule/anyOf")
         .unwrap()
@@ -79,7 +89,7 @@ fn untagged_resize_schema_keeps_exact_and_selector_fields_separate() {
 /// Checks every size field's derived array schema against serialization and the real loader.
 #[test]
 fn size_schema_matches_array_serialization_and_runtime_bounds() {
-    let schema = Config::schema();
+    let schema = config_schema();
     let definitions = &schema.as_value()["$defs"];
     let selector_default = definitions["ResizeRule"]["anyOf"]
         .as_array()
@@ -94,7 +104,7 @@ fn size_schema_matches_array_serialization_and_runtime_bounds() {
         .find_map(|variant| variant.pointer("/properties/exact"))
         .unwrap();
     let serialized = serde_json::to_value(ResizeRule::Exact {
-        exact: [1, 8192],
+        exact: [1, i32::MAX],
     })
     .unwrap();
     let serialized_size = &serialized["exact"];

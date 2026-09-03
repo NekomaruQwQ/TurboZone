@@ -76,6 +76,15 @@ fn oversized_resize_retains_the_native_invalid_argument_error() {
 }
 
 #[test]
+fn nonpositive_resize_retains_the_native_invalid_argument_error() {
+    let error = Backend::default()
+        .perform(WindowAction::Resize(Handle(HWND::default()), Size2D::new(0, 100)))
+        .unwrap_err();
+
+    assert_eq!(error.downcast_ref::<NativeError>().unwrap().code(), E_INVALIDARG);
+}
+
+#[test]
 fn invalid_handle_action_retains_context_and_native_cause() {
     let error = Backend::default()
         .perform(WindowAction::MoveToCenter(Handle(HWND::default())))
