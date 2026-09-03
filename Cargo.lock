@@ -2391,6 +2391,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol_str 0.3.6",
+ "tap",
  "thiserror 2.0.20",
  "toml",
 ]
@@ -2404,6 +2405,7 @@ dependencies = [
  "euclid",
  "log",
  "smol_str 0.3.6",
+ "tap",
  "turbozone-core",
 ]
 
