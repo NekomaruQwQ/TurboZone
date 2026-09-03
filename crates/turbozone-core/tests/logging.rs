@@ -29,6 +29,7 @@ fn window(title: &str) -> WindowInfo<u64> {
             content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
             process_id: 42,
             program_name: "tool.exe".into(),
+            program_description: "Tool".into(),
             program_path: "C:/Private/Tool.exe".into(),
         }),
     }

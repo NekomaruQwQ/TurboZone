@@ -27,7 +27,7 @@ pub struct WindowInfo<H> {
     pub detail: anyhow::Result<WindowDetail>,
 }
 
-/// Complete geometry and program identity for matching and native controls.
+/// Complete geometry, matching identity, and display metadata for native controls.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WindowDetail {
     /// Current monitor work area in physical screen coordinates, excluding taskbars.
@@ -42,8 +42,8 @@ pub struct WindowDetail {
     pub program_path: SmolStr,
     /// Program filename used by configuration matching.
     pub program_name: SmolStr,
-    // The program description from the executable metadata, if available.
-    // pub program_description: SmolStr,
+    /// Human-facing executable description, falling back to [`Self::program_name`].
+    pub program_description: SmolStr,
 }
 
 impl WindowDetail {

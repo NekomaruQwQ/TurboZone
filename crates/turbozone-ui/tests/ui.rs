@@ -32,9 +32,10 @@ fn empty_config_renders_the_matched_view_without_diagnostic_navigation() {
 #[test]
 fn matched_sections_keep_metadata_and_actionless_rules() {
     let text = rendered_text("[[rules]]\nname = 'app'\ndescription = ' My Application '");
-    for expected in ["READ ONLY", "My Application", "C:/Apps/App.exe", "Application", "PID 42", "App.exe", "640x480"] {
+    for expected in ["READ ONLY", "My Application", "C:/Apps/App.exe", "Application", "PID 42", "App Description", "640x480"] {
         assert!(text.iter().any(|text| text == expected), "missing {expected}: {text:?}");
     }
+    assert!(!text.iter().any(|text| text == "App.exe"));
     assert!(!text.iter().any(|text| text.contains("RESIZE") || text.contains("CENTER")));
 }
 

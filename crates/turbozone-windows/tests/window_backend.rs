@@ -29,6 +29,7 @@ fn snapshot_returns_complete_details_for_an_owned_visible_window() {
             detail.content_rect,
             detail.program_path.is_empty(),
             detail.program_name.is_empty(),
+            detail.program_description.is_empty(),
         ),
         (
             window.title(),
@@ -37,7 +38,21 @@ fn snapshot_returns_complete_details_for_an_owned_visible_window() {
             expected_content,
             false,
             false,
+            false,
         ));
+}
+
+#[test]
+fn snapshot_uses_program_name_when_executable_has_no_description() {
+    let window = TestWindow::visible_offscreen();
+    let detail = Backend::default().snapshot().unwrap()
+        .into_iter()
+        .find(|candidate| candidate.handle == window.handle())
+        .expect("snapshot must retain the fixture window")
+        .detail
+        .unwrap();
+
+    assert_eq!(detail.program_description, detail.program_name);
 }
 
 #[test]

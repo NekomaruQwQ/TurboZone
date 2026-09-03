@@ -269,7 +269,7 @@ fn window_metadata<H>(ui: &mut Ui, window: &WindowInfo<H>) {
     ui.horizontal(|ui| {
         ui.add_space(4.0);
         ui.label(RichText::new(format!("PID {}", detail.process_id)).small().weak());
-        ui.label(RichText::new(detail.program_name.as_str()).small().weak());
+        ui.label(RichText::new(detail.program_description.as_str()).small().weak());
         let size = detail.content_rect.size;
         let text = RichText::new(format!("{}x{}", size.width, size.height)).small();
         let known = STANDARD_SIZE.iter()

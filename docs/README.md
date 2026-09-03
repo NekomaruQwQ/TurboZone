@@ -120,7 +120,7 @@ buffers before conversion; persisted bytes and external string formats remain un
 Every snapshot retains its handle, title, and visual state. Its `detail` is either:
 
 1. `Ok(WindowDetail)`: monitor work area, controllable client rectangle, process ID, normalized
-   program path, and program filename are all available.
+   program path, matching filename, and human-facing program description are all available.
 2. `Err(anyhow::Error)`: the first contextual query failure, preserving its original cause.
    Successful subsets of detail fields are not retained; this is an all-or-nothing detail boundary.
 
@@ -140,11 +140,15 @@ and [DPI-aware frame calculation](https://learn.microsoft.com/en-us/windows/win3
 Custom non-client layouts and wrapped menus are not fully inferable from window styles; restored
 client geometry retains this limitation of the standard-frame approach.
 
-The Windows `Backend` is stateless. Each `Backend::snapshot()` call owns a monitor cache shared by
-all window-detail queries in that snapshot, including successful and failed monitor results. The
+The Windows `Backend` retains only a program-description cache keyed by lowercase normalized path.
+Version metadata is queried once while a path remains observable; missing, empty, or unreadable
+metadata caches the program filename as its display fallback. A successful enumeration evicts paths
+that are no longer present, while an enumeration failure preserves the cache because absence was not
+established. Each `Backend::snapshot()` call separately owns a monitor cache shared by all
+window-detail queries in that snapshot, including successful and failed monitor results. The monitor
 cache is discarded when the call returns, so work-area changes and monitor removal are not carried
-across refreshes. Native actions query current geometry separately. Failed details are retried by
-the next scheduled snapshot, without extra retry loops.
+across refreshes. Native actions query current geometry separately. Failed required details are
+retried by the next scheduled snapshot, without extra retry loops.
 
 ## Size filters
 
@@ -175,7 +179,9 @@ identity is `(rule.name, lowercase program path)`; rule array indices are never 
 
 Windows from the same program matching the same rule share a section. Different paths or
 winning rules form separate sections. Actionless matched rules still appear. The UI keeps section
-and window actions, program paths, process IDs, titles, visual states, and size highlighting.
+and window actions, program paths and descriptions, process IDs, titles, visual states, and size
+highlighting. Program descriptions are display-only; configuration continues to match executable
+filenames.
 
 A geometry failure removes the whole snapshot from matching until a later snapshot succeeds.
 Old details are never substituted. Unmatched windows are normal, with no warning or diagnostic
@@ -228,6 +234,8 @@ precedence, config preservation/creation, stderr output, error recurrence, group
 rendering, and the public Windows snapshot, action, error, and restored-geometry contracts. Windows
 tests mutate only fixture-owned windows. The monitor cache remains a private implementation detail;
 its snapshot-local ownership and retry boundary are documented rather than instrumented for tests.
+Program-description tests cover case-insensitive cache reuse, live-path eviction, and filename
+fallback when version metadata is unavailable.
 
 The schema generator is an explicit core integration-test target, and the TOML example is parsed
 and compiled by a core regression test. Core fake-backend tests verify

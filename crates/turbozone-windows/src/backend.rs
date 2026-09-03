@@ -15,7 +15,7 @@ use crate::{
     resize_window,
 };
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Context as _;
 use euclid::default::Size2D;
@@ -33,6 +33,39 @@ type WindowAction = CoreWindowAction<Handle<HWND>>;
 
 type MonitorInfoCache = HashMap<Handle<HMONITOR>, Result<MONITORINFO>>;
 
+/// Reuses human-facing executable metadata while its program path remains observable.
+///
+/// Version-resource lookup is optional display work and may fail for valid executables.
+/// Caching the filename fallback avoids repeating that failure at the snapshot cadence.
+#[derive(Debug, Default)]
+struct ProgramDescriptions(HashMap<SmolStr, SmolStr>);
+
+impl ProgramDescriptions {
+    /// Resolves one case-insensitive Windows path without repeating its metadata query.
+    fn get_or_insert_with(
+        &mut self,
+        program_path: &str,
+        program_name: &SmolStr,
+        lookup: impl FnOnce() -> Option<SmolStr>) -> SmolStr {
+        self.0
+            .entry(program_path.to_lowercase_smolstr())
+            .or_insert_with(|| {
+                lookup()
+                    .filter(|description| !description.is_empty())
+                    .unwrap_or_else(|| program_name.clone())
+            })
+            .clone()
+    }
+
+    /// Evicts entries only after successful enumeration establishes the live path set.
+    fn retain_observed<'a>(&mut self, program_paths: impl Iterator<Item = &'a str>) {
+        let observed = program_paths
+            .map(str::to_lowercase_smolstr)
+            .collect::<HashSet<_>>();
+        self.0.retain(|program_path, _| observed.contains(program_path));
+    }
+}
+
 const IGNORE_WINDOWS: &[Pred<WindowInfo>] = &[
     |window| window.title.is_empty(),
     |window| {
@@ -42,23 +75,37 @@ const IGNORE_WINDOWS: &[Pred<WindowInfo>] = &[
         })},
 ];
 
+/// Adapts Win32 snapshots and actions while retaining only derived display metadata.
+///
+/// Program descriptions persist across snapshots to avoid repeated version-resource
+/// queries; live-path pruning owns their bounded lifetime independently of core state.
 #[derive(Debug, Default)]
 #[non_exhaustive]
-pub struct Backend;
-// program_description_cache: HashMap<SmolStr, SmolStr>
+pub struct Backend {
+    program_descriptions: ProgramDescriptions,
+}
 
 impl CoreBackend for Backend {
     type Handle = Handle<HWND>;
 
     fn snapshot(&mut self) -> anyhow::Result<Vec<WindowInfo>> {
         let mut monitor_info_cache = HashMap::new();
-
-        Ok(native::enumerate_windows()?
+        let mut windows = native::enumerate_windows()?
             .into_iter()
             .filter(|&handle| native::is_app_window(handle))
-            .map(|handle| snapshot_window(&mut monitor_info_cache, handle))
-            .filter(|window| !IGNORE_WINDOWS.iter().any(|pred| pred(window)))
-            .collect())
+            .map(|handle| snapshot_window(
+                &mut monitor_info_cache,
+                &mut self.program_descriptions,
+                handle))
+            .collect::<Vec<_>>();
+        // Prune before product filtering so an observable ignored window does not
+        // repeatedly query the same executable metadata on every snapshot.
+        self.program_descriptions.retain_observed(
+            windows.iter()
+                .filter_map(|window| window.detail.as_ref().ok())
+                .map(|detail| detail.program_path.as_str()));
+        windows.retain(|window| !IGNORE_WINDOWS.iter().any(|pred| pred(window)));
+        Ok(windows)
     }
 
     #[expect(clippy::panic_in_result_fn, reason = "an unknown action is a core/backend contract mismatch, not an operational failure")]
@@ -78,6 +125,7 @@ impl CoreBackend for Backend {
 /// Retains basic identity even when a detail query fails.
 fn snapshot_window(
     monitor_info_cache: &mut MonitorInfoCache,
+    program_descriptions: &mut ProgramDescriptions,
     handle: HWND)
  -> WindowInfo {
     let title = native::get_window_text(handle);
@@ -86,13 +134,18 @@ fn snapshot_window(
         handle: Handle(handle),
         title,
         state,
-        detail: snapshot_window_detail(monitor_info_cache, handle, state),
+        detail: snapshot_window_detail(
+            monitor_info_cache,
+            program_descriptions,
+            handle,
+            state),
     }
 }
 
-/// Stops at the first failed query while retaining the original native error.
+/// Stops at the first required query failure while treating display metadata as optional.
 fn snapshot_window_detail(
     monitor_info_cache: &mut MonitorInfoCache,
+    program_descriptions: &mut ProgramDescriptions,
     handle: HWND,
     state: WindowState)
     -> anyhow::Result<WindowDetail> {
@@ -121,12 +174,24 @@ fn snapshot_window_detail(
         native_path
             .to_string_lossy()
             .replace_smolstr("\\", "/");
+    let program_description =
+        program_descriptions.get_or_insert_with(
+            &program_path,
+            &program_name,
+            || win32_version_info::VersionInfo::from_file(&native_path)
+                .ok()
+                .map(|metadata| SmolStr::new(metadata.file_description)));
     Ok(WindowDetail {
         monitor_rect: monitor.rcWork.convert(),
         content_rect,
         process_id,
         program_path,
         program_name,
+        program_description,
     })
 }
+
+#[cfg(test)]
+#[path = "../tests/support/program_description_cache.rs"]
+mod program_description_cache_tests;
 

@@ -40,6 +40,7 @@ fn window(handle: u64) -> WindowInfo<u64> {
             content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
             process_id: 42,
             program_name: "app.exe".into(),
+            program_description: "Application".into(),
             program_path: "C:/Apps/app.exe".into(),
         }),
     }
