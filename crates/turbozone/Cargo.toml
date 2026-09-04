@@ -1,9 +1,11 @@
 [package]
 name = "turbozone"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-publish.workspace = true
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+
+default-run = "turbozone"
 
 [lints]
 workspace = true
@@ -15,9 +17,10 @@ turbozone-ui = { path = "../turbozone-ui" }
 
 anyhow = { workspace = true }
 eframe = { workspace = true }
+egui = { workspace = true }
 euclid = { workspace = true }
 log = { workspace = true }
 smol_str = { workspace = true }
 
-clap = { version = "4.6.6", features = ["derive", "env"] }
+dirs = "6.0.0"
 pretty_env_logger = "0.5.0"

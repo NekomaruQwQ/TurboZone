@@ -1,6 +1,6 @@
 //! Backend-independent action orchestration and snapshot lifecycle.
 
-use std::fmt;
+use std::{fmt, rc::Rc};
 use std::hash::Hash;
 use std::collections::BTreeMap;
 
@@ -67,7 +67,7 @@ pub trait Backend {
 pub struct Engine<B: Backend> {
     backend: B,
     rules: Vec<RuntimeRule>,
-    sections: Vec<WindowSection<B::Handle>>,
+    groups: Vec<Group<B::Handle>>,
     pending_actions: Vec<WindowAction<B::Handle>>,
     logging: SnapshotLogging<B::Handle>,
 }
@@ -78,7 +78,7 @@ impl<B: Backend> Engine<B> {
         Self {
             backend,
             rules,
-            sections: Vec::new(),
+            groups: Vec::new(),
             pending_actions: Vec::new(),
             logging: SnapshotLogging::default(),
         }
@@ -87,11 +87,18 @@ impl<B: Backend> Engine<B> {
     /// Returns the validated rules in configuration source order.
     pub fn rules(&self) -> &[RuntimeRule] { &self.rules }
 
-    /// Returns the latest successfully grouped snapshot.
-    pub fn sections(&self) -> &[WindowSection<B::Handle>] { &self.sections }
+    /// Resolves a compiled rule through its stable configuration identity.
+    pub fn rule(&self, name: &str) -> Option<&RuntimeRule> {
+        self.rules.iter().find(|rule| rule.name == name)
+    }
 
-    /// Defers one native operation until the next logic tick.
-    pub fn queue(&mut self, action: WindowAction<B::Handle>) { self.pending_actions.push(action); }
+    /// Returns the latest successfully grouped snapshot.
+    pub fn groups(&self) -> &[Group<B::Handle>] { &self.groups }
+
+    /// Defers native operations until the next logic tick in iterator order.
+    pub fn queue(&mut self, actions: impl IntoIterator<Item = WindowAction<B::Handle>>) {
+        self.pending_actions.extend(actions);
+    }
 
     /// Returns whether user work should trigger a tick before the periodic deadline.
     pub const fn has_pending_actions(&self) -> bool { !self.pending_actions.is_empty() }
@@ -113,12 +120,12 @@ impl<B: Backend> Engine<B> {
             Ok(windows) => windows,
             Err(error) => {
                 self.logging.enumeration_failed(format_smolstr!("{error}"));
-                self.sections.clear();
+                self.groups.clear();
                 return;
             },
         };
         self.logging.update(&windows);
-        self.sections = group_windows(&self.rules, windows);
+        self.groups = group_windows(&self.rules, windows);
     }
 
     /// Returns the backend after consuming the engine, primarily for adapter tests.
@@ -129,7 +136,7 @@ impl<B: Backend> Engine<B> {
     /// The identity must outlive the snapshot borrow because native execution may
     /// invalidate it; compact immutable text keeps that boundary explicit.
     fn window_identity(&self, handle: B::Handle) -> SmolStr {
-        let window = self.sections.iter()
+        let window = self.groups.iter()
             .flat_map(|section| &section.windows)
             .find(|window| window.handle == handle);
         let Some(window) = window else {
@@ -146,19 +153,18 @@ impl<B: Backend> Engine<B> {
     }
 }
 
-/// Windows selected by one stable rule name and sharing one program identity.
-pub struct WindowSection<H> {
+/// Complete windows selected by one stable rule and case-insensitive program path.
+///
+/// The representative program snapshot comes from the first matched window and
+/// preserves its display casing. Sharing it through [`Rc`] lets presentation code
+/// render group metadata without recovering it from an arbitrary window.
+pub struct Group<H> {
     /// Stable rule identity; source-array position is deliberately not retained.
     pub rule_name: SmolStr,
-    /// Lowercased program path used in persistent section identity.
-    pub program_path: SmolStr,
-    /// Complete native snapshots belonging to this section.
+    /// Representative immutable metadata for the grouped program.
+    pub program: Rc<ProgramInfo>,
+    /// Complete native snapshots belonging to this group.
     pub windows: Vec<WindowInfo<H>>,
-}
-
-/// Resolves a compiled rule through its stable configuration identity.
-pub fn find_rule<'a>(rules: &'a [RuntimeRule], name: &str) -> Option<&'a RuntimeRule> {
-    rules.iter().find(|rule| rule.name == name)
 }
 
 /// Returns the winning rule name for a complete native window snapshot.
@@ -218,34 +224,38 @@ fn matches_window<H>(rule: &RuntimeRule, window: &WindowInfo<H>) -> bool {
 
 /// Groups complete matches in rule source order and then program-path order.
 ///
-/// Rule names are the only durable lookup key. The nested map isolates program
-/// grouping from source order, allowing future config edits to reorder rules without
-/// redirecting an existing section through an unstable array position.
+/// Rule names are the only durable rule lookup key. Lowercase paths remain internal
+/// grouping and ordering keys, while each resulting [`Group`] retains the first
+/// window's display-preserving program snapshot.
 pub fn group_windows<H>(
     rules: &[RuntimeRule],
-    windows: Vec<WindowInfo<H>>) -> Vec<WindowSection<H>> {
-    let mut matched = BTreeMap::<SmolStr, BTreeMap<SmolStr, Vec<WindowInfo<H>>>>::new();
+    windows: Vec<WindowInfo<H>>) -> Vec<Group<H>> {
+    let mut matched = BTreeMap::<
+        SmolStr,
+        BTreeMap<SmolStr, (Rc<ProgramInfo>, Vec<WindowInfo<H>>)>>::new();
     for window in windows {
         let Ok(ref detail) = window.detail else { continue; };
         let program_path = detail.program.path.to_lowercase_smolstr();
+        let program = Rc::clone(&detail.program);
         let Some(rule_name) = matching_rule_name(rules, &window) else {
             continue;
         };
         matched.entry(rule_name.clone())
             .or_default()
             .entry(program_path)
-            .or_default()
+            .or_insert_with(|| (program, Vec::new()))
+            .1
             .push(window);
     }
 
-    let mut sections = Vec::new();
+    let mut groups = Vec::new();
     for rule in rules {
         let Some(programs) = matched.remove(&rule.name) else { continue; };
-        sections.extend(programs.into_iter().map(|(program_path, windows)| WindowSection {
+        groups.extend(programs.into_values().map(|(program, windows)| Group {
             rule_name: rule.name.clone(),
-            program_path,
+            program,
             windows,
         }));
     }
-    sections
+    groups
 }

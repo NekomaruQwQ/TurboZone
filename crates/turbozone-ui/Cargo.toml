@@ -12,7 +12,10 @@ turbozone-core = { path = "../turbozone-core" }
 
 anyhow = { workspace = true }
 eframe = { workspace = true }
+egui = { workspace = true }
 euclid = { workspace = true }
 log = { workspace = true }
-tap = { workspace = true }
 smol_str = { workspace = true }
+tap = { workspace = true }
+
+egui_phosphor_icons   = "0.5.0"

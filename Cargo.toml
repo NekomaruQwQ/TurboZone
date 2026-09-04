@@ -10,11 +10,16 @@ publish = false
 
 [workspace.dependencies]
 anyhow = "1.0"
-eframe = { version = "0.36.1", default-features = false, features = ["glow"] }
+egui = "0.36.1"
 euclid = "0.22.14"
 log = "0.4.34"
-tap = "1.0"
 smol_str = { version = "0.3.6", features = ["serde"] }
+tap = "1.0.1"
+
+[workspace.dependencies.eframe]
+version = "0.36.1"
+default-features = false
+features = ["glow"]
 
 [workspace.lints.clippy]
 cargo = { level = "warn", priority = -1 }

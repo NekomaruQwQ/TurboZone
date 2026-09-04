@@ -1,17 +1,13 @@
 # `turbozone-core`
-/crates/turbozone-core/src/**/*
-!/crates/turbozone-core/src/lib.rs
-!/crates/turbozone-core/src/config.rs
-!/crates/turbozone-core/src/window.rs
-!/crates/turbozone-core/src/bin/
-!/crates/turbozone-core/src/bin/generate_schema.rs
+/crates/turbozone-core/src/engine.rs
+/crates/turbozone-core/src/config_parser.rs
 
 # `turbozone-windows`
 /crates/turbozone-windows/src/native.rs
 /crates/turbozone-windows/src/window.rs
 
 # `turbozone-ui`
-/crates/turbozone-ui/src/
+/crates/turbozone-ui/src/config.rs
 
 # Tests are maintained exclusively by agents
 tests/

@@ -1,10 +1,11 @@
-lints = { workspace = true }
-
 [package]
 name = "turbozone-core"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
+
+[lints]
+workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
@@ -16,6 +17,4 @@ educe = { version = "0.7.6", default-features = false, features = ["Default"] }
 schemars = { version = "1.2.2", features = ["smol_str03"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tap = { workspace = true }
-thiserror = "2.0"
 toml = "1.1.5"

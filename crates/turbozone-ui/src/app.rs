@@ -1,37 +1,108 @@
-//! Eframe scheduling and rendering over a backend-generic core engine.
+#![expect(clippy::unreachable, reason = "prechecked by assertions")]
 
-use std::time::{Duration, Instant};
+use turbozone_core::*;
+
+use std::time::Duration;
+use std::time::Instant;
+
+use tap::prelude::*;
+
+use euclid::default::Size2D;
 
 use eframe::egui;
-use eframe::egui::{Context, Ui};
-use turbozone_core::{Backend, Engine, RuntimeRule};
-use crate::constants::*;
+use egui::*;
+use egui_phosphor_icons::icons;
 
-use crate::ui;
+/// Standard client-area sizes, ordered from largest to smallest.
+pub const STANDARD_SIZE: &[(&str, &[[i32; 2]])] = &[
+    ("16:10", &[
+        [3840, 2400],
+        [2880, 1800],
+        [2560, 1600],
+        [1920, 1200],
+        [1680, 1050],
+        [1440, 900],
+        [1280, 800],
+        [960, 600],
+    ]),
+    ("16:9", &[
+        [3840, 2160],
+        [2880, 1620],
+        [2560, 1440],
+        [1920, 1080],
+        [1600, 900],
+        [1360, 768],
+        [1280, 720],
+        [1024, 576],
+        [960, 540],
+    ]),
+];
 
-/// Keeps painting independent from native query frequency.
-const RENDER_INTERVAL: Duration = Duration::from_nanos(
-    1_000_000_000 / RENDER_FRAMES_PER_SECOND as u64);
-/// Refreshes native details often enough to reflect external window changes.
-const LOGIC_INTERVAL: Duration = Duration::from_nanos(
-    1_000_000_000 / LOGIC_TICKS_PER_SECOND as u64);
+/// Fixed viewport chosen to keep the M0 layout comfortable with current metadata.
+pub const TURBOZONE_WINDOW_SIZE: [f32; 2] = [450.0, 720.0];
+
+/// Native state changes less often than the UI paints, so snapshots use a separate cadence.
+const UPDATE_INTERVAL: Duration = Duration::from_secs(1);
+
+/// Painting stays responsive without coupling native enumeration to every frame.
+const RENDER_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 30);
+
+const CHAR_EMPTY: char = '\u{26ab}';
+const CHAR_CHECK: char = '\u{2705}';
+const CHAR_CROSS: char = '\u{00d7}';
+const CHAR_WINDOW: char = '\u{1f5d6}';
 
 /// TurboZone application state shared by the logic and UI phases.
 ///
-/// The generic backend is owned by core's engine. This layer records only framework
-/// timing and translates UI responses into queued core actions.
+/// Core's engine owns native state and queued effects. This layer owns framework timing
+/// and turns one immutable snapshot into an ordered batch of user-requested actions.
 pub struct App<B: Backend> {
     engine: Engine<B>,
-    /// Completion time of the preceding tick; `None` makes startup refresh immediately.
-    last_logic_tick: Option<Instant>,
+    last_update: Instant,
+}
+
+impl<B: Backend> eframe::App for App<B> {
+    fn logic(&mut self, _: &Context, _: &mut eframe::Frame) {
+        if  self.engine.has_pending_actions() ||
+            self.last_update.elapsed() >= UPDATE_INTERVAL {
+            self.engine.tick();
+            self.last_update = Instant::now();
+        }
+    }
+
+    fn ui(&mut self, ui: &mut Ui, _: &mut eframe::Frame) {
+        let mut actions = Vec::new();
+
+        CentralPanel::default().show(ui, |ui| {
+            ScrollArea::vertical()
+                .auto_shrink(false)
+                .show(ui, |ui| {
+                    Self::app_ui(
+                        ui,
+                        &mut self.engine,
+                        &mut |action| actions.push(action));
+                });
+        });
+
+        let request_repaint = !actions.is_empty();
+        self.engine.queue(actions);
+
+        if request_repaint {
+            ui.request_repaint();
+        } else {
+            ui.request_repaint_after(RENDER_INTERVAL);
+        }
+    }
 }
 
 impl<B: Backend> App<B> {
-    /// Combines validated rules with the platform adapter without native work.
     pub fn new(rules: Vec<RuntimeRule>, backend: B) -> Self {
+        let mut engine = Engine::new(rules, backend);
+        engine.tick();
+
         Self {
-            engine: Engine::new(rules, backend),
-            last_logic_tick: None,
+            engine,
+            last_update: Instant::now(),
         }
     }
 
@@ -44,33 +115,241 @@ impl<B: Backend> App<B> {
             .with_maximize_button(false)
     }
 
-    /// Renders against one immutable snapshot, then queues all accepted actions.
-    fn app_ui(&mut self, ui: &mut Ui) {
-        let actions = ui::app_ui(ui, self.engine.sections(), self.engine.rules());
-        for action in actions {
-            self.engine.queue(action);
+    pub fn setup_icon_font(fonts: &mut egui::FontDefinitions) {
+        egui_phosphor_icons::add_fonts(fonts);
+    }
+
+    /// Renders a snapshot without native effects and returns actions in interaction order.
+    ///
+    /// Group identity combines the stable rule name with its representative display path;
+    /// window identity uses the backend handle. This keeps egui state stable while leaving
+    /// all native mutation behind the engine queue boundary.
+    pub fn app_ui<F: FnMut(WindowAction<B::Handle>)>(
+        ui: &mut Ui,
+        engine: &mut Engine<B>,
+        action_callback: &mut F) {
+        let groups = engine.groups();
+
+        if !groups.is_empty() {
+            for group in groups {
+                let group_id = (
+                    group.rule_name.as_str(),
+                    group.program.path.as_str());
+                let rule =
+                    engine
+                        .rule(&group.rule_name)
+                        .expect("a rendered group must reference an active rule");
+                ui.push_id(group_id, |ui| {
+                    Self::group_ui(ui, group, rule, action_callback);
+                });
+            }
+        } else {
+            ui.weak("- nothing here -");
         }
     }
-}
 
-impl<B: Backend> eframe::App for App<B> {
-    fn logic(&mut self, ctx: &Context, _: &mut eframe::Frame) {
-        let now = Instant::now();
-        let elapsed = self.last_logic_tick
-            .map_or(LOGIC_INTERVAL, |last| now.saturating_duration_since(last));
-        if self.engine.has_pending_actions() || elapsed >= LOGIC_INTERVAL {
-            self.engine.tick();
-            self.last_logic_tick = Some(Instant::now());
+    fn group_ui<F: FnMut(WindowAction<B::Handle>)>(
+        ui: &mut Ui,
+        group: &Group<B::Handle>,
+        rule: &RuntimeRule,
+        action_callback: &mut F) {
+        ui.horizontal(|ui| {
+            ui.heading(group.program.description.as_str());
+            ui.add_space(4.0);
+            ui.monospace(rule.name.as_str());
+
+            // ui.weak(format!(
+            //     "({}, {:+})",
+            //     rule.description.clone().unwrap_or_default(),
+            //     rule.priority));
+        });
+
+        ui.add(Label::new(RichText::new(group.program.path.as_str()).weak()).truncate());
+        ui.add_space(4.0);
+
+        if  rule.relocate ||
+            rule.resize_selector.is_some() ||
+            Self::primary_resize(rule).is_some() {
+            ui.horizontal(|ui| Self::group_action_ui(ui, group, rule, action_callback));
+            ui.add_space(4.0);
         }
-        let until_tick = self.last_logic_tick
-            .map_or(Duration::ZERO, |last| {
-                LOGIC_INTERVAL.saturating_sub(last.elapsed())
+
+        for window in &group.windows {
+            ui.push_id(window.handle, |ui| {
+                ui.style_mut().spacing.item_spacing.x = 4.0;
+                ui.horizontal(|ui| Self::window_header_ui(ui, window));
+                ui.horizontal(|ui| Self::window_action_ui(ui, window, rule, action_callback));
             });
-        ctx.request_repaint_after(until_tick);
+            ui.add_space(2.0);
+        }
+        ui.add_space(8.0);
     }
 
-    fn ui(&mut self, ui: &mut Ui, _: &mut eframe::Frame) {
-        self.app_ui(ui);
-        ui.request_repaint_after(RENDER_INTERVAL);
+    fn group_action_ui<F: FnMut(WindowAction<B::Handle>)>(
+        ui: &mut Ui,
+        group: &Group<B::Handle>,
+        rule: &RuntimeRule,
+        action_callback: &mut F) {
+        if rule.relocate && ui.add_sized((80.0, 16.0), Button::new("CENTER")).clicked() {
+            for window in &group.windows {
+                action_callback(WindowAction::MoveToCenter(window.handle));
+            }
+        }
+
+        if let Some(size) = Self::primary_resize(rule) {
+            let response = ui.button(format!("RESIZE TO {}x{}", size.width, size.height));
+            if response.clicked() {
+                for window in &group.windows {
+                    action_callback(WindowAction::Resize(window.handle, size));
+                }
+            }
+        }
+
+        if let Some(selector) = rule.resize_selector.as_ref() {
+            let selected =
+                ComboBox::from_id_salt("resize-all")
+                    .width(ui.available_width().min(120.0))
+                    .selected_text("RESIZE")
+                    .show_ui(ui, |ui| Self::resolution_ui(ui, None, selector))
+                    .inner
+                    .flatten();
+            if let Some(size) = selected {
+                for window in &group.windows {
+                    action_callback(WindowAction::Resize(window.handle, size));
+                }
+            }
+        }
+    }
+
+    fn window_header_ui(ui: &mut Ui, window: &WindowInfo<B::Handle>) {
+        ui.label(format!("{CHAR_WINDOW}"));
+        match window.state {
+            WindowState::Maximized => { ui.weak("[max]"); },
+            WindowState::Minimized => { ui.weak("[min]"); },
+            WindowState::Normal => {},
+        }
+        ui.add(Label::new(window.title.as_str()).truncate());
+    }
+
+    fn window_action_ui<F: FnMut(WindowAction<B::Handle>)>(
+        ui: &mut Ui,
+        window: &WindowInfo<B::Handle>,
+        rule: &RuntimeRule,
+        action_callback: &mut F) {
+        let detail =
+            window
+                .detail
+                .as_ref()
+                .expect("window detail should always present in a rendered snapshot");
+
+        if rule.relocate {
+            ui.weak("POSITION");
+
+            let centered =
+                detail.monitor_rect.center() ==
+                detail.content_rect.center();
+            let centered_icon =
+                if centered { CHAR_CHECK } else { CHAR_EMPTY };
+            ui.add_enabled_ui(!centered, |ui| {
+                Button::new(format!("{centered_icon} CENTER"))
+                    .pipe(|button| ui.add_sized((80.0, 16.0), button))
+                    .clicked()
+                    .then(|| action_callback(WindowAction::MoveToCenter(window.handle)));
+            });
+        } else {
+            ui.weak("MOVE DISABLED");
+        }
+
+        ui.label("|");
+
+
+        assert!(
+            !(rule.resize_exact.is_some() && rule.resize_selector.is_some()),
+            "rule should not have both resize_exact and resize_selector");
+        match (rule.resize_exact, rule.resize_selector.as_ref()) {
+            (Some(_), Some(_)) => unreachable!("guaranteed by assertion above"),
+            (Some(size), None) => {
+                ui.weak("SIZE");
+
+                Button::new(format!("{}x{}", size.width, size.height))
+                    .pipe(|button| ui.add_sized((80.0, 16.0), button))
+                    .clicked()
+                    .then(|| action_callback(WindowAction::Resize(window.handle, size)));
+            },
+            (None, Some(selector)) => {
+                ui.weak("SIZE");
+                if let Some(size) = selector.default && selector.allows_size(size.into()) {
+                    Button::new(format!("{}x{}", size[0], size[1]))
+                        .pipe(|button| ui.add_sized((80.0, 16.0), button))
+                        .clicked()
+                        .then(|| action_callback(WindowAction::Resize(window.handle, size.into())));
+                    ui.weak("OR");
+                }
+                let selected = ComboBox::from_id_salt("size")
+                    .width(80.0)
+                    .selected_text("SELECT")
+                    .show_ui(ui, |ui| Self::resolution_ui(ui, None, selector))
+                    .inner
+                    .flatten();
+                if let Some(size) = selected {
+                    action_callback(WindowAction::Resize(window.handle, size));
+                }
+            },
+            (None, None) => {
+                ui.weak("RESIZE DISABLED");
+            },
+        }
+    }
+
+    /// Converts selector clicks into values; native work stays outside egui callbacks.
+    fn resolution_ui(
+        ui: &mut Ui,
+        selected: Option<Size2D<i32>>,
+        selector: &ResizeSelector) -> Option<Size2D<i32>> {
+        let mut selected_size = None;
+        let mut available = false;
+        for &(name, resolutions) in STANDARD_SIZE {
+            let mut heading_shown = false;
+            for size in resolutions.iter().copied().map(Size2D::from)
+                .filter(|&size| selector.allows_size(size)) {
+                available = true;
+                if !heading_shown {
+                    ui.add_sized(
+                        (ui.available_width(), 0.0),
+                        Label::new(RichText::new(format!("-{name}-  ")).weak()));
+                    heading_shown = true;
+                }
+                if ui.selectable_label(
+                    selected == Some(size),
+                    format!("{}{}{}", size.width, CHAR_CROSS, size.height)).clicked() {
+                    selected_size = Some(size);
+                    ui.close();
+                }
+            }
+            if heading_shown {
+                ui.label("");
+            }
+        }
+        if !available {
+            ui.weak("No sizes within configured limits");
+        }
+        selected_size
+    }
+
+    fn primary_resize(rule: &RuntimeRule) -> Option<Size2D<i32>> {
+        rule.resize_exact
+            .or_else(|| rule.resize_selector.as_ref()?.default.map(Size2D::from))
+    }
+
+    fn size_text(size: Size2D<i32>) -> String {
+        let marker =
+            if STANDARD_SIZE
+                .iter()
+                .any(|&(_, sizes)| sizes.contains(&[size.width, size.height])) {
+                CHAR_CHECK
+            } else {
+                CHAR_EMPTY
+            };
+        format!("{marker} {}x{}", size.width, size.height)
     }
 }

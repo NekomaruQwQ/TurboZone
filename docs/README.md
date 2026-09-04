@@ -80,7 +80,7 @@ not appear in the built-in manifest. A selector with no surviving choices shows 
 message.
 
 Position and resize permissions are independent. A matched rule with neither action remains an
-intentional read-only section. Native controls require both a successful window-detail query
+intentional actionless group. Native controls require both a successful window-detail query
 and a matching rule that enables the action.
 Configuration validation prevents pathological dimensions but does not guarantee that every
 accepted size can be applied. Native resize operations remain fallible because the compositor
@@ -110,9 +110,9 @@ For each `WindowInfo` with complete details:
 4. Equal priority therefore favors the first rule.
 
 `matching_rule_name(rules, window)` returns the winning name and `find_rule(rules, name)` resolves
-it. These engine-owned free functions preserve source-order UI sections without allowing array
+it. These engine-owned free functions preserve source-order UI groups without allowing array
 positions to escape as identity. No additional priority index is needed for the expected
-rule/window counts at the 10 Hz logic rate.
+rule/window counts.
 
 ## Window geometry and snapshots
 
@@ -183,18 +183,19 @@ Snapshots are logged before classification, then only complete matches are retai
 WindowInfo
     Err(error) -> log first/changed failure, discard snapshot
     Ok(detail), no winning rule -> discard normally
-    Ok(detail), winning rule -> (rule, program path) section
+    Ok(detail), winning rule -> (rule, program path) group
 ```
 
-`group_windows()` moves matched snapshots into `Vec<WindowSection<H>>` without cloning them.
-Sections are ordered by valid rule source order, then lowercase program path. Persistent section
-identity is `(rule.name, lowercase program path)`; rule array indices are never retained.
+`group_windows()` moves matched snapshots into `Vec<Group<H>>` without cloning the window
+snapshots. Groups are ordered by valid rule source order, then lowercase program path. The
+lowercase path remains an internal grouping and ordering key; each group exposes the first matched
+window's shared `Rc<ProgramInfo>`, preserving display casing without an arbitrary later lookup.
 
-Windows from the same program matching the same rule share a section. Different paths or
-winning rules form separate sections. Actionless matched rules still appear. The UI keeps section
-and window actions, program paths and descriptions, process IDs, titles, visual states, and size
-highlighting. Program descriptions are display-only; configuration continues to match executable
-filenames.
+Windows from the same program matching the same rule share a group. Different paths or winning
+rules form separate groups. Actionless matched rules still appear. The flat UI keeps group and
+window actions, program paths and descriptions, titles, visual states, and current-size markers.
+It deliberately omits process IDs and read-only badges. Program descriptions are display-only;
+configuration continues to match executable filenames.
 
 A geometry failure removes the whole snapshot from matching until a later snapshot succeeds.
 Old details are never substituted. Unmatched windows are normal, with no warning or diagnostic
@@ -214,28 +215,29 @@ the integer client-area center, including odd-sized targets. Actions preserve ac
 and normal/maximized/minimized state; restored actions update placement rather than restoring
 the window. Oversized targets that cannot fit native dimensions return errors.
 
-Individual actions capture one handle from the rendered snapshot. Section controls append one
+Individual actions capture one handle from the rendered snapshot. Group controls append one
 action per eligible handle. Core's non-exhaustive `WindowAction<H>` currently contains
 `Resize(H, size)` and `MoveToCenter(H)`. The generic engine drains actions in order by calling
 `Backend::perform(action)`, then refreshes through `Backend::snapshot()`. The backend owns variant
 dispatch and deliberately panics on a future unsupported variant rather than silently doing nothing.
 
 The eframe app records the last completed logic tick and calls the engine immediately at startup,
-when an action is pending, or at the core-owned 10 Hz cadence. A snapshot is not an atomic OS
+when an action is pending, or at the presentation-owned 1 Hz cadence. Painting remains independent
+at 30 Hz. A snapshot is not an atomic OS
 transaction: windows can disappear or change between queries and actions, so native actions
 remain fallible.
 
-If top-level enumeration fails, stale matched sections are cleared and the enumeration error
+If top-level enumeration fails, stale matched groups are cleared and the enumeration error
 is logged. Per-window detail failures do not invalidate other windows. User-requested action
 failures are always logged and do not abort actions for the remaining targets.
 
 ## Source layout
 
 1. `turbozone-core/src/`: serialized config and schema types, validation, runtime matching,
-   backend contract, action queue, snapshot lifecycle, stable sections, log deduplication, window
-   models, and product cadence constants. It performs no filesystem I/O and does not install a logger.
-2. `turbozone-ui/src/`: generic `App<B>`, egui presentation, and startup config filesystem
-   operations. It has no dependency on the Windows crate.
+   backend contract, action queue, snapshot lifecycle, stable groups, log deduplication, and window
+   models. It performs no filesystem I/O and does not install a logger.
+2. `turbozone-ui/src/`: generic `App<B>`, app-owned scheduling cadence, flat egui presentation,
+   and startup config filesystem operations. It has no dependency on the Windows crate.
 3. `turbozone-windows/src/`: native handles, snapshot adaptation and caching, geometry queries, and
    the concrete Windows `Backend`. It has no dependency on the UI or executable crate.
 4. `turbozone/src/`: the Windows composition root, CLI, logger initialization, UI/backend assembly,

@@ -13,8 +13,8 @@ turbozone-core = { path = "../turbozone-core" }
 anyhow = { workspace = true }
 euclid = { workspace = true }
 log = { workspace = true }
-tap = { workspace = true }
 smol_str = { workspace = true }
+
 win32-version-info = "0.3.0"
 
 [dependencies.windows]

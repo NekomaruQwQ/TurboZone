@@ -1,7 +1,22 @@
 use std::rc::Rc;
 
 use euclid::default::{Point2D, Rect, Size2D};
-use turbozone_core::{ProgramInfo, WindowDetail, WindowInfo, WindowState};
+use turbozone_core::{ProgramInfo, WindowAction, WindowDetail, WindowInfo, WindowState};
+
+#[derive(Default)]
+pub struct TestBackend;
+
+impl turbozone_core::Backend for TestBackend {
+    type Handle = u64;
+
+    fn snapshot(&mut self) -> anyhow::Result<Vec<WindowInfo<Self::Handle>>> {
+        Ok(Vec::new())
+    }
+
+    fn perform(&mut self, _: WindowAction<Self::Handle>) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
 
 /// Makes a complete framework-independent snapshot for headless UI tests.
 pub fn window(path: &str, title: &str) -> WindowInfo<u64> {

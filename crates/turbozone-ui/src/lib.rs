@@ -4,7 +4,5 @@
 //! only standard filesystem facilities. Native window behavior and process entry points
 //! remain platform-adapter responsibilities.
 
-pub mod constants;
-pub mod app;
-pub mod ui;
 pub mod config;
+pub mod app;
