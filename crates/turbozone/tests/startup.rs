@@ -61,14 +61,12 @@ fn existing_config_and_unrelated_schema_bytes_are_preserved() {
 }
 
 #[test]
-fn invalid_rules_do_not_prevent_valid_rules_from_loading() {
+fn one_invalid_rule_rejects_the_complete_configuration() {
     let directory = TempDir::new();
     let path = directory.path().join("private.toml");
     let source = "[[rules]]\nname = 'broken'\nresize.exact = [0, 900]\n[[rules]]\nname = 'usable'\n";
     fs::write(&path, source).unwrap();
-    let rules = load_config(&path).unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].name, "usable");
+    assert!(load_config(&path).is_err());
     assert_eq!(fs::read_to_string(&path).unwrap(), source);
 }
 

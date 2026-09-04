@@ -19,3 +19,8 @@ tests/
 LICENSE
 *.lock
 *.schema.json
+
+# BEGIN agent
+/crates/turbozone-core/src/config.rs
+/docs/config.example.d.ts
+# END agent

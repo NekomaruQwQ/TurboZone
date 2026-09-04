@@ -16,7 +16,7 @@
   "additionalProperties": false,
   "$defs": {
     "Pattern": {
-      "description": "An exact string or a conjunction of nonempty literal partial patterns.\n\nSerialized and compiled literals share [`SmolStr`] so parsing, validation, and\nruntime matching keep one owned representation without changing their wire format.",
+      "description": "An exact string or a conjunction of nonempty literal partial patterns.\n\nAuthored literals remain unchanged through validation and matching. Callers\nchoose the case policy for their field; comparisons need no compiled predicates.",
       "anyOf": [
         {
           "description": "Exact match against the entire string.",
@@ -44,7 +44,7 @@
       ]
     },
     "ProgramFilter": {
-      "description": "Program filters using serialized patterns or compiled predicates.",
+      "description": "Program filters retaining authored patterns for runtime evaluation.",
       "type": "object",
       "properties": {
         "name": {
@@ -84,7 +84,7 @@
           "type": "object",
           "properties": {
             "exact": {
-              "description": "Supported client-area `[width, height]` in physical pixels, independent of selector limits.",
+              "description": "Supported client-area `[width, height]` in physical pixels,\nindependent of selector limits.",
               "type": "array",
               "items": {
                 "type": "integer",
@@ -102,7 +102,7 @@
           ]
         },
         {
-          "description": "Selector properties with only a default size, no minimum, and no maximum.",
+          "description": "Selector properties with only a default size, no minimum, and\nno maximum.",
           "type": "array",
           "items": {
             "type": "integer",
@@ -114,7 +114,7 @@
           "minItems": 2
         },
         {
-          "description": "Selector properties, including optional default, minimum, and maximum sizes.",
+          "description": "Selector properties, including optional default, minimum, and\nmaximum sizes.",
           "$ref": "#/$defs/ResizeSelector"
         }
       ]
@@ -124,7 +124,7 @@
       "type": "object",
       "properties": {
         "default": {
-          "description": "Primary `[width, height]` in physical pixels, independent of selector bounds.",
+          "description": "Primary `[width, height]` in physical pixels, independent of selector\nbounds.",
           "type": [
             "array",
             "null"
@@ -176,7 +176,7 @@
       "type": "object",
       "properties": {
         "description": {
-          "description": "Compact user-facing section name, falling back to the rule name when empty.",
+          "description": "Compact user-facing section name, falling back to the rule name when\nempty.",
           "type": "string"
         },
         "move": {
@@ -184,7 +184,7 @@
           "type": "boolean"
         },
         "name": {
-          "description": "Unique stable identifier retained in the same compact representation at runtime.",
+          "description": "Unique stable identifier retained in the same compact representation\nat runtime.",
           "type": "string"
         },
         "priority": {
@@ -211,11 +211,11 @@
       ]
     },
     "WindowFilter": {
-      "description": "Window filters using serialized patterns or compiled predicates.",
+      "description": "Window filters retaining authored patterns for runtime evaluation.",
       "type": "object",
       "properties": {
         "max": {
-          "description": "Inclusive maximum client-area `[width, height]` in supported physical pixels.",
+          "description": "Inclusive maximum client-area `[width, height]` in supported\nphysical pixels.",
           "type": [
             "array",
             "null"
@@ -230,7 +230,7 @@
           "minItems": 2
         },
         "min": {
-          "description": "Inclusive minimum client-area `[width, height]` in supported physical pixels.",
+          "description": "Inclusive minimum client-area `[width, height]` in supported\nphysical pixels.",
           "type": [
             "array",
             "null"

@@ -193,15 +193,14 @@ pub fn matches_rule<H>(rule: &RuntimeRule, window: &WindowInfo<H>) -> bool {
     matches_program(rule, detail.program.as_ref()) && matches_window(rule, window)
 }
 
-/// Matches case-insensitive program filters against one executable snapshot.
+/// Selects case-insensitive evaluation for authored executable patterns.
+/// Absent filters do not require converting their candidate fields.
 fn matches_program(rule: &RuntimeRule, program: &ProgramInfo) -> bool {
-    let name = program.name.to_lowercase_smolstr();
-    let path = program.path.to_lowercase_smolstr();
     let filters = &rule.program_filters;
-    filters.name.as_ref().is_none_or(|predicates| {
-        predicates.iter().all(|predicate| predicate.matches(&name))
-    }) && filters.path.as_ref().is_none_or(|predicates| {
-        predicates.iter().all(|predicate| predicate.matches(&path))
+    filters.name.as_ref().is_none_or(|pattern| {
+        pattern.matches_ignore_case(&program.name)
+    }) && filters.path.as_ref().is_none_or(|pattern| {
+        pattern.matches_ignore_case(&program.path)
     })
 }
 
@@ -209,8 +208,8 @@ fn matches_program(rule: &RuntimeRule, program: &ProgramInfo) -> bool {
 fn matches_window<H>(rule: &RuntimeRule, window: &WindowInfo<H>) -> bool {
     let Ok(detail) = window.detail.as_ref() else { return false; };
     let filters = &rule.window_filters;
-    if !filters.title.as_ref().is_none_or(|predicates| {
-        predicates.iter().all(|predicate| predicate.matches(&window.title))
+    if !filters.title.as_ref().is_none_or(|pattern| {
+        pattern.matches(&window.title)
     }) {
         return false;
     }

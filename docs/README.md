@@ -27,12 +27,10 @@ Names are not trimmed or normalized. Omitted `rules` means an empty rule list.
 Unknown properties, old `match_*`, `set_position`, and `set_size` keys, and unsupported
 matcher forms are rejected. There are no compatibility aliases.
 
-`turbozone-core::parse_config()` checks the document envelope, then deserializes and compiles
-rules independently. Invalid TOML or top-level structure is fatal. Invalid individual rules are
-skipped as a whole, retaining the valid rules in declaration order. Diagnostics identify the
-original array position solely as a source location, never as runtime identity. Only the first
-valid occurrence reserves a name; later duplicates
-are skipped. An empty document, or a document with no usable rules, is valid.
+`turbozone-core::parse_config()` deserializes the entire document before semantic validation.
+Invalid TOML, top-level structure, or any individual rule rejects the complete configuration;
+partially compiled rule sets are never exposed. Successful rules retain declaration order.
+An empty document is a valid configuration with no rules.
 
 ## Startup and diagnostics
 
@@ -41,10 +39,11 @@ are skipped. An empty document, or a document with no usable rules, is valid.
 2. Leave existing config bytes untouched, including comments, schema directives, BOM, and line
    endings. Create a missing file exclusively with only the canonical remote `#:schema` comment.
    Parent directories must already exist. Concurrent creation never authorizes overwriting the file.
-3. Parse and compile via `turbozone-core`, log rejected rules and the loaded/skipped counts,
-   then launch the UI with source-ordered `RuntimeRule` values owned directly by `Engine`.
+3. Parse and compile transactionally via `turbozone-core`, log a configuration error at its
+   failing stage, then launch the UI with source-ordered `RuntimeRule` values owned directly by
+   `Engine` only after complete validation.
 
-Unreadable config, creation failure, and malformed documents exit nonzero before the UI opens.
+Unreadable config, creation failure, and invalid documents exit nonzero before the UI opens.
 Startup never generates schemas, and user-authored config is never rewritten automatically.
 
 TurboZone assumes a terminal is available. The Windows binary installs
@@ -92,14 +91,13 @@ A pattern string matches exactly. A partial object supports `starts_with`, `ends
 `contains`; all nonempty components are ANDed, and at least one must be nonempty. Exact-string
 objects, regexes, and globs are not accepted.
 
-Configuration matching compares program paths and names case-insensitively. Configured patterns
-are lowercased once during validation; `matches_program()` lowercases each aggregate `ProgramInfo`
-candidate before applying compiled predicates. This matching normalization is independent of
-platform-backend cache identity. Titles stay case-sensitive. Runtime `ProgramFilter<Vec<PatternMatcher>>` and
-`WindowFilter<Vec<PatternMatcher>>` retain absent filters as `None`. Each matcher pairs an
-immutable `SmolStr` with a function pointer. `Pattern::to_matchers()` compiles literal
-case-sensitive predicates; the config compiler supplies normalized program patterns and rejects
-empty partials before calling it. No regex engine or trait objects are involved.
+Configuration matching compares program paths and names case-insensitively through
+`Pattern::matches_ignore_case()`. It uses the existing Unicode-aware SmolStr lowercase conversion
+on the candidate and needed literals at match time, preserving authored patterns. Titles use
+case-sensitive `Pattern::matches()`. Both methods evaluate exact or ANDed partial patterns
+directly, without predicate vectors or function pointers. Entirely empty partials are rejected
+by validation and fail closed if constructed manually. Absent filters remain `None` and need no
+matching conversion. Matching normalization is independent of platform-backend cache identity.
 
 `Engine` directly owns one source-order `Vec<RuntimeRule>` and exposes it as a borrowed slice.
 For each `WindowInfo` with complete details:
@@ -245,12 +243,12 @@ failures are always logged and do not abort actions for the remaining targets.
 
 ## Verification
 
-Integration tests cover schema/serialization, partial rule recovery, all resize modes, selector
-bounds, exact and partial matching, case sensitivity, priority ties, size filters, CLI/environment
-precedence, config preservation/creation, stderr output, error recurrence, grouping, headless UI
-rendering, and the public Windows snapshot, action, error, and restored-geometry contracts. Binary
-startup tests live with the `turbozone` composition root. Windows tests mutate only fixture-owned
-windows. The monitor and process-path caches remain private implementation details; their
+Integration tests cover schema/serialization, transactional config rejection, all resize modes,
+selector bounds, exact and partial matching, case sensitivity, priority ties, size filters,
+CLI/environment precedence, config preservation/creation, stderr output, error recurrence, grouping,
+headless UI rendering, and the public Windows snapshot, action, error, and restored-geometry
+contracts. Binary startup tests live with the `turbozone` composition root. Windows tests mutate
+only fixture-owned windows. The monitor and process-path caches remain private implementation details; their
 snapshot-local ownership is documented rather than instrumented directly. Public snapshot tests
 cover the filename fallback when version metadata is unavailable. Core integration tests cover the
 generic cache's lazy insertion, key identity, hit refresh, and eviction boundary. Windows-specific

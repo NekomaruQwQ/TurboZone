@@ -2,7 +2,7 @@ use serde::*;
 use educe::Educe;
 use euclid::default::Size2D;
 use schemars::*;
-use smol_str::SmolStr;
+use smol_str::{SmolStr, StrExt as _};
 
 /// Largest physical-pixel dimension accepted from serialized configuration.
 ///
@@ -29,6 +29,16 @@ pub struct Config {
     /// Rules in source order.
     #[serde(default)]
     pub rules: Vec<Rule>,
+}
+
+/// A completely validated configuration ready for matching and UI rendering.
+///
+/// The parser constructs this boundary only after every serialized rule succeeds,
+/// preventing callers from observing a partially usable configuration.
+#[derive(Debug, Clone)]
+pub struct RuntimeConfig {
+    /// Rules in source order.
+    pub rules: Vec<RuntimeRule>,
 }
 
 /// One serialized rule pairing window filters with the actions they enable.
@@ -70,10 +80,9 @@ pub struct Rule {
 
 /// A validated rule ready for matching and UI rendering.
 ///
-/// This compiled counterpart to [`Rule`] keeps runtime-only predicates
-/// beside the serialized configuration contract while leaving rule selection
-/// to the engine.
-#[derive(Debug)]
+/// This counterpart to [`Rule`] resolves display and resize settings while
+/// retaining authored patterns. The engine selects each field's case policy.
+#[derive(Debug, Clone)]
 pub struct RuntimeRule {
     // --- Metadata ----
     /// Stable unique rule identifier.
@@ -82,12 +91,10 @@ pub struct RuntimeRule {
     pub description: Option<SmolStr>,
 
     // --- Filters ----
-    /// Predicates applied to program metadata.
-    pub program_filters:
-        ProgramFilter<Vec<PatternMatcher>>,
-    /// Predicates applied to window metadata.
-    pub window_filters:
-        WindowFilter<Vec<PatternMatcher>>,
+    /// Authored patterns applied case-insensitively to program metadata.
+    pub program_filters: ProgramFilter<Pattern>,
+    /// Authored title pattern and client-size bounds.
+    pub window_filters: WindowFilter<Pattern>,
     /// Explicit or default matching priority.
     pub priority: i64,
 
@@ -172,7 +179,7 @@ impl ResizeSelector {
     }
 }
 
-/// Program filters using serialized patterns or compiled predicates.
+/// Program filters retaining authored patterns for runtime evaluation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[derive(Educe)]
 #[derive(JsonSchema)]
@@ -188,7 +195,7 @@ pub struct ProgramFilter<S> {
     pub path: Option<S>,
 }
 
-/// Window filters using serialized patterns or compiled predicates.
+/// Window filters retaining authored patterns for runtime evaluation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[derive(Educe)]
 #[derive(JsonSchema)]
@@ -211,33 +218,13 @@ pub struct WindowFilter<S> {
     pub max: Option<[i32; 2]>,
 }
 
-/// An immutable literal pattern paired with its case-sensitive string
-/// predicate.
-///
-/// Compiled literals use [`SmolStr`] because they are cloned into long-
-/// lived runtime
-/// rules but are usually short enough to remain inline.
-#[derive(Debug, Clone)]
-pub struct PatternMatcher(
-    /// Literal text, already normalized by the config compiler when
-    /// appropriate.
-    SmolStr,
-    /// Predicate chosen once during compilation.
-    fn(input: &str, pattern: &str) -> bool);
-
-impl PatternMatcher {
-    /// Returns whether the candidate satisfies this predicate.
-    pub fn matches(&self, input: &str) -> bool { (self.1)(input, self.0.as_str()) }
-}
-
 /// An exact string or a conjunction of nonempty literal partial patterns.
 ///
-/// Serialized and compiled literals share [`SmolStr`] so parsing,
-/// validation, and runtime matching keep one owned representation without
-/// changing their wire format.
+/// Authored literals remain unchanged through validation and matching. Callers
+/// choose the case policy for their field; comparisons need no compiled predicates.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[derive(Deserialize, Serialize)]
 #[derive(schemars::JsonSchema)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 #[serde(untagged)]
 pub enum Pattern {
@@ -258,30 +245,39 @@ pub enum Pattern {
 }
 
 impl Pattern {
-    /// Compiles literal, case-sensitive predicates without validating the pattern.
+    /// Matches literal text case-sensitively, ANDing every nonempty partial component.
     ///
-    /// Callers must normalize both patterns and candidates for case-insensitive
-    /// matching. An empty partial pattern returns no predicates; config validation
-    /// must reject it before using an all-predicates match.
-    pub fn to_matchers(&self) -> Vec<PatternMatcher> {
-        use std::iter;
-
+    /// Empty exact strings can match empty input. Entirely empty partial patterns
+    /// fail closed even when a caller constructs one without config verification.
+    pub fn matches(&self, input: &str) -> bool {
         match *self {
-            Self::Exact(ref t) =>
-                iter::once(PatternMatcher(t.clone(), |s, t| s == t))
-                    .collect(),
+            Self::Exact(ref pattern) => input == pattern,
             Self::Partial { ref starts_with, ref ends_with, ref contains } => {
-                iter::empty()
-                    .chain(
-                        (!starts_with.is_empty())
-                            .then(|| PatternMatcher(starts_with.clone(), |s, t| s.starts_with(t))))
-                    .chain(
-                        (!ends_with.is_empty())
-                            .then(|| PatternMatcher(ends_with.clone(), |s, t| s.ends_with(t))))
-                    .chain(
-                        (!contains.is_empty())
-                            .then(|| PatternMatcher(contains.clone(), |s, t| s.contains(t))))
-                    .collect()
+                !(starts_with.is_empty() && ends_with.is_empty() && contains.is_empty())
+                    && (starts_with.is_empty() || input.starts_with(starts_with.as_str()))
+                    && (ends_with.is_empty() || input.ends_with(ends_with.as_str()))
+                    && (contains.is_empty() || input.contains(contains.as_str()))
+            }
+        }
+    }
+
+    /// Matches using TurboZone's Unicode-aware lowercase conversion on both sides.
+    ///
+    /// Convert input once per call and literals only when their predicate is needed.
+    /// Keeping the existing SmolStr conversion preserves matching semantics without
+    /// mutating configured text or substituting ASCII-only or full case folding.
+    pub fn matches_ignore_case(&self, input: &str) -> bool {
+        let input = input.to_lowercase_smolstr();
+        match *self {
+            Self::Exact(ref pattern) => input == pattern.to_lowercase_smolstr(),
+            Self::Partial { ref starts_with, ref ends_with, ref contains } => {
+                !(starts_with.is_empty() && ends_with.is_empty() && contains.is_empty())
+                    && (starts_with.is_empty()
+                        || input.starts_with(starts_with.to_lowercase_smolstr().as_str()))
+                    && (ends_with.is_empty()
+                        || input.ends_with(ends_with.to_lowercase_smolstr().as_str()))
+                    && (contains.is_empty()
+                        || input.contains(contains.to_lowercase_smolstr().as_str()))
             }
         }
     }

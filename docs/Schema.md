@@ -54,7 +54,7 @@ unknown top-level fields are fatal; `#:schema` is a comment understood by the ed
 
 For an editor check, request completion inside `[[rules]]`, hover `move`, and try an unknown key
 or `resize.exact = [0, 900]`. An exact resize cannot be combined with selector fields such as
-`min` or `default`. Runtime warnings appear in the terminal rather than an in-app diagnostics UI.
+`min` or `default`. Runtime errors appear in the terminal rather than an in-app diagnostics UI.
 
 ## Schema and parser boundaries
 
@@ -64,16 +64,15 @@ fields. Sizes use `[i32; 2]`, serialized as `[width, height]` in physical pixels
 fixed array length; per-element annotations require integers from `1` through `16,384`.
 Optional Rust fields can include JSON `null` in the schema; TOML has no null, so omit them instead.
 
-`turbozone-core::parse_config()` parses the document and compiles rules independently. Invalid
-TOML and invalid top-level structure are fatal. Individual rule errors exclude only that rule;
-valid rules keep their relative order. Diagnostics use original zero-based rule indices. Only
-the first valid rule reserves its name, and later duplicates are skipped. Empty config is valid.
+`turbozone-core::parse_config()` deserializes the complete document before semantic validation.
+Invalid TOML, invalid top-level structure, or any invalid rule rejects the complete configuration;
+partially compiled rules are never exposed. Valid rules keep their relative order, and empty config
+is valid.
 
 The compiler checks rule-name grammar, duplicates, nonempty partial patterns, forward slashes
-in program paths, dimensions from `1` through `16,384`, and `min <= max`. `compile_config()`
-offers the same compiler for callers that already have a typed `Config`. Neither function performs I/O or logs;
-the executable reports diagnostics without TOML source excerpts. Editor checks do not replace
-runtime validation.
+in program paths, dimensions from `1` through `16,384`, and `min <= max`. It performs no I/O;
+each failure is logged at error level without TOML source excerpts before parsing returns no runtime
+configuration. Editor checks do not replace runtime validation.
 
 ## Verify
 

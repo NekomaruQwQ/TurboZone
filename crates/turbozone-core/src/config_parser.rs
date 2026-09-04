@@ -2,106 +2,51 @@
 //!
 //! This module owns the transition from serialized [`Config`] values to compiled
 //! [`RuntimeRule`] values.
-//! Malformed documents fail as a whole, while invalid rules are diagnosed and excluded
-//! independently. Filesystem access and report logging remain caller concerns.
+//! Deserialization and semantic validation are transactional: any error rejects the
+//! complete configuration and is logged here before control returns to the caller.
+//! Filesystem access remains a caller concern.
 
 use std::collections::BTreeSet;
 
 use euclid::default::Size2D;
-use serde::Deserialize;
-use smol_str::{SmolStr, StrExt as _, format_smolstr};
-use thiserror::Error;
+use smol_str::*;
 
-use crate::{
-    Config, Pattern, PatternMatcher, ProgramFilter, ResizeRule, ResizeSelector, Rule,
-    RuntimeRule, WindowFilter, MAX_SIZE_DIMENSION,
-};
+use crate::*;
 
-/// Usable rules and source-ordered diagnostics for the rules that were excluded.
-#[derive(Debug, Default)]
-pub struct ConfigReport {
-    /// Successfully compiled rules, retaining their relative declaration order.
-    pub rules: Vec<RuntimeRule>,
-    /// One error per rejected rule; invalid rules are never partially applied.
-    pub diagnostics: Vec<RuleDiagnostic>,
-}
-
-/// A rejected rule's original position and the reason it could not be used.
-#[derive(Debug)]
-pub struct RuleDiagnostic {
-    /// Zero-based position in the source, before invalid rules are removed.
-    pub index: usize,
-    /// Structural or semantic failure, without a TOML source excerpt.
-    pub error: ConfigError,
-}
-
-/// Checks the document envelope without deserializing every rule as one transaction.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ConfigDocument {
-    /// Raw values allow a malformed rule to be reported independently of its neighbors.
-    #[serde(default)]
-    rules: Vec<toml::Value>,
-}
-
-/// Parses TOML and compiles each rule independently, without reading or writing files.
+/// Parses and validates a complete TOML configuration without performing filesystem I/O.
 ///
-/// Returns an error for malformed TOML or an invalid top-level structure. Individual
-/// rule errors are returned in the report. Empty documents are valid. Error chains
-/// retain parser diagnostics and locations but omit potentially private source excerpts.
-pub fn parse_config(source: &str) -> anyhow::Result<ConfigReport> {
-    let document: ConfigDocument =
-        toml::from_str(source).map_err(|mut error: toml::de::Error| {
-            let location = error
-                .span()
-                .and_then(|span| source.get(..span.start))
-                .map(|prefix| {
-                    let line = prefix.bytes().filter(|&byte| byte == b'\n').count() + 1;
-                    let column = prefix
-                        .rsplit('\n')
-                        .next()
-                        .unwrap_or_default()
-                        .chars()
-                        .count()
-                        + 1;
-                    format_smolstr!("invalid configuration at line {line}, column {column}")
-                })
-                .unwrap_or_else(|| SmolStr::new_static("invalid configuration document"));
-            // Display normally includes the offending source line, which may be private.
+/// The whole serialized [`Config`] is deserialized before semantic validation begins.
+/// Any error is logged and returns `None`; valid rules are never exposed beside invalid
+/// siblings. Empty documents remain valid configurations with no runtime rules.
+pub fn parse_config(source: &str) -> Option<RuntimeConfig> {
+    // The streaming TOML deserializer does not reject trailing elements in fixed-size
+    // arrays. Converting one complete value tree preserves the exact `[width, height]`
+    // contract without recovering or compiling rules independently.
+    let config = toml::from_str::<toml::Value>(source)
+        .and_then(toml::Value::try_into)
+        .map_err(|mut error: toml::de::Error| {
+            // TOML normally includes the offending source line in its display text.
+            // Configuration contents can be private, so remove that source before logging
+            // the parser's explanation.
             error.set_input(None);
-            anyhow::Error::new(error).context(location)
-        })?;
-    Ok(compile_rules(document.rules.into_iter().map(|value| {
-        value.try_into().map_err(ConfigError::Deserialize)
-    })))
+            log::error!("failed to deserialize configuration: {error}");
+        })
+        .ok()?;
+    compile_config(config)
 }
 
-/// Compiles already deserialized config, excluding invalid rules and later duplicate names.
-/// Only successfully compiled rules reserve their name; a broken rule cannot shadow a valid one.
-pub fn compile_config(config: Config) -> ConfigReport {
-    compile_rules(config.rules.into_iter().map(Ok))
-}
-
-/// Shares rule recovery between typed configs and independently deserialized TOML rules.
-fn compile_rules(rules: impl Iterator<Item = Result<Rule, ConfigError>>) -> ConfigReport {
+/// Compiles every rule as one transaction, preserving source order on success.
+fn compile_config(config: Config) -> Option<RuntimeConfig> {
     let mut names = BTreeSet::new();
-    let mut report = ConfigReport::default();
-    for (index, rule) in rules.enumerate() {
-        let rule = rule.and_then(|rule| {
-            if names.contains(&rule.name) {
-                return Err(ConfigError::DuplicateRuleName { name: rule.name });
-            }
-            compile_rule(index, rule)
-        });
-        match rule {
-            Ok(rule) => {
-                names.insert(rule.name.clone());
-                report.rules.push(rule);
-            }
-            Err(error) => report.diagnostics.push(RuleDiagnostic { index, error }),
+    let mut rules = Vec::with_capacity(config.rules.len());
+    for (index, rule) in config.rules.into_iter().enumerate() {
+        if !names.insert(rule.name.clone()) {
+            log::error!("duplicate rule name '{}'", rule.name);
+            return None;
         }
+        rules.push(compile_rule(index, rule)?);
     }
-    report
+    Some(RuntimeConfig { rules })
 }
 
 /// Returns whether a name is a lowercase sequence of TOML-style dotted bare keys.
@@ -118,81 +63,29 @@ pub fn is_valid_rule_name(name: &str) -> bool {
         })
 }
 
-/// A structural or semantic failure that excludes one configuration rule.
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum ConfigError {
-    /// A rule did not conform to the serialized config types.
-    #[error(transparent)]
-    Deserialize(#[from] toml::de::Error),
-    /// A rule name did not satisfy the lowercase dotted bare-key grammar.
-    #[error("rules[{index}].name '{name}' must match [a-z0-9_-]+(?:\\.[a-z0-9_-]+)*")]
-    InvalidRuleName {
-        /// Zero-based rule index.
-        index: usize,
-        /// Invalid configured name.
-        name: SmolStr,
-    },
-    /// The same rule name appeared more than once.
-    #[error("duplicate rule name '{name}'")]
-    DuplicateRuleName {
-        /// Duplicate configured name.
-        name: SmolStr,
-    },
-    /// A partial matcher contained no predicates.
-    #[error("{field} must contain starts_with, ends_with, or contains")]
-    EmptyPartialMatcher {
-        /// Configuration field containing the invalid matcher.
-        field: SmolStr,
-    },
-    /// A configured program-path pattern used a backslash.
-    #[error("{field} must use forward slashes; backslashes are not accepted")]
-    BackslashInProgramPath {
-        /// Configuration field containing the invalid path pattern.
-        field: SmolStr,
-    },
-    /// A configured dimension was outside TurboZone's supported range.
-    #[error(
-        "{field} must be between 1 and {} inclusive, found {value}",
-        MAX_SIZE_DIMENSION)]
-    InvalidDimension {
-        /// Configuration field containing the invalid dimension.
-        field: SmolStr,
-        /// Invalid configured value.
-        value: i32,
-    },
-    /// A minimum dimension exceeded its corresponding maximum.
-    #[error("{minimum_field} must not exceed {maximum_field}")]
-    InvalidBounds {
-        /// Configuration field containing the minimum.
-        minimum_field: SmolStr,
-        /// Configuration field containing the maximum.
-        maximum_field: SmolStr,
-    },
-}
-
-/// Resolves defaults and compiles one rule, retaining source-order diagnostics.
-fn compile_rule(index: usize, rule: Rule) -> Result<RuntimeRule, ConfigError> {
+/// Resolves defaults and compiles one rule without exposing partially validated state.
+fn compile_rule(index: usize, rule: Rule) -> Option<RuntimeRule> {
     if !is_valid_rule_name(&rule.name) {
-        return Err(ConfigError::InvalidRuleName {
-            index,
-            name: rule.name,
-        });
+        log::error!(
+            "rules[{index}].name '{}' must match [a-z0-9_-]+(?:\\.[a-z0-9_-]+)*",
+            rule.name);
+        return None;
     }
     let prefix = format_smolstr!("rules[{index}]");
     let description = rule.description.trim();
     let description = (!description.is_empty()).then(|| SmolStr::new(description));
     let (resize_exact, resize_selector) = compile_resize(rule.resize, &prefix)?;
-    let program_filters = compile_program_match(rule.program, &prefix)?;
-    let window_filters = compile_window_match(rule.window, &prefix)?;
+    validate_program_match(&rule.program, &prefix)?;
+    validate_window_match(&rule.window, &prefix)?;
 
-    Ok(RuntimeRule {
+    Some(RuntimeRule {
         name: rule.name,
         description,
         relocate: rule.relocate,
         resize_exact,
         resize_selector,
-        program_filters,
-        window_filters,
+        program_filters: rule.program,
+        window_filters: rule.window,
         priority: rule.priority,
     })
 }
@@ -202,17 +95,17 @@ fn compile_rule(index: usize, rule: Rule) -> Result<RuntimeRule, ConfigError> {
 fn compile_resize(
     resize: ResizeRule,
     prefix: &str,
-) -> Result<(Option<Size2D<i32>>, Option<ResizeSelector>), ConfigError> {
+) -> Option<(Option<Size2D<i32>>, Option<ResizeSelector>)> {
     match resize {
-        ResizeRule::Boolean(false) => Ok((None, None)),
-        ResizeRule::Boolean(true) => Ok((None, Some(ResizeSelector::default()))),
+        ResizeRule::Boolean(false) => Some((None, None)),
+        ResizeRule::Boolean(true) => Some((None, Some(ResizeSelector::default()))),
         ResizeRule::Exact { exact } => {
             validate_size(exact, &format_smolstr!("{prefix}.resize.exact"))?;
-            Ok((Some(Size2D::from(exact)), None))
+            Some((Some(Size2D::from(exact)), None))
         }
         ResizeRule::SelectorDefault(default) => {
             validate_size(default, &format_smolstr!("{prefix}.resize"))?;
-            Ok((
+            Some((
                 None,
                 Some(ResizeSelector {
                     default: Some(default),
@@ -225,107 +118,81 @@ fn compile_resize(
                 validate_size(size, &format_smolstr!("{prefix}.resize.default"))?;
             }
             validate_size_bounds(selector.min, selector.max, &format_smolstr!("{prefix}.resize"))?;
-            Ok((None, Some(selector)))
+            Some((None, Some(selector)))
         }
     }
 }
 
-/// Compiles case-insensitive program patterns without normalizing config paths.
-fn compile_program_match(
-    matcher: ProgramFilter<Pattern>,
-    prefix: &str,
-) -> Result<ProgramFilter<Vec<PatternMatcher>>, ConfigError> {
-    let name = matcher
-        .name
-        .map(|matcher| {
-            compile_string_matcher(matcher, &format_smolstr!("{prefix}.program.name"), false, false)
-        })
-        .transpose()?;
-    let path = matcher
-        .path
-        .map(|matcher| {
-            compile_string_matcher(matcher, &format_smolstr!("{prefix}.program.path"), false, true)
-        })
-        .transpose()?;
-    Ok(ProgramFilter { name, path })
+/// Checks executable patterns without changing authored case or path separators.
+fn validate_program_match(matcher: &ProgramFilter<Pattern>, prefix: &str) -> Option<()> {
+    if let Some(ref pattern) = matcher.name {
+        validate_pattern(
+            pattern,
+            &format_smolstr!("{prefix}.program.name"),
+            false)?;
+    }
+    if let Some(ref pattern) = matcher.path {
+        validate_pattern(
+            pattern,
+            &format_smolstr!("{prefix}.program.path"),
+            true)?;
+    }
+    Some(())
 }
 
-/// Compiles case-sensitive title patterns and validates inclusive size bounds.
-fn compile_window_match(
-    matcher: WindowFilter<Pattern>,
-    prefix: &str,
-) -> Result<WindowFilter<Vec<PatternMatcher>>, ConfigError> {
-    let title = matcher
-        .title
-        .map(|matcher| {
-            compile_string_matcher(matcher, &format_smolstr!("{prefix}.window.title"), true, false)
-        })
-        .transpose()?;
-    validate_size_bounds(matcher.min, matcher.max, &format_smolstr!("{prefix}.window"))?;
-    Ok(WindowFilter {
-        title,
-        min: matcher.min,
-        max: matcher.max,
-    })
+/// Checks title patterns and inclusive size bounds without interpreting case policy.
+fn validate_window_match(matcher: &WindowFilter<Pattern>, prefix: &str) -> Option<()> {
+    if let Some(ref pattern) = matcher.title {
+        validate_pattern(
+            pattern,
+            &format_smolstr!("{prefix}.window.title"),
+            false)?;
+    }
+    validate_size_bounds(matcher.min, matcher.max, &format_smolstr!("{prefix}.window"))
 }
 
-/// Selects exact or ANDed partial predicates, rejecting empty partial patterns.
-fn compile_string_matcher(
-    mut matcher: Pattern,
-    field: &str,
-    case_sensitive: bool,
-    is_path: bool,
-) -> Result<Vec<PatternMatcher>, ConfigError> {
-    match matcher {
-        Pattern::Exact(ref mut pattern) => {
-            normalize_pattern(pattern, field, case_sensitive, is_path)?;
+/// Rejects ineffective partial filters and invalid path literals before engine use.
+fn validate_pattern(matcher: &Pattern, field: &str, is_path: bool) -> Option<()> {
+    match *matcher {
+        Pattern::Exact(ref pattern) => {
+            validate_literal(pattern, field, is_path)?;
         }
         Pattern::Partial {
-            ref mut starts_with,
-            ref mut ends_with,
-            ref mut contains,
+            ref starts_with,
+            ref ends_with,
+            ref contains,
         } => {
             if starts_with.is_empty() && ends_with.is_empty() && contains.is_empty() {
-                return Err(ConfigError::EmptyPartialMatcher {
-                    field: field.into(),
-                });
+                log::error!(
+                    "{field} must contain starts_with, ends_with, or contains");
+                return None;
             }
             for (name, pattern) in [
                 ("starts_with", starts_with),
                 ("ends_with", ends_with),
                 ("contains", contains),
             ] {
-                normalize_pattern(
+                validate_literal(
                     pattern,
                     &format_smolstr!("{field}.{name}"),
-                    case_sensitive,
                     is_path)?;
             }
         }
     }
-    Ok(matcher.to_matchers())
+    Some(())
 }
 
-/// Validates path separators and folds only case-insensitive patterns at load time.
-fn normalize_pattern(
-    pattern: &mut SmolStr,
-    field: &str,
-    case_sensitive: bool,
-    is_path: bool,
-) -> Result<(), ConfigError> {
+/// Configured path literals must already use the backend's forward-slash convention.
+fn validate_literal(pattern: &str, field: &str, is_path: bool) -> Option<()> {
     if is_path && pattern.contains('\\') {
-        return Err(ConfigError::BackslashInProgramPath {
-            field: field.into(),
-        });
+        log::error!("{field} must use forward slashes; backslashes are not accepted");
+        return None;
     }
-    if !case_sensitive {
-        *pattern = pattern.to_lowercase_smolstr();
-    }
-    Ok(())
+    Some(())
 }
 
 /// Validates both array dimensions using their configuration indices.
-fn validate_size([width, height]: [i32; 2], field: &str) -> Result<(), ConfigError> {
+fn validate_size([width, height]: [i32; 2], field: &str) -> Option<()> {
     validate_dimension(width, &format_smolstr!("{field}[0]"))?;
     validate_dimension(height, &format_smolstr!("{field}[1]"))
 }
@@ -335,7 +202,7 @@ fn validate_size_bounds(
     min: Option<[i32; 2]>,
     max: Option<[i32; 2]>,
     prefix: &str,
-) -> Result<(), ConfigError> {
+) -> Option<()> {
     if let Some(size) = min {
         validate_size(size, &format_smolstr!("{prefix}.min"))?;
     }
@@ -345,24 +212,22 @@ fn validate_size_bounds(
     if let (Some(min), Some(max)) = (min, max) {
         for (axis, (minimum, maximum)) in min.into_iter().zip(max).enumerate() {
             if minimum > maximum {
-                return Err(ConfigError::InvalidBounds {
-                    minimum_field: format_smolstr!("{prefix}.min[{axis}]"),
-                    maximum_field: format_smolstr!("{prefix}.max[{axis}]"),
-                });
+                log::error!(
+                    "{prefix}.min[{axis}] must not exceed {prefix}.max[{axis}]");
+                return None;
             }
         }
     }
-    Ok(())
+    Some(())
 }
 
 /// Rejects physical-pixel dimensions outside TurboZone's configuration contract.
-fn validate_dimension(value: i32, field: &str) -> Result<(), ConfigError> {
+fn validate_dimension(value: i32, field: &str) -> Option<()> {
     if !(1..=MAX_SIZE_DIMENSION).contains(&value) {
-        Err(ConfigError::InvalidDimension {
-            field: field.into(),
-            value,
-        })
+        log::error!(
+            "{field} must be between 1 and {MAX_SIZE_DIMENSION} inclusive, found {value}");
+        None
     } else {
-        Ok(())
+        Some(())
     }
 }

@@ -88,22 +88,16 @@ export type Pattern =
 
 // === Conceptual runtime shape (not serialized configuration) ===
 
-/** Owned pattern plus the predicate selected during validated compilation. */
-export interface PatternMatcher {
-    pattern: string;
-    predicate: (input: string, pattern: string) => boolean;
-}
-
-/** A validated rule with defaults resolved and patterns compiled. */
+/** A validated rule with display/resize settings resolved and authored patterns retained. */
 export interface RuntimeRule {
     /** Stable rule identifier. */
     name: RuleName;
     /** Trimmed display name, absent if blank. */
     description?: string;
-    /** Compiled program predicates; every predicate must succeed. */
-    program_filters: ProgramFilter<PatternMatcher[]>;
-    /** Compiled title predicates and validated client-size bounds. */
-    window_filters: WindowFilter<PatternMatcher[]>;
+    /** Authored program patterns evaluated case-insensitively. */
+    program_filters: ProgramFilter<Pattern>;
+    /** Authored case-sensitive title pattern and validated client-size bounds. */
+    window_filters: WindowFilter<Pattern>;
     /** Explicit or default matching priority. */
     priority: number;
     /** Whether centering controls are available. */
@@ -121,7 +115,7 @@ Matching and UI semantics:
 
 1. Only snapshots with Ok(WindowDetail) participate in matching and native actions.
 2. All filters in a rule are ANDed; highest priority wins, then source order.
-3. ProgramInfo candidates are lowercased at the aggregate program-matching boundary.
+3. Program patterns and candidates are lowercased at match time without mutating either.
 4. Titles retain their original case; native paths only replace backslashes with forward slashes.
 5. A matched section is identified by (rule.name, lowercase program path).
 6. An actionless matched rule remains an intentional read-only section.

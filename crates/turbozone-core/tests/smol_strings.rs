@@ -68,13 +68,13 @@ fn schema_represents_smol_strings_as_json_strings() {
     }
 }
 
-/// Normalization rebuilds immutable text, but must retain the compiler's existing
-/// Unicode case-folding behavior even when a pattern exceeds inline capacity.
+/// Matching preserves Unicode lowercase behavior even when a literal exceeds
+/// inline capacity; authored text is retained independently of comparisons.
 #[test]
-fn compiler_normalizes_long_unicode_patterns_without_truncation() {
+fn matching_handles_long_unicode_patterns_without_truncation() {
     let source = format_smolstr!("[[rules]]\nname = 'app'\nprogram.name = '{STARTS_WITH}'");
-    let report = parse_config(&source).unwrap();
-    let rule = &report.rules[0];
+    let config = parse_config(&source).unwrap();
+    let rule = &config.rules[0];
     let window = WindowInfo {
         handle: (),
         title: "Tool".into(),
@@ -92,19 +92,4 @@ fn compiler_normalizes_long_unicode_patterns_without_truncation() {
     };
 
     assert!(matches_rule(rule, &window));
-}
-
-/// Diagnostic payload storage is not observable; its stable text remains the
-/// contract consumed by startup logging and external callers.
-#[test]
-fn diagnostics_preserve_their_public_text() {
-    let report = parse_config(
-        r#"[[rules]]
-name = "app"
-program.path = 'C:\Tool.exe'"#).unwrap();
-    let message = format_smolstr!("{}", report.diagnostics[0].error);
-
-    assert_eq!(
-        message,
-        "rules[0].program.path must use forward slashes; backslashes are not accepted");
 }

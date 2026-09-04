@@ -56,8 +56,10 @@ fn tick_forwards_actions_in_queue_order_before_refreshing() {
     let mut backend = FakeBackend::default();
     backend.snapshots.push_back(Ok(vec![window(1)]));
     let mut engine = Engine::new(rules, backend);
-    engine.queue(WindowAction::MoveToCenter(1));
-    engine.queue(WindowAction::Resize(1, Size2D::new(1280, 720)));
+    engine.queue([
+        WindowAction::MoveToCenter(1),
+        WindowAction::Resize(1, Size2D::new(1280, 720)),
+    ]);
 
     engine.tick();
 
@@ -73,12 +75,14 @@ fn failed_action_does_not_prevent_later_targets_or_refresh() {
     let mut backend = FakeBackend { failing_handle: Some(1), ..Default::default() };
     backend.snapshots.push_back(Ok(vec![window(2)]));
     let mut engine = Engine::new(rules, backend);
-    engine.queue(WindowAction::MoveToCenter(1));
-    engine.queue(WindowAction::MoveToCenter(2));
+    engine.queue([
+        WindowAction::MoveToCenter(1),
+        WindowAction::MoveToCenter(2),
+    ]);
 
     engine.tick();
 
-    assert_eq!(engine.sections()[0].windows[0].handle, 2);
+    assert_eq!(engine.groups()[0].windows[0].handle, 2);
     assert_eq!(engine.into_backend().attempted.len(), 2);
 }
 
@@ -90,9 +94,9 @@ fn failed_snapshot_clears_previously_visible_sections() {
     backend.snapshots.push_back(Err(anyhow::anyhow!("enumeration unavailable")));
     let mut engine = Engine::new(rules, backend);
     engine.tick();
-    assert_eq!(engine.sections().len(), 1);
+    assert_eq!(engine.groups().len(), 1);
 
     engine.tick();
 
-    assert!(engine.sections().is_empty());
+    assert!(engine.groups().is_empty());
 }

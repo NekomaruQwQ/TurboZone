@@ -15,40 +15,23 @@ use turbozone_core::RuntimeRule;
 const CONFIG_SCHEMA_URL: &str =
     "https://raw.githubusercontent.com/NekomaruQwQ/TurboZone/refs/heads/main/data/config.schema.json";
 
-/// Resolves the selected path, creates a missing config, and loads all usable rules.
+/// Resolves the selected path, creates a missing config, and loads its complete rule set.
 ///
 /// Relative paths use the executable's directory so launch context does not change
 /// configuration identity. Existing config bytes are never modified. Unreadable configs
-/// and malformed documents are fatal; rejected rules are logged individually and never
-/// written back to the file. Parent directories must exist.
+/// and invalid documents are fatal; the core parser logs the validation failure without
+/// writing back to the file. Parent directories must exist.
 pub fn load_config(path: &Path) -> Result<Vec<RuntimeRule>> {
-    anyhow::ensure!(!path.as_os_str().is_empty(), "configuration path must not be empty");
-    let path = resolve_config_path(path)?;
+    anyhow::ensure!(!path.is_empty(), "configuration path must not be empty");
+    anyhow::ensure!(path.is_absolute(), "configuration path must be absolute");
     anyhow::ensure!(path.file_name().is_some(), "configuration path must name a file");
-    log::info!("configuration: {}", path.display());
+    log::info!("config_path: {}", path.display());
 
-    let source = read_or_create_config(&path)?;
-    let report = turbozone_core::parse_config(&source)
+    let source = read_or_create_config(path)?;
+    let config = turbozone_core::parse_config(&source)
         .with_context(|| format_smolstr!("failed to parse configuration: {}", path.display()))?;
-    for diagnostic in &report.diagnostics {
-        log::warn!("skipping rules[{}]: {}", diagnostic.index, diagnostic.error);
-    }
-    log::info!("loaded {} rules; skipped {}", report.rules.len(), report.diagnostics.len());
-    Ok(report.rules)
-}
-
-/// Resolves relative configuration paths against the executable that owns startup.
-fn resolve_config_path(path: &Path) -> Result<PathBuf> {
-    let path = if path.is_absolute() {
-        path.to_owned()
-    } else {
-        let executable = std::env::current_exe()
-            .context("failed to locate executable for relative configuration path")?;
-        let directory = executable.parent()
-            .context("executable path has no containing directory")?;
-        directory.join(path)
-    };
-    std::path::absolute(path).context("failed to resolve configuration path")
+    log::info!("loaded {} rules", config.rules.len());
+    Ok(config.rules)
 }
 
 /// Reads existing contents or creates only a remote schema directive and blank line.

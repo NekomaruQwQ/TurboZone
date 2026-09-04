@@ -152,8 +152,7 @@ fn size_schema_matches_array_serialization_and_runtime_bounds() {
         ] {
             for size in [[value, 1], [1, value]] {
                 let source = format!("[[rules]]\nname = 'size'\n{field} = {size:?}");
-                let accepted =
-                    parse_config(&source).is_ok_and(|report| report.diagnostics.is_empty());
+                let accepted = parse_config(&source).is_some();
                 assert_eq!(
                     accepted, valid,
                     "{field} = {size:?} must match the schema's limits"
