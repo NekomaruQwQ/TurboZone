@@ -8,10 +8,12 @@ use turbozone_core::{
 };
 
 /// Records the action boundary independently of action variants and supplies scripted snapshots.
+/// Snapshot checkpoints verify that each complete batch executes before refresh and is drained.
 #[derive(Default)]
 struct FakeBackend {
     snapshots: VecDeque<anyhow::Result<Vec<WindowInfo<u64>>>>,
-    attempted: Vec<WindowAction<u64>>,
+    attempted: Vec<(u64, WindowAction)>,
+    attempts_at_snapshot: Vec<usize>,
     failing_handle: Option<u64>,
 }
 
@@ -19,13 +21,13 @@ impl Backend for FakeBackend {
     type Handle = u64;
 
     fn snapshot(&mut self) -> anyhow::Result<Vec<WindowInfo<Self::Handle>>> {
+        self.attempts_at_snapshot.push(self.attempted.len());
         self.snapshots.pop_front().unwrap_or_else(|| Ok(Vec::new()))
     }
 
-    fn perform(&mut self, action: WindowAction<Self::Handle>) -> anyhow::Result<()> {
-        let handle = action.handle();
-        self.attempted.push(action);
-        if self.failing_handle == Some(handle) {
+    fn perform(&mut self, target: Self::Handle, action: WindowAction) -> anyhow::Result<()> {
+        self.attempted.push((target, action));
+        if self.failing_handle == Some(target) {
             anyhow::bail!("scripted action failure");
         }
         Ok(())
@@ -57,16 +59,22 @@ fn tick_forwards_actions_in_queue_order_before_refreshing() {
     backend.snapshots.push_back(Ok(vec![window(1)]));
     let mut engine = Engine::new(rules, backend);
     engine.queue([
-        WindowAction::MoveToCenter(1),
-        WindowAction::Resize(1, Size2D::new(1280, 720)),
+        (1, WindowAction::Center),
+        (2, WindowAction::Resize(Size2D::new(1280, 720))),
     ]);
+    assert!(engine.has_pending_actions());
 
     engine.tick();
 
-    assert_eq!(engine.into_backend().attempted, [
-        WindowAction::MoveToCenter(1),
-        WindowAction::Resize(1, Size2D::new(1280, 720)),
+    assert!(!engine.has_pending_actions());
+    // A second tick must refresh without replaying the drained batch.
+    engine.tick();
+    let backend = engine.into_backend();
+    assert_eq!(backend.attempted, [
+        (1, WindowAction::Center),
+        (2, WindowAction::Resize(Size2D::new(1280, 720))),
     ]);
+    assert_eq!(backend.attempts_at_snapshot, [2, 2]);
 }
 
 #[test]
@@ -76,14 +84,17 @@ fn failed_action_does_not_prevent_later_targets_or_refresh() {
     backend.snapshots.push_back(Ok(vec![window(2)]));
     let mut engine = Engine::new(rules, backend);
     engine.queue([
-        WindowAction::MoveToCenter(1),
-        WindowAction::MoveToCenter(2),
+        (1, WindowAction::Center),
+        (2, WindowAction::Center),
     ]);
 
     engine.tick();
 
     assert_eq!(engine.groups()[0].windows[0].handle, 2);
-    assert_eq!(engine.into_backend().attempted.len(), 2);
+    assert_eq!(engine.into_backend().attempted, [
+        (1, WindowAction::Center),
+        (2, WindowAction::Center),
+    ]);
 }
 
 #[test]

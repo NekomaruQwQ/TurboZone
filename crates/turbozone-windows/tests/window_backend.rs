@@ -61,7 +61,7 @@ fn resize_action_preserves_integer_center_and_sets_exact_client_size() {
     let before = window.content_rect(WindowState::Normal);
     let target = Size2D::new(641, 481);
 
-    Backend::default().perform(WindowAction::Resize(window.handle(), target)).unwrap();
+    Backend::default().perform(window.handle(), WindowAction::Resize(target)).unwrap();
     let resized = window.content_rect(WindowState::Normal);
 
     assert_eq!((resized.center(), resized.size), (before.center(), target));
@@ -72,7 +72,7 @@ fn center_action_aligns_client_with_monitor_without_resizing() {
     let window = TestWindow::hidden();
     let before = window.content_rect(WindowState::Normal);
 
-    Backend::default().perform(WindowAction::MoveToCenter(window.handle())).unwrap();
+    Backend::default().perform(window.handle(), WindowAction::Center).unwrap();
     let centered = window.content_rect(WindowState::Normal);
 
     assert_eq!(
@@ -84,7 +84,7 @@ fn center_action_aligns_client_with_monitor_without_resizing() {
 fn oversized_resize_retains_the_native_invalid_argument_error() {
     let window = TestWindow::hidden();
     let error = Backend::default()
-        .perform(WindowAction::Resize(window.handle(), Size2D::new(i32::MAX, 100)))
+        .perform(window.handle(), WindowAction::Resize(Size2D::new(i32::MAX, 100)))
         .unwrap_err();
 
     assert_eq!(error.downcast_ref::<NativeError>().unwrap().code(), E_INVALIDARG);
@@ -93,7 +93,7 @@ fn oversized_resize_retains_the_native_invalid_argument_error() {
 #[test]
 fn nonpositive_resize_retains_the_native_invalid_argument_error() {
     let error = Backend::default()
-        .perform(WindowAction::Resize(Handle(HWND::default()), Size2D::new(0, 100)))
+        .perform(Handle(HWND::default()), WindowAction::Resize(Size2D::new(0, 100)))
         .unwrap_err();
 
     assert_eq!(error.downcast_ref::<NativeError>().unwrap().code(), E_INVALIDARG);
@@ -102,7 +102,7 @@ fn nonpositive_resize_retains_the_native_invalid_argument_error() {
 #[test]
 fn invalid_handle_action_retains_context_and_native_cause() {
     let error = Backend::default()
-        .perform(WindowAction::MoveToCenter(Handle(HWND::default())))
+        .perform(Handle(HWND::default()), WindowAction::Center)
         .unwrap_err();
 
     assert!(error.to_string().contains("failed to center window 0x0"));

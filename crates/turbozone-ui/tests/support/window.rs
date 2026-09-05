@@ -16,8 +16,9 @@ impl turbozone_core::Backend for TestBackend {
         Ok(std::mem::take(&mut self.windows))
     }
 
-    fn perform(&mut self, _: WindowAction<Self::Handle>) -> anyhow::Result<()> {
-        Ok(())
+    #[expect(clippy::panic_in_result_fn, reason = "a render-side effect must fail the test, not be logged as an operational error")]
+    fn perform(&mut self, _: Self::Handle, _: WindowAction) -> anyhow::Result<()> {
+        panic!("headless rendering must emit actions without performing native effects");
     }
 }
 

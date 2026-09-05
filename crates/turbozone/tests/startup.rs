@@ -1,7 +1,8 @@
-//! Integration coverage for configuration startup and the composed TurboZone executable.
+//! Integration coverage for startup configuration loading and terminal diagnostics.
 //!
-//! The subprocess cases live with the binary package so Cargo supplies its executable path;
-//! direct configuration cases stay here to verify the same startup boundary without a GUI.
+//! The production executable selects a Windows known folder and launches a GUI. Tests call
+//! the loader with fixture-owned absolute paths; diagnostic subprocesses run only this test
+//! executable, isolating global logger state without reading the user's configuration.
 
 use std::fs;
 use std::path::Path;
@@ -14,17 +15,13 @@ use turbozone_ui::config::load_config;
 mod temp_dir;
 use temp_dir::TempDir;
 
-/// Isolates CLI environment in a child process; no GUI is launched by these failure cases.
-fn command(directory: &TempDir) -> Command {
-    command_from(Path::new(env!("CARGO_BIN_EXE_turbozone")), directory.path())
-}
-
-/// Creates an isolated command for either Cargo's binary or a relocated executable fixture.
-fn command_from(executable: &Path, directory: &Path) -> Command {
-    let mut command = Command::new(executable);
-    command.current_dir(directory)
-        .env_remove("TURBOZONE_CONFIG")
-        .env_remove("RUST_LOG");
+/// Runs just the loader probe, with an explicit path and no production startup code.
+fn command(path: &Path) -> Command {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command.args(["--exact", "configuration_diagnostic_probe", "--nocapture"])
+        .env("TURBOZONE_TEST_CONFIG", path)
+        .env_remove("RUST_LOG")
+        .env_remove("RUST_BACKTRACE");
     command
 }
 
@@ -66,7 +63,7 @@ fn one_invalid_rule_rejects_the_complete_configuration() {
     let path = directory.path().join("private.toml");
     let source = "[[rules]]\nname = 'broken'\nresize.exact = [0, 900]\n[[rules]]\nname = 'usable'\n";
     fs::write(&path, source).unwrap();
-    assert!(load_config(&path).is_err());
+    load_config(&path).unwrap_err();
     assert_eq!(fs::read_to_string(&path).unwrap(), source);
 }
 
@@ -85,61 +82,23 @@ fn unavailable_or_invalid_config_fails_without_creating_parent_directories() {
 }
 
 #[test]
-fn cli_requires_a_nonempty_explicit_source_before_io() {
-    let directory = TempDir::new();
-    for output in [
-        command(&directory).output().unwrap(),
-        command(&directory).env("TURBOZONE_CONFIG", "").output().unwrap(),
-        command(&directory).args(["--config", ""]).output().unwrap(),
-        command(&directory).env("TURBOZONE_CONFIG", "environment.toml")
-            .args(["--config", ""]).output().unwrap(),
+fn loader_rejects_empty_relative_and_directory_only_paths_before_io() {
+    for (path, message) in [
+        ("", "configuration path must not be empty"),
+        ("relative.toml", "configuration path must be absolute"),
+        ("C:/", "configuration path must name a file"),
     ] {
-        assert_eq!(output.status.code(), Some(2));
-        assert!(stderr(&output).contains("--config"));
+        assert_eq!(load_config(Path::new(path)).unwrap_err().to_string(), message);
     }
-    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
 }
 
+/// Logger initialization and panic hooks are process-global; the parent test invokes
+/// this one probe in a fresh process. Ordinary test discovery never loads a config here.
 #[test]
-fn cli_overrides_environment_and_relative_paths_use_the_executable_directory() {
-    let directory = TempDir::new();
-    let executable_directory = directory.path().join("bin");
-    let working_directory = directory.path().join("working");
-    fs::create_dir_all(&executable_directory).unwrap();
-    fs::create_dir_all(&working_directory).unwrap();
-    let executable = executable_directory.join("turbozone.exe");
-    fs::copy(env!("CARGO_BIN_EXE_turbozone"), &executable).unwrap();
-
-    for name in ["cli.toml", "env.toml"] {
-        fs::write(executable_directory.join(name), "[[rules").unwrap();
-        fs::write(working_directory.join(name), "rules = [").unwrap();
-    }
-    let output = command_from(&executable, &working_directory)
-        .env("TURBOZONE_CONFIG", "env.toml")
-        .args(["--config", "cli.toml"]).output().unwrap();
-    assert_eq!(output.status.code(), Some(101));
-    let diagnostics = stderr(&output);
-    assert!(diagnostics.contains(executable_directory.join("cli.toml").to_string_lossy().as_ref()));
-    assert!(!diagnostics.contains(working_directory.join("cli.toml").to_string_lossy().as_ref()));
-
-    let output = command_from(&executable, &working_directory)
-        .env("TURBOZONE_CONFIG", "env.toml").output().unwrap();
-    assert_eq!(output.status.code(), Some(101));
-    let diagnostics = stderr(&output);
-    assert!(diagnostics.contains(executable_directory.join("env.toml").to_string_lossy().as_ref()));
-    assert!(!diagnostics.contains(working_directory.join("env.toml").to_string_lossy().as_ref()));
-}
-
-#[test]
-fn help_hides_private_environment_values_and_performs_no_io() {
-    let directory = TempDir::new();
-    let output = command(&directory).env("TURBOZONE_CONFIG", "private-location.toml")
-        .arg("--help").output().unwrap();
-    assert!(output.status.success());
-    let help = SmolStr::new(std::str::from_utf8(&output.stdout).unwrap());
-    assert!(help.contains("TURBOZONE_CONFIG"));
-    assert!(!help.contains("private-location"));
-    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+fn configuration_diagnostic_probe() {
+    let Some(path) = std::env::var_os("TURBOZONE_TEST_CONFIG") else { return; };
+    pretty_env_logger::init();
+    load_config(Path::new(&path)).expect("failed to load configuration file");
 }
 
 #[test]
@@ -147,19 +106,18 @@ fn configured_stderr_reports_panic_chains_without_source_excerpts() {
     let directory = TempDir::new();
     let path = directory.path().join("private.toml");
     fs::write(&path, "rules = [ # PRIVATE_SOURCE_SENTINEL").unwrap();
-    let output = command(&directory).env("RUST_LOG", "warn")
-        .arg("--config").arg(&path).output().unwrap();
+    let output = command(&path).env("RUST_LOG", "warn").output().unwrap();
     assert_eq!(output.status.code(), Some(101));
-    assert_eq!(output.stdout, b"");
     let diagnostics = stderr(&output);
+    assert!(diagnostics.contains("failed to deserialize configuration"));
     assert!(diagnostics.contains("failed to parse configuration"));
     assert!(!diagnostics.contains("PRIVATE_SOURCE_SENTINEL"));
 
-    let output = command(&directory).env("RUST_LOG", "off")
-        .arg("--config").arg(&path).output().unwrap();
+    let output = command(&path).env("RUST_LOG", "off").output().unwrap();
     assert_eq!(output.status.code(), Some(101));
     let diagnostics = stderr(&output);
     assert!(diagnostics.contains("failed to load configuration"));
     assert!(diagnostics.contains("failed to parse configuration"));
+    assert!(!diagnostics.contains("failed to deserialize configuration"));
     assert!(!diagnostics.contains("PRIVATE_SOURCE_SENTINEL"));
 }
