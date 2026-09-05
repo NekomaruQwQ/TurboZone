@@ -21,7 +21,7 @@ impl View {
     fn new(source: &str, windows: Vec<WindowInfo<u64>>) -> Self {
         let rules = parse_config(source).unwrap().rules;
         let mut engine = Engine::new(rules, TestBackend { windows });
-        engine.tick();
+        engine.update();
         let context = Context::default();
         App::<TestBackend>::setup_egui(&context);
         let mut view = Self { context, engine, labels: Vec::new() };

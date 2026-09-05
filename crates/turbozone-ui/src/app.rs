@@ -39,7 +39,7 @@ pub const STANDARD_SIZE: &[(&str, &[[i32; 2]])] = &[
 pub const TURBOZONE_WINDOW_SIZE: [f32; 2] = [450.0, 720.0];
 
 /// Native state changes less often than the UI paints, so snapshots use a separate cadence.
-const UPDATE_INTERVAL: Duration = Duration::from_secs(1);
+const UPDATE_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 3);
 
 /// Painting stays responsive without coupling native enumeration to every frame.
 const RENDER_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 30);
@@ -62,7 +62,7 @@ impl<B: Backend> eframe::App for App<B> {
     fn logic(&mut self, _: &Context, _: &mut eframe::Frame) {
         if  self.engine.has_pending_actions() ||
             self.last_update.elapsed() >= UPDATE_INTERVAL {
-            self.engine.tick();
+            self.engine.update();
             self.last_update = Instant::now();
         }
     }
@@ -96,7 +96,7 @@ impl<B: Backend> App<B> {
     /// Takes ownership of verified authored rules and captures the initial snapshot.
     pub fn new(rules: Vec<Rule>, backend: B) -> Self {
         let mut engine = Engine::new(rules, backend);
-        engine.tick();
+        engine.update();
 
         Self {
             engine,
@@ -180,18 +180,19 @@ impl<B: Backend> App<B> {
                     group
                         .windows
                         .iter()
-                        .all(|window| {
-                            window
-                                .detail
-                                .as_ref()
-                                .is_ok_and(WindowDetail::is_centered)
-                        });
+                        .filter_map(|window| window.detail.as_ref().ok())
+                        .all(WindowDetail::is_centered);
                 let common_size =
-                    group
-                        .windows
-                        .iter()
-                        .map(|window| window.detail.as_ref().expect("window detail should always present in a rendered snapshot"))
-                        .all(|detail| detail.content_rect.size == rule.resize.primary_size().unwrap_or_default());
+                    rule.resize
+                        .primary_size()
+                        .is_some_and(|primary_size| {
+                            group
+                                .windows
+                                .iter()
+                                .filter_map(|window| window.detail.as_ref().ok())
+                                .map(|detail| detail.content_rect.size)
+                                .all(|size| size == primary_size)
+                        });
                 Self::action_ui(
                     ui,
                     rule,

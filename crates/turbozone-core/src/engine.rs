@@ -1,20 +1,28 @@
 //! Backend-independent action orchestration and snapshot lifecycle.
 
-use std::collections::BTreeMap;
+use crate::*;
+
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::hash::Hash;
 use std::rc::Rc;
+use std::time::Duration;
+use std::time::Instant;
 
 use smol_str::*;
 
-use crate::*;
+pub struct Snapshot<B: Backend> {
+    pub groups: Vec<Group<B::Handle>>,
+    pub errors: HashMap<B::Handle, anyhow::Error>,
+}
+
 
 /// Supplies snapshots and interprets native actions for one platform.
 ///
 /// Core forwards [`WindowAction`] values without dispatching their variants. This keeps
 /// platform-specific dispatch beside the native mechanisms while core retains queue
 /// order, refresh policy, and non-fatal error handling.
-pub trait Backend {
+pub trait Backend: Sized {
     /// Cheap, stable identity retained between a snapshot and its deferred action.
     ///
     /// Its [`fmt::Display`] implementation is used for logging and error messages,
@@ -27,17 +35,14 @@ pub trait Backend {
 
     /// Captures the currently relevant application windows.
     fn snapshot(&mut self)
-     -> anyhow::Result<Vec<WindowInfo<Self::Handle>>>;
+     -> anyhow::Result<Snapshot<Self>>;
 
     /// Performs one action against live native state.
     ///
     /// Implementations return operational failures and must panic for an unsupported
     /// future action variant rather than silently accepting an operation they did not
     /// perform.
-    fn perform(
-        &mut self,
-        target: Self::Handle,
-        action: WindowAction)
+    fn perform(&mut self, target: Self::Handle, action: WindowAction)
      -> anyhow::Result<()>;
 }
 
@@ -49,9 +54,9 @@ pub trait Backend {
 pub struct Engine<B: Backend> {
     backend: B,
     rules: Vec<Rule>,
-    groups: Vec<Group<B::Handle>>,
+    snapshot: anyhow::Result<Snapshot<B>>,
+    snapshot_timestamp: Instant,
     pending_actions: Vec<(B::Handle, WindowAction)>,
-    logging: SnapshotLogging<B::Handle>,
 }
 
 impl<B: Backend> Engine<B> {
@@ -62,40 +67,48 @@ impl<B: Backend> Engine<B> {
         Self {
             backend,
             rules,
-            groups: Vec::new(),
+            snapshot: Ok(Snapshot {
+                groups: Vec::new(),
+                errors: HashMap::new(),
+            }),
+            snapshot_timestamp: Instant::now(),
             pending_actions: Vec::new(),
-            logging: SnapshotLogging::default(),
         }
     }
 
-    /// Returns the validated rules in configuration source order.
-    pub fn rules(&self) -> &[Rule] { &self.rules }
-
     /// Resolves a verified rule through its stable configuration identity.
     pub fn rule(&self, name: &str) -> Option<&Rule> {
-        self.rules.iter().find(|rule| rule.name == name)
+        self.rules
+            .iter()
+            .find(|rule| rule.name == name)
     }
 
-    /// Returns the latest successfully grouped snapshot.
-    pub fn groups(&self) -> &[Group<B::Handle>] { &self.groups }
+    /// Returns the latest successfully grouped snapshot, or a top-level
+    /// error with its timestamp.
+    pub fn snapshot(&self) -> &anyhow::Result<Snapshot<B>> {
+        &self.snapshot
+    }
 
     /// Defers native operations until the next logic tick in iterator order.
-    pub fn queue(&mut self, actions: impl IntoIterator<Item = (B::Handle, WindowAction)>) {
+    pub fn queue<I>(&mut self, actions: I)
+    where
+        I: IntoIterator<Item = (B::Handle, WindowAction)>, {
         self.pending_actions.extend(actions);
     }
 
     /// Returns whether user work should trigger a tick before the periodic deadline.
-    pub const fn has_pending_actions(&self) -> bool { !self.pending_actions.is_empty() }
+    pub const fn has_pending_actions(&self) -> bool {
+        !self.pending_actions.is_empty()
+    }
 
     /// Applies queued operations and refreshes the complete derived view state.
     ///
     /// Individual action and snapshot failures are logged as non-fatal. A failed
     /// top-level snapshot clears sections so the UI never presents older data as live.
-    pub fn tick(&mut self) {
-        for (handle, action) in std::mem::take(&mut self.pending_actions) {
-            let identity = self.window_identity(handle);
+    pub fn update(&mut self) {
+        for (handle, action) in self.pending_actions.drain(..) {
             if let Err(error) = self.backend.perform(handle, action) {
-                log::error!("window action failed for {identity}: {error:#}");
+                log::error!("failed to perform action {action:?} on {handle}: {error:#}");
             }
         }
 
@@ -103,36 +116,12 @@ impl<B: Backend> Engine<B> {
             Ok(windows) => windows,
             Err(error) => {
                 self.logging.enumeration_failed(format_smolstr!("{error}"));
-                self.groups.clear();
+                self.snapshot_groups.clear();
                 return;
             },
         };
-        self.logging.update(&windows);
-        self.groups = group_windows(&self.rules, windows);
-    }
 
-    /// Returns the backend after consuming the engine, primarily for adapter tests.
-    pub fn into_backend(self) -> B { self.backend }
-
-    /// Owns cached metadata before the backend consumes the action.
-    ///
-    /// The identity must outlive the snapshot borrow because native execution may
-    /// invalidate it; compact immutable text keeps that boundary explicit.
-    fn window_identity(&self, handle: B::Handle) -> SmolStr {
-        let window = self.groups.iter()
-            .flat_map(|section| &section.windows)
-            .find(|window| window.handle == handle);
-        let Some(window) = window else {
-            return format_smolstr!("{handle:?}");
-        };
-        if let Ok(detail) = window.detail.as_ref() {
-            format_smolstr!(
-                "{handle:?} title={:?} executable={:?}",
-                window.title,
-                detail.program.path)
-        } else {
-            format_smolstr!("{handle:?} title={:?}", window.title)
-        }
+        self.snapshot_groups = group_windows(&self.rules, windows);
     }
 }
 
@@ -242,3 +231,6 @@ pub fn group_windows<H>(
     }
     groups
 }
+
+#[path = "../tests/include/engine_ext.rs"]
+pub mod test;

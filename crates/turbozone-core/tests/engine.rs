@@ -64,11 +64,11 @@ fn tick_forwards_actions_in_queue_order_before_refreshing() {
     ]);
     assert!(engine.has_pending_actions());
 
-    engine.tick();
+    engine.update();
 
     assert!(!engine.has_pending_actions());
     // A second tick must refresh without replaying the drained batch.
-    engine.tick();
+    engine.update();
     let backend = engine.into_backend();
     assert_eq!(backend.attempted, [
         (1, WindowAction::Center),
@@ -88,7 +88,7 @@ fn failed_action_does_not_prevent_later_targets_or_refresh() {
         (2, WindowAction::Center),
     ]);
 
-    engine.tick();
+    engine.update();
 
     assert_eq!(engine.groups()[0].windows[0].handle, 2);
     assert_eq!(engine.into_backend().attempted, [
@@ -104,10 +104,10 @@ fn failed_snapshot_clears_previously_visible_sections() {
     backend.snapshots.push_back(Ok(vec![window(1)]));
     backend.snapshots.push_back(Err(anyhow::anyhow!("enumeration unavailable")));
     let mut engine = Engine::new(rules, backend);
-    engine.tick();
+    engine.update();
     assert_eq!(engine.groups().len(), 1);
 
-    engine.tick();
+    engine.update();
 
     assert!(engine.groups().is_empty());
 }
@@ -121,7 +121,7 @@ fn engine_exposes_verified_authored_rules_without_normalization() {
     let mut backend = FakeBackend::default();
     backend.snapshots.push_back(Ok(vec![window(1)]));
     let mut engine = Engine::new(rules, backend);
-    engine.tick();
+    engine.update();
 
     assert_eq!(engine.rules().iter().map(|rule| rule.name.as_str())
         .collect::<Vec<_>>(), ["tool", "fallback"]);

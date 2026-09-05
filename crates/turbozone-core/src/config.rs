@@ -2,7 +2,8 @@ use serde::*;
 use educe::Educe;
 use euclid::default::Size2D;
 use schemars::*;
-use smol_str::{SmolStr, StrExt as _};
+use smol_str::SmolStr;
+use smol_str::StrExt as _;
 
 /// Largest physical-pixel dimension accepted from serialized configuration.
 ///
@@ -121,11 +122,16 @@ impl ResizeRule {
     /// Verification reports that condition; this query stays silent during rendering.
     pub fn primary_size(&self) -> Option<Size2D<i32>> {
         match *self {
-            Self::Boolean(_) => None,
-            Self::Exact { exact } => Some(exact),
-            Self::SelectorDefault(default) => Some(default),
-            Self::Selector(ref selector) => selector.default
-                .filter(|&size| selector.allows_size(size)),
+            Self::Boolean(_) =>
+                None,
+            Self::Exact { exact } =>
+                Some(exact),
+            Self::SelectorDefault(default) =>
+                Some(default),
+            Self::Selector(ref selector) =>
+                selector
+                    .default
+                    .filter(|&size| selector.allows_size(size)),
         }
     }
 
@@ -134,13 +140,18 @@ impl ResizeRule {
     /// runtime representation is needed. Exact and disabled modes have no selector.
     pub fn selector(&self) -> Option<ResizeSelector> {
         match *self {
-            Self::Boolean(false) | Self::Exact { .. } => None,
-            Self::Boolean(true) => Some(ResizeSelector::default()),
-            Self::SelectorDefault(default) => Some(ResizeSelector {
-                default: Some(default),
-                ..Default::default()
-            }),
-            Self::Selector(ref selector) => Some(selector.clone()),
+            Self::Boolean(false) |
+            Self::Exact { .. } =>
+                None,
+            Self::Boolean(true) =>
+                Some(ResizeSelector::default()),
+            Self::SelectorDefault(default) =>
+                Some(ResizeSelector {
+                    default: Some(default),
+                    ..Default::default()
+                }),
+            Self::Selector(ref selector) =>
+                Some(selector.clone()),
         }
     }
 }

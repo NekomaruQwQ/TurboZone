@@ -1,6 +1,7 @@
 # `turbozone-core`
-/crates/turbozone-core/src/engine.rs
 /crates/turbozone-core/src/config_parser.rs
+/crates/turbozone-core/src/engine.rs
+/crates/turbozone-core/src/logging.rs
 
 # `turbozone-windows`
 /crates/turbozone-windows/src/native.rs

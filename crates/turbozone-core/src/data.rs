@@ -34,27 +34,25 @@ pub enum WindowState {
 pub struct WindowInfo<H> {
     /// The native handle identifying the exact enumerated window.
     pub handle: H,
+
     /// The title of the window, or an empty string if the window has no title or
     /// the title could not be obtained.
     pub title: SmolStr,
+
     /// The current normal, maximized, or minimized state.
     pub state: WindowState,
-    /// Complete window details from this snapshot, or an error if any detail
-    /// could not be obtained.
-    pub detail: anyhow::Result<WindowDetail>,
-}
 
-/// Extra information about a native window that may fail to be obtained.
-#[derive(Debug, Clone)]
-pub struct WindowDetail {
     /// Current monitor work area in physical screen coordinates, excluding
     /// taskbars.
     pub monitor_rect: Rect<i32>,
+
     /// Controllable client-area rectangle in physical screen coordinates.
     /// Minimized/maximized windows use their restored geometry.
     pub content_rect: Rect<i32>,
+
     /// Process ID owning the window.
     pub process_id: u32,
+
     /// Program details of the executable owning the window.
     ///
     /// [`Rc`] is here used to allow sharing between multiple windows of
@@ -66,7 +64,7 @@ pub struct WindowDetail {
     pub program: Rc<ProgramInfo>,
 }
 
-impl WindowDetail {
+impl<H> WindowInfo<H> {
     pub fn is_centered(&self) -> bool {
         self.content_rect.center() == self.monitor_rect.center()
     }
