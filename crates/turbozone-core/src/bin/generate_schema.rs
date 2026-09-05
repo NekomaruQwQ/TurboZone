@@ -1,6 +1,6 @@
 //! Explicit generator for the repository's canonical JSON Schema.
 //!
-//! Keeping generation in a dedicated Cargo test target prevents ordinary
+//! Keeping generation in an explicitly invoked binary prevents ordinary
 //! builds from mutating the checkout while preserving one discoverable,
 //! validated developer command.
 

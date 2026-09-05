@@ -100,3 +100,24 @@ fn failed_snapshot_clears_previously_visible_sections() {
 
     assert!(engine.groups().is_empty());
 }
+
+/// Engine ownership preserves source values and stable-name lookup through ticks.
+#[test]
+fn engine_exposes_verified_authored_rules_without_normalization() {
+    let rules = parse_config(
+        "[[rules]]\nname = 'tool'\ndescription = '  Tool  '\nprogram.name = 'APP.EXE'\n\
+         [[rules]]\nname = 'fallback'").unwrap().rules;
+    let mut backend = FakeBackend::default();
+    backend.snapshots.push_back(Ok(vec![window(1)]));
+    let mut engine = Engine::new(rules, backend);
+    engine.tick();
+
+    assert_eq!(engine.rules().iter().map(|rule| rule.name.as_str())
+        .collect::<Vec<_>>(), ["tool", "fallback"]);
+    assert_eq!(engine.groups()[0].rule_name, "tool");
+    let rule = engine.rule("tool").unwrap();
+    assert_eq!(rule.description, "  Tool  ");
+    assert_eq!(rule.display_name(), "Tool");
+    assert_eq!(rule.program.name, Some(turbozone_core::Pattern::Exact("APP.EXE".into())));
+    assert!(engine.rule("unknown").is_none());
+}

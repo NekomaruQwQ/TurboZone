@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use smol_str::{SmolStr, format_smolstr};
-use turbozone_core::RuntimeRule;
+use turbozone_core::Rule;
 
 const CONFIG_SCHEMA_URL: &str =
     "https://raw.githubusercontent.com/NekomaruQwQ/TurboZone/refs/heads/main/data/config.schema.json";
@@ -21,7 +21,7 @@ const CONFIG_SCHEMA_URL: &str =
 /// configuration identity. Existing config bytes are never modified. Unreadable configs
 /// and invalid documents are fatal; the core parser logs the validation failure without
 /// writing back to the file. Parent directories must exist.
-pub fn load_config(path: &Path) -> Result<Vec<RuntimeRule>> {
+pub fn load_config(path: &Path) -> Result<Vec<Rule>> {
     anyhow::ensure!(!path.is_empty(), "configuration path must not be empty");
     anyhow::ensure!(path.is_absolute(), "configuration path must be absolute");
     anyhow::ensure!(path.file_name().is_some(), "configuration path must name a file");

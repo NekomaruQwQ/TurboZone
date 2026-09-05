@@ -85,7 +85,7 @@ fn insensitive_matching_preserves_unicode_lowercase_semantics() {
 #[test]
 fn loading_and_matching_preserve_authored_program_patterns() {
     let config = parse_config("[[rules]]\nname = 'tool'\nprogram.name = 'TOOL.EXE'").unwrap();
-    let pattern = config.rules[0].program_filters.name.as_ref().unwrap();
+    let pattern = config.rules[0].program.name.as_ref().unwrap();
     assert!(pattern.matches_ignore_case("tool.exe"));
     assert_eq!(pattern, &Pattern::Exact("TOOL.EXE".into()));
 }

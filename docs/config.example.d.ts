@@ -9,7 +9,7 @@ export type RuleName = string;
 
 /** Complete TurboZone configuration; omitted rules means an empty list. */
 export interface Config {
-    /** Valid rules retain declaration order; broken rules are skipped independently. */
+    /** Rules retain declaration order; any invalid rule rejects the complete configuration. */
     rules?: Rule[];
 }
 
@@ -17,12 +17,12 @@ export interface Config {
 export interface Rule {
     /** Required unique identifier, also used in persistent UI section identity. */
     name: RuleName;
-    /** Trimmed display name; omitted or blank values fall back to name. */
+    /** Authored description; the display-name query trims and falls back to name when blank. */
     description?: string;
     /** Case-insensitive program filters; all supplied filters are ANDed. */
-    program?: ProgramFilter<Pattern>;
+    program?: ProgramFilter;
     /** Case-sensitive title and inclusive client-size filters. */
-    window?: WindowFilter<Pattern>;
+    window?: WindowFilter;
     /** Higher priorities win; defaults to zero, with declaration order breaking ties. */
     priority?: number;
     /** Enables client-area centering; defaults to false. */
@@ -34,6 +34,7 @@ export interface Rule {
 /** Exact-only resizing or a selector with optional default and bounds. */
 export type ResizeRule =
     | boolean
+    | Size
     | {
         /** Sole resize target; no selector is offered. */
         exact: Size;
@@ -53,18 +54,18 @@ export interface ResizeLimits {
     max?: Size;
 }
 
-/** Generic serialized or compiled program filters. */
-export interface ProgramFilter<S> {
+/** Program filters shared by serialization and direct matching. */
+export interface ProgramFilter {
     /** Case-insensitive program filename. */
-    name?: S;
+    name?: Pattern;
     /** Case-insensitive program path; configured patterns must use forward slashes. */
-    path?: S;
+    path?: Pattern;
 }
 
-/** Generic serialized or compiled window filters. */
-export interface WindowFilter<S> {
+/** Window filters shared by serialization and direct matching. */
+export interface WindowFilter {
     /** Case-sensitive title. */
-    title?: S;
+    title?: Pattern;
     /** Inclusive minimum controllable client-area size required to match. */
     min?: Size;
     /** Inclusive maximum controllable client-area size required to match. */
@@ -86,29 +87,9 @@ export type Pattern =
 // Partial patterns require at least one nonempty component.
 // Regexes, globs, exact-string objects, and unknown properties are rejected.
 
-// === Conceptual runtime shape (not serialized configuration) ===
-
-/** A validated rule with display/resize settings resolved and authored patterns retained. */
-export interface RuntimeRule {
-    /** Stable rule identifier. */
-    name: RuleName;
-    /** Trimmed display name, absent if blank. */
-    description?: string;
-    /** Authored program patterns evaluated case-insensitively. */
-    program_filters: ProgramFilter<Pattern>;
-    /** Authored case-sensitive title pattern and validated client-size bounds. */
-    window_filters: WindowFilter<Pattern>;
-    /** Explicit or default matching priority. */
-    priority: number;
-    /** Whether centering controls are available. */
-    relocate: boolean;
-    /** Exact-only target, mutually exclusive with resize_limits. */
-    resize_exact?: Size;
-    /** Selector settings; absent for disabled and exact-only modes. */
-    resize_limits?: ResizeLimits;
-}
-
-// Core's Engine owns RuntimeRule[] directly in source order and exposes it as a borrowed slice.
+// Rust's parser returns Config after non-mutating verification; Engine owns Rule[]
+// in source order and exposes borrowed rules. No separate runtime rule model exists.
+// ResizeRule queries derive the primary target and optional selector settings on demand.
 
 /*
 Matching and UI semantics:
@@ -118,7 +99,7 @@ Matching and UI semantics:
 3. Program patterns and candidates are lowercased at match time without mutating either.
 4. Titles retain their original case; native paths only replace backslashes with forward slashes.
 5. A matched section is identified by (rule.name, lowercase program path).
-6. An actionless matched rule remains an intentional read-only section.
+6. An actionless matched rule remains an intentional group with disabled-action labels.
 7. Unmatched windows are discarded normally; failed details are reported to stderr before discarding.
 8. Failed snapshots retain handle, title, state, and the first error; the next refresh retries.
 9. Size tuples must contain exactly two integers from 1 through 16,384; no partial target is accepted.

@@ -1,5 +1,3 @@
-#![expect(clippy::unreachable, reason = "prechecked by assertions")]
-
 use turbozone_core::*;
 
 use std::time::Duration;
@@ -96,7 +94,8 @@ impl<B: Backend> eframe::App for App<B> {
 }
 
 impl<B: Backend> App<B> {
-    pub fn new(rules: Vec<RuntimeRule>, backend: B) -> Self {
+    /// Takes ownership of verified authored rules and captures the initial snapshot.
+    pub fn new(rules: Vec<Rule>, backend: B) -> Self {
         let mut engine = Engine::new(rules, backend);
         engine.tick();
 
@@ -119,7 +118,7 @@ impl<B: Backend> App<B> {
         egui_phosphor_icons::add_fonts(fonts);
     }
 
-    /// Renders a snapshot without native effects and returns actions in interaction order.
+    /// Renders a snapshot without native effects and emits actions through the callback.
     ///
     /// Group identity combines the stable rule name with its representative display path;
     /// window identity uses the backend handle. This keeps egui state stable while leaving
@@ -148,10 +147,11 @@ impl<B: Backend> App<B> {
         }
     }
 
+    /// Uses the stable rule name for headings and queries resize availability on demand.
     fn group_ui<F: FnMut(WindowAction<B::Handle>)>(
         ui: &mut Ui,
         group: &Group<B::Handle>,
-        rule: &RuntimeRule,
+        rule: &Rule,
         action_callback: &mut F) {
         ui.horizontal(|ui| {
             ui.heading(group.program.description.as_str());
@@ -160,7 +160,7 @@ impl<B: Backend> App<B> {
 
             // ui.weak(format!(
             //     "({}, {:+})",
-            //     rule.description.clone().unwrap_or_default(),
+            //     rule.display_name(),
             //     rule.priority));
         });
 
@@ -168,8 +168,8 @@ impl<B: Backend> App<B> {
         ui.add_space(4.0);
 
         if  rule.relocate ||
-            rule.resize_selector.is_some() ||
-            Self::primary_resize(rule).is_some() {
+            rule.resize.selector().is_some() ||
+            rule.resize.primary_size().is_some() {
             ui.horizontal(|ui| Self::group_action_ui(ui, group, rule, action_callback));
             ui.add_space(4.0);
         }
@@ -185,10 +185,11 @@ impl<B: Backend> App<B> {
         ui.add_space(8.0);
     }
 
+    /// Applies authored primary targets independently of selector limits to every group member.
     fn group_action_ui<F: FnMut(WindowAction<B::Handle>)>(
         ui: &mut Ui,
         group: &Group<B::Handle>,
-        rule: &RuntimeRule,
+        rule: &Rule,
         action_callback: &mut F) {
         if rule.relocate && ui.add_sized((80.0, 16.0), Button::new("CENTER")).clicked() {
             for window in &group.windows {
@@ -196,7 +197,7 @@ impl<B: Backend> App<B> {
             }
         }
 
-        if let Some(size) = Self::primary_resize(rule) {
+        if let Some(size) = rule.resize.primary_size() {
             let response = ui.button(format!("RESIZE TO {}x{}", size.width, size.height));
             if response.clicked() {
                 for window in &group.windows {
@@ -205,12 +206,12 @@ impl<B: Backend> App<B> {
             }
         }
 
-        if let Some(selector) = rule.resize_selector.as_ref() {
+        if let Some(selector) = rule.resize.selector() {
             let selected =
                 ComboBox::from_id_salt("resize-all")
                     .width(ui.available_width().min(120.0))
                     .selected_text("RESIZE")
-                    .show_ui(ui, |ui| Self::resolution_ui(ui, None, selector))
+                    .show_ui(ui, |ui| Self::resolution_ui(ui, None, &selector))
                     .inner
                     .flatten();
             if let Some(size) = selected {
@@ -231,10 +232,11 @@ impl<B: Backend> App<B> {
         ui.add(Label::new(window.title.as_str()).truncate());
     }
 
+    /// Renders mutually exclusive resize modes while preserving per-window control policy.
     fn window_action_ui<F: FnMut(WindowAction<B::Handle>)>(
         ui: &mut Ui,
         window: &WindowInfo<B::Handle>,
-        rule: &RuntimeRule,
+        rule: &Rule,
         action_callback: &mut F) {
         let detail =
             window
@@ -263,41 +265,36 @@ impl<B: Backend> App<B> {
         ui.label("|");
 
 
-        assert!(
-            !(rule.resize_exact.is_some() && rule.resize_selector.is_some()),
-            "rule should not have both resize_exact and resize_selector");
-        match (rule.resize_exact, rule.resize_selector.as_ref()) {
-            (Some(_), Some(_)) => unreachable!("guaranteed by assertion above"),
-            (Some(size), None) => {
-                ui.weak("SIZE");
+        // Exact mode is exclusive in the authored enum. Selector defaults retain
+        // this view's bounds gate; the group primary target is independent of it.
+        if let ResizeRule::Exact { exact } = rule.resize {
+            let size = Size2D::from(exact);
+            ui.weak("SIZE");
 
-                Button::new(format!("{}x{}", size.width, size.height))
+            Button::new(format!("{}x{}", size.width, size.height))
+                .pipe(|button| ui.add_sized((80.0, 16.0), button))
+                .clicked()
+                .then(|| action_callback(WindowAction::Resize(window.handle, size)));
+        } else if let Some(selector) = rule.resize.selector() {
+            ui.weak("SIZE");
+            if let Some(size) = selector.default && selector.allows_size(size.into()) {
+                Button::new(format!("{}x{}", size[0], size[1]))
                     .pipe(|button| ui.add_sized((80.0, 16.0), button))
                     .clicked()
-                    .then(|| action_callback(WindowAction::Resize(window.handle, size)));
-            },
-            (None, Some(selector)) => {
-                ui.weak("SIZE");
-                if let Some(size) = selector.default && selector.allows_size(size.into()) {
-                    Button::new(format!("{}x{}", size[0], size[1]))
-                        .pipe(|button| ui.add_sized((80.0, 16.0), button))
-                        .clicked()
-                        .then(|| action_callback(WindowAction::Resize(window.handle, size.into())));
-                    ui.weak("OR");
-                }
-                let selected = ComboBox::from_id_salt("size")
-                    .width(80.0)
-                    .selected_text("SELECT")
-                    .show_ui(ui, |ui| Self::resolution_ui(ui, None, selector))
-                    .inner
-                    .flatten();
-                if let Some(size) = selected {
-                    action_callback(WindowAction::Resize(window.handle, size));
-                }
-            },
-            (None, None) => {
-                ui.weak("RESIZE DISABLED");
-            },
+                    .then(|| action_callback(WindowAction::Resize(window.handle, size.into())));
+                ui.weak("OR");
+            }
+            let selected = ComboBox::from_id_salt("size")
+                .width(80.0)
+                .selected_text("SELECT")
+                .show_ui(ui, |ui| Self::resolution_ui(ui, None, &selector))
+                .inner
+                .flatten();
+            if let Some(size) = selected {
+                action_callback(WindowAction::Resize(window.handle, size));
+            }
+        } else {
+            ui.weak("RESIZE DISABLED");
         }
     }
 
@@ -334,11 +331,6 @@ impl<B: Backend> App<B> {
             ui.weak("No sizes within configured limits");
         }
         selected_size
-    }
-
-    fn primary_resize(rule: &RuntimeRule) -> Option<Size2D<i32>> {
-        rule.resize_exact
-            .or_else(|| rule.resize_selector.as_ref()?.default.map(Size2D::from))
     }
 
     fn size_text(size: Size2D<i32>) -> String {

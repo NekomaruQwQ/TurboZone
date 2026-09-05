@@ -23,4 +23,5 @@ LICENSE
 # BEGIN agent
 /crates/turbozone-core/src/config.rs
 /docs/config.example.d.ts
+/crates/turbozone-ui/src/app.rs
 # END agent

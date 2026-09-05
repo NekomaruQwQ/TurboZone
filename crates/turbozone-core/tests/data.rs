@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use euclid::default::{Point2D, Rect, Size2D};
 use turbozone_core::{
-    ProgramInfo, WindowDetail, WindowInfo, WindowState, find_rule, group_windows, parse_config,
+    ProgramInfo, WindowDetail, WindowInfo, WindowState, group_windows, parse_config,
 };
 
 /// Makes complete snapshots whose handles remain opaque to core grouping.
@@ -86,5 +86,10 @@ fn groups_retain_stable_names_and_source_order_after_rule_reordering() {
         [[rules]]
         name = "fallback"
     "#).unwrap().rules;
-    assert_eq!(find_rule(&reordered, &groups[0].rule_name).unwrap().name, "fallback");
+    let regrouped = group_windows(&reordered, vec![
+        window(1, "C:/Apps/Tool.exe", "Specific"),
+        window(2, "C:/Apps/Tool.exe", "Fallback"),
+    ]);
+    assert_eq!(regrouped.iter().map(|group| group.rule_name.as_str())
+        .collect::<Vec<_>>(), ["specific", "fallback"]);
 }

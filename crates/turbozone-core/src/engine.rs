@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use euclid::default::Size2D;
 use smol_str::{SmolStr, StrExt as _, format_smolstr};
 
-use crate::{ProgramInfo, RuntimeRule, SnapshotLogging, WindowInfo};
+use crate::{ProgramInfo, Rule, SnapshotLogging, WindowInfo};
 
 /// One native side effect accepted from a rendered snapshot.
 ///
@@ -66,15 +66,17 @@ pub trait Backend {
 /// resulting snapshot reflects accepted user operations.
 pub struct Engine<B: Backend> {
     backend: B,
-    rules: Vec<RuntimeRule>,
+    rules: Vec<Rule>,
     groups: Vec<Group<B::Handle>>,
     pending_actions: Vec<WindowAction<B::Handle>>,
     logging: SnapshotLogging<B::Handle>,
 }
 
 impl<B: Backend> Engine<B> {
-    /// Creates an unticked engine that owns the validated rule set and backend.
-    pub fn new(rules: Vec<RuntimeRule>, backend: B) -> Self {
+    /// Creates an unticked engine taking ownership of verified rules and the backend.
+    /// Callers supply rules from [`crate::parse_config`] or verify their config first.
+    /// Borrowed access keeps authored values stable for matching and presentation.
+    pub fn new(rules: Vec<Rule>, backend: B) -> Self {
         Self {
             backend,
             rules,
@@ -85,10 +87,10 @@ impl<B: Backend> Engine<B> {
     }
 
     /// Returns the validated rules in configuration source order.
-    pub fn rules(&self) -> &[RuntimeRule] { &self.rules }
+    pub fn rules(&self) -> &[Rule] { &self.rules }
 
-    /// Resolves a compiled rule through its stable configuration identity.
-    pub fn rule(&self, name: &str) -> Option<&RuntimeRule> {
+    /// Resolves a verified rule through its stable configuration identity.
+    pub fn rule(&self, name: &str) -> Option<&Rule> {
         self.rules.iter().find(|rule| rule.name == name)
     }
 
@@ -173,7 +175,7 @@ pub struct Group<H> {
 /// source order. Incomplete snapshots cannot match because their program and client
 /// geometry are not trustworthy inputs to the configured filters.
 pub fn matching_rule_name<'a, H>(
-    rules: &'a [RuntimeRule],
+    rules: &'a [Rule],
     window: &WindowInfo<H>) -> Option<&'a SmolStr> {
     let mut winner = None;
     for rule in rules {
@@ -188,15 +190,16 @@ pub fn matching_rule_name<'a, H>(
 }
 
 /// Returns whether every configured filter accepts a complete window snapshot.
-pub fn matches_rule<H>(rule: &RuntimeRule, window: &WindowInfo<H>) -> bool {
+/// The rule must come from a verified configuration; incomplete details fail closed.
+pub fn matches_rule<H>(rule: &Rule, window: &WindowInfo<H>) -> bool {
     let Ok(detail) = window.detail.as_ref() else { return false; };
     matches_program(rule, detail.program.as_ref()) && matches_window(rule, window)
 }
 
 /// Selects case-insensitive evaluation for authored executable patterns.
 /// Absent filters do not require converting their candidate fields.
-fn matches_program(rule: &RuntimeRule, program: &ProgramInfo) -> bool {
-    let filters = &rule.program_filters;
+fn matches_program(rule: &Rule, program: &ProgramInfo) -> bool {
+    let filters = &rule.program;
     filters.name.as_ref().is_none_or(|pattern| {
         pattern.matches_ignore_case(&program.name)
     }) && filters.path.as_ref().is_none_or(|pattern| {
@@ -205,9 +208,9 @@ fn matches_program(rule: &RuntimeRule, program: &ProgramInfo) -> bool {
 }
 
 /// Matches title and client-area filters against one complete window snapshot.
-fn matches_window<H>(rule: &RuntimeRule, window: &WindowInfo<H>) -> bool {
+fn matches_window<H>(rule: &Rule, window: &WindowInfo<H>) -> bool {
     let Ok(detail) = window.detail.as_ref() else { return false; };
-    let filters = &rule.window_filters;
+    let filters = &rule.window;
     if !filters.title.as_ref().is_none_or(|pattern| {
         pattern.matches(&window.title)
     }) {
@@ -227,7 +230,7 @@ fn matches_window<H>(rule: &RuntimeRule, window: &WindowInfo<H>) -> bool {
 /// grouping and ordering keys, while each resulting [`Group`] retains the first
 /// window's display-preserving program snapshot.
 pub fn group_windows<H>(
-    rules: &[RuntimeRule],
+    rules: &[Rule],
     windows: Vec<WindowInfo<H>>) -> Vec<Group<H>> {
     let mut matched = BTreeMap::<
         SmolStr,

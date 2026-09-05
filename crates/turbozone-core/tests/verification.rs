@@ -4,7 +4,7 @@ use euclid::default::{Point2D, Rect, Size2D};
 use smol_str::SmolStr;
 use turbozone_core::*;
 
-/// Deserializes fixtures that exercise compilation separately from document parsing.
+/// Deserializes fixtures that exercise semantic verification separately from document parsing.
 fn parse(source: &str) -> Config {
     toml::from_str(source).expect("test configuration must deserialize")
 }
@@ -86,7 +86,7 @@ fn explicit_action_fields_enable_controls() {
     let rule = &rules[0];
 
     assert_eq!(
-        (rule.relocate, rule.resize_selector.is_some()),
+        (rule.relocate, rule.resize.selector().is_some()),
         (true, true)
     );
 }
@@ -105,8 +105,8 @@ fn omitted_action_fields_disable_controls() {
     assert_eq!(
         (
             rule.relocate,
-            rule.resize_exact,
-            rule.resize_selector.as_ref()
+            rule.resize.primary_size(),
+            rule.resize.selector().as_ref()
         ),
         (false, None, None)
     );
@@ -125,8 +125,8 @@ fn exact_resize_disables_selector() {
 
     assert_eq!(
         (
-            rules[0].resize_exact,
-            rules[0].resize_selector.as_ref()
+            rules[0].resize.primary_size(),
+            rules[0].resize.selector().as_ref()
         ),
         (Some(Size2D::new(1440, 900)), None)
     );
@@ -146,7 +146,7 @@ fn selector_default_is_independent_of_selector_bounds() {
 
     assert_eq!(
         rules[0]
-            .resize_selector
+            .resize.selector()
             .as_ref()
             .and_then(|selector| selector.default),
         Some([1440, 900])
@@ -158,7 +158,7 @@ fn selector_default_shorthand_enables_an_unbounded_selector() {
     let rules = validate(&parse("[[rules]]\nname = 'app'\nresize = [1440, 900]")).unwrap();
 
     assert_eq!(
-        rules[0].resize_selector,
+        rules[0].resize.selector(),
         Some(ResizeSelector {
             default: Some([1440, 900]),
             min: None,
@@ -178,7 +178,8 @@ fn empty_trimmed_description_uses_rule_name_fallback() {
     ))
     .expect("empty trimmed description must remain valid");
 
-    assert_eq!(rules[0].description, None);
+    assert_eq!(rules[0].display_name(), "app");
+    assert_eq!(rules[0].description, "   ");
 }
 
 /// Selector bounds apply independently to both axes and include their endpoints.
@@ -194,8 +195,7 @@ fn selector_limits_check_both_axes_and_reject_nonpositive_sizes() {
     ))
     .expect("selector limits must validate");
     let resize = rules[0]
-        .resize_selector
-        .as_ref()
+        .resize.selector()
         .expect("selector must be enabled");
 
     for (size, allowed) in [
@@ -498,7 +498,7 @@ fn explicit_false_disables_all_resize_controls() {
     let rules = validate(&parse("[[rules]]\nname = 'app'\nresize = false")).unwrap();
     let rule = &rules[0];
     assert_eq!(
-        (rule.resize_exact, rule.resize_selector.as_ref()),
+        (rule.resize.primary_size(), rule.resize.selector().as_ref()),
         (None, None)
     );
 }
@@ -507,7 +507,7 @@ fn explicit_false_disables_all_resize_controls() {
 fn empty_selector_is_enabled_and_unbounded() {
     let rules = validate(&parse("[[rules]]\nname = 'app'\nresize = {}")).unwrap();
     assert_eq!(
-        rules[0].resize_selector,
+        rules[0].resize.selector(),
         Some(ResizeSelector::default())
     );
 }
@@ -601,7 +601,7 @@ fn configured_size_arrays_reject_missing_or_invalid_dimensions() {
 
 /// All size fields retain axis order and optionality across a TOML round trip.
 #[test]
-fn config_round_trip_preserves_all_resize_modes_and_generic_filters() {
+fn config_round_trip_preserves_all_resize_modes_and_filters() {
     let config = parse(
         r#"
         [[rules]]
@@ -653,13 +653,13 @@ fn partial_matcher_rejects_a_candidate_missing_any_predicate() {
 }
 
 #[test]
-fn absent_filters_remain_absent_after_compilation() {
+fn absent_filters_remain_absent_after_verification() {
     let rules = validate(&parse("[[rules]]\nname = 'app'")).unwrap();
     let rule = &rules[0];
     assert!(
-        rule.program_filters.name.is_none()
-            && rule.program_filters.path.is_none()
-            && rule.window_filters.title.is_none()
+        rule.program.name.is_none()
+            && rule.program.path.is_none()
+            && rule.window.title.is_none()
     );
 }
 
@@ -756,7 +756,7 @@ fn parser_rejects_oversized_arrays_with_the_complete_configuration() {
 }
 
 /// Exercises semantic validation through the same transactional public parser as startup.
-fn validate(config: &Config) -> Option<Vec<RuntimeRule>> {
+fn validate(config: &Config) -> Option<Vec<Rule>> {
     let source = toml::to_string(&config).expect("typed test config must serialize");
     parse_config(&source).map(|config| config.rules)
 }

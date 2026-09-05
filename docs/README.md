@@ -3,16 +3,15 @@
 ## Configuration contract
 
 TurboZone is rule-driven, without configurable groups or rule inheritance.
-The Rust config types define the accepted structure. A dedicated Cargo test generates the
+The Rust config types define the accepted structure. An explicit generator binary produces the
 canonical schema referenced by configs for [editor completion and validation](Schema.md).
-[config.example.d.ts](config.example.d.ts) illustrates configuration and conceptual runtime
-types; [config.example.toml](config.example.toml) is a validated example.
+[config.example.d.ts](config.example.d.ts) illustrates the shared configuration types; [config.example.toml](config.example.toml) is a validated example.
 
 Each `Rule` contains:
 
 1. A required unique `name`.
-2. An optional display `description`, trimmed while loading; blank uses the rule name.
-3. Generic `program` and `window` filters containing serialized `Pattern` values.
+2. An optional authored `description`; `Rule::display_name()` trims on access and falls back to the name.
+3. `program` and `window` filters containing authored `Pattern` values.
 4. A `priority` that defaults to zero.
 5. A `move` centering permission that defaults to false (`relocate` in Rust).
 6. A `resize` rule that defaults to false.
@@ -29,8 +28,15 @@ matcher forms are rejected. There are no compatibility aliases.
 
 `turbozone-core::parse_config()` deserializes the entire document before semantic validation.
 Invalid TOML, top-level structure, or any individual rule rejects the complete configuration;
-partially compiled rule sets are never exposed. Successful rules retain declaration order.
+partially verified rule sets are never exposed. Successful rules retain declaration order.
 An empty document is a valid configuration with no rules.
+
+`parse_config()` returns the same `Config` model used by Serde and schema generation.
+`verify_config(&Config)` can also check deserialized or manually constructed values. It logs the
+first semantic failure and returns `None`, or `Some(())` after every rule passes. Verification
+changes no authored text, resize variants, or rule order. `Engine::new` takes ownership of
+verified `Vec<Rule>` values and exposes borrowed rules; direct callers must verify first.
+Description trimming is a borrowed query and program lowercase conversion occurs only in matching.
 
 ## Startup and diagnostics
 
@@ -39,8 +45,8 @@ An empty document is a valid configuration with no rules.
 2. Leave existing config bytes untouched, including comments, schema directives, BOM, and line
    endings. Create a missing file exclusively with only the canonical remote `#:schema` comment.
    Parent directories must already exist. Concurrent creation never authorizes overwriting the file.
-3. Parse and compile transactionally via `turbozone-core`, log a configuration error at its
-   failing stage, then launch the UI with source-ordered `RuntimeRule` values owned directly by
+3. Parse and verify transactionally via `turbozone-core`, log a configuration error at its
+   failing stage, then launch the UI with source-ordered `Rule` values owned directly by
    `Engine` only after complete validation.
 
 Unreadable config, creation failure, and invalid documents exit nonzero before the UI opens.
@@ -60,13 +66,16 @@ False or omission disables centering.
 
 `ResizeRule` is an untagged union:
 
-| Configuration | Runtime exact target | Runtime selector | UI |
+| Configuration | Primary size | Selector settings | UI |
 | --- | --- | --- | --- |
 | Omitted or `resize = false` | None | None | No resize controls |
 | `resize = true` or `resize = {}` | None | Unbounded limits | Size selector |
-| `resize = [1440, 900]` | None | That default with unbounded limits | Primary button plus selector |
+| `resize = [1440, 900]` | That default | That default with unbounded limits | Primary button plus selector |
 | `resize.exact = [1440, 900]` | That size | None | Exact resize button only |
-| `resize = { default = [1440, 900], min = [960, 540], max = [3840, 2400] }` | None | Those settings | Primary button plus selector |
+| `resize = { default = [1440, 900], min = [960, 540], max = [3840, 2400] }` | That default | Those settings | Primary button plus selector |
+
+`ResizeRule::primary_size()` and `ResizeRule::selector()` interpret these modes on demand.
+The authored enum remains the source of truth; exact mode cannot coexist with selector mode.
 
 Selector `default`, `min`, and `max` are all optional. Exact and selector fields cannot be
 mixed. All sizes are two-element arrays `[width, height]` of physical-pixel integers from `1`
@@ -76,7 +85,8 @@ are rejected.
 Minimum bounds must not exceed maximum bounds on either axis. Selector bounds filter built-in
 menu choices, not the independently configured primary target. A default or exact target need
 not appear in the built-in manifest. A selector with no surviving choices shows an explanatory
-message.
+message. The group primary button uses the default independently of selector bounds;
+the current per-window view displays a selector default button only when it passes those bounds.
 
 Position and resize permissions are independent. A matched rule with neither action remains an
 intentional actionless group. Native controls require both a successful window-detail query
@@ -99,7 +109,7 @@ directly, without predicate vectors or function pointers. Entirely empty partial
 by validation and fail closed if constructed manually. Absent filters remain `None` and need no
 matching conversion. Matching normalization is independent of platform-backend cache identity.
 
-`Engine` directly owns one source-order `Vec<RuntimeRule>` and exposes it as a borrowed slice.
+`Engine` directly owns one source-order `Vec<Rule>` and exposes it as a borrowed slice.
 For each `WindowInfo` with complete details:
 
 1. Scan all rules in source order.
@@ -107,9 +117,9 @@ For each `WindowInfo` with complete details:
 3. Replace the winner only when a matching rule has strictly greater priority.
 4. Equal priority therefore favors the first rule.
 
-`matching_rule_name(rules, window)` returns the winning name and `find_rule(rules, name)` resolves
-it. These engine-owned free functions preserve source-order UI groups without allowing array
-positions to escape as identity. No additional priority index is needed for the expected
+`matching_rule_name(rules, window)` returns the winning name and `Engine::rule(name)` resolves
+it. Name-based lookup preserves source-order UI groups without allowing array positions to escape
+as identity. No additional priority index is needed for the expected
 rule/window counts.
 
 ## Window geometry and snapshots
@@ -254,8 +264,8 @@ cover the filename fallback when version metadata is unavailable. Core integrati
 generic cache's lazy insertion, key identity, hit refresh, and eviction boundary. Windows-specific
 program-cache identity and its 600-tick retention policy do not yet have direct instrumentation.
 
-The schema generator is an explicit core integration-test target, and the TOML example is parsed
-and compiled by a core regression test. Core fake-backend tests verify
+The schema generator is an explicit core binary, and the TOML example is parsed
+and verified by a core regression test. Core fake-backend tests verify
 queue ordering, failure isolation, refresh behavior, name-based identity, grouping, and logging
 deduplication. Schema-only tests stay in the core integration suite. Verification uses release-mode
 workspace tests and Clippy with warnings denied. Formatting is manual; no formatter is run.

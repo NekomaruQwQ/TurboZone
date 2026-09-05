@@ -1,22 +1,25 @@
 use eframe::egui::{Context, RawInput, Shape};
 use smol_str::{SmolStr, format_smolstr};
-use turbozone_core::{group_windows, parse_config};
+use turbozone_core::{Engine, parse_config};
 use turbozone_ui::app::{App, TURBOZONE_WINDOW_SIZE};
 
 #[path = "support/window.rs"]
 mod fixture;
 use fixture::{TestBackend, window};
 
-/// Runs the public pure view boundary; no renderer or native backend consumes its output.
+/// Exercises verified rules through the real engine and public headless view boundary.
+/// The fixture backend supplies owned windows; rendering only records proposed actions.
 fn rendered_text(source: &str) -> Vec<SmolStr> {
     let rules = parse_config(source).unwrap().rules;
-    let groups = group_windows(&rules, vec![window("C:/Apps/App.exe", "Application")]);
-    let mut actions = None;
+    let backend = TestBackend { windows: vec![window("C:/Apps/App.exe", "Application")] };
+    let mut engine = Engine::new(rules, backend);
+    engine.tick();
+    let mut actions = Vec::new();
     let mut output = Context::default().run_ui(RawInput::default(), |ui| {
-        actions = Some(App::<TestBackend>::app_ui(ui, &groups, &rules));
+        App::<TestBackend>::app_ui(ui, &mut engine, &mut |action| actions.push(action));
     });
     assert!(
-        actions.unwrap().is_empty(),
+        actions.is_empty(),
         "rendering without interaction must not queue native actions");
     // No renderer consumes texture uploads in this integration test.
     output.textures_delta.clear();
@@ -43,45 +46,49 @@ fn actionless_groups_keep_only_the_flat_program_and_window_hierarchy() {
     let text = rendered_text("[[rules]]\nname = 'app'\ndescription = ' My Application '");
     for expected in [
         "App Description",
-        "My Application",
+        "app",
         "C:/Apps/App.exe",
         "\u{1f5d6}",
         "Application",
-        "\u{26ab} 640x480",
+        "MOVE DISABLED",
+        "RESIZE DISABLED",
     ] {
         assert!(text.iter().any(|text| text == expected), "missing {expected}: {text:?}");
     }
-    for removed in ["TurboZone", "READ ONLY", "PID 42", "App.exe"] {
+    for removed in ["TurboZone", "READ ONLY", "PID 42", "App.exe", "My Application"] {
         assert!(!text.iter().any(|text| text == removed), "unexpected {removed}: {text:?}");
     }
-    assert!(!text.iter().any(|text| text.contains("RESIZE") || text.contains("CENTER")));
+    assert!(!text.iter().any(|text| text == "RESIZE" || text.contains("CENTER")));
 }
 
 #[test]
-fn resize_modes_map_to_the_m0_primary_and_selector_controls() {
+fn resize_modes_preserve_primary_and_selector_controls() {
     for (resize, group_primary, selector, window_primary) in [
         ("resize = false", None, false, false),
         ("resize = true", None, true, false),
-        ("resize = [1280, 720]", Some("RESIZE ALL 1280x720"), true, true),
-        ("resize.exact = [1280, 720]", Some("RESIZE ALL 1280x720"), false, true),
-        ("resize.default = [1280, 720]", Some("RESIZE ALL 1280x720"), true, true),
+        ("resize = {}", None, true, false),
+        ("resize = [1280, 720]", Some("RESIZE TO 1280x720"), true, true),
+        ("resize.exact = [1280, 720]", Some("RESIZE TO 1280x720"), false, true),
+        ("resize.default = [1280, 720]", Some("RESIZE TO 1280x720"), true, true),
+        ("resize = { default = [1280, 720], max = [960, 540] }",
+            Some("RESIZE TO 1280x720"), true, false),
     ] {
         let source = format_smolstr!("[[rules]]\nname = 'app'\nmove = true\n{resize}");
         let text = rendered_text(&source);
-        assert!(text.iter().any(|text| text == "CENTER ALL"), "{resize}: {text:?}");
         assert!(text.iter().any(|text| text == "CENTER"), "{resize}: {text:?}");
+        assert!(text.iter().any(|text| text.ends_with(" CENTER")), "{resize}: {text:?}");
         assert_eq!(
-            text.iter().any(|text| text == "Resize All"),
+            text.iter().any(|text| text == "RESIZE"),
             selector,
             "{resize}: {text:?}");
         assert_eq!(
-            text.iter().any(|text| text == "RESIZE"),
+            text.iter().any(|text| text == "1280x720"),
             window_primary,
             "{resize}: {text:?}");
         assert_eq!(
-            text.iter().find(|text| text.starts_with("RESIZE ALL")).map(SmolStr::as_str),
+            text.iter().find(|text| text.starts_with("RESIZE TO")).map(SmolStr::as_str),
             group_primary,
             "{resize}: {text:?}");
-        assert!(text.iter().any(|text| text == "\u{26ab} 640x480"), "{resize}: {text:?}");
+        assert_eq!(text.iter().any(|text| text == "SELECT"), selector, "{resize}: {text:?}");
     }
 }

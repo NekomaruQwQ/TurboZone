@@ -21,7 +21,7 @@ Startup never generates or updates schemas. Maintainers regenerate the checked-i
 explicitly from the repository root:
 
 ```sh
-cargo test --release -p turbozone-core --test generate_schema
+cargo run --release -p turbozone-core --bin generate_schema --locked
 ```
 
 ## Use in an editor
@@ -66,23 +66,23 @@ Optional Rust fields can include JSON `null` in the schema; TOML has no null, so
 
 `turbozone-core::parse_config()` deserializes the complete document before semantic validation.
 Invalid TOML, invalid top-level structure, or any invalid rule rejects the complete configuration;
-partially compiled rules are never exposed. Valid rules keep their relative order, and empty config
+partially verified rules are never exposed. Valid rules keep their relative order, and empty config
 is valid.
 
-The compiler checks rule-name grammar, duplicates, nonempty partial patterns, forward slashes
+The verifier checks rule-name grammar, duplicates, nonempty partial patterns, forward slashes
 in program paths, dimensions from `1` through `16,384`, and `min <= max`. It performs no I/O;
-each failure is logged at error level without TOML source excerpts before parsing returns no runtime
-configuration. Editor checks do not replace runtime validation.
+each failure is logged at error level without TOML source excerpts before parsing returns `None`. Successful parsing returns authored `Config`
+values, and `verify_config(&Config)` exposes the same non-mutating semantic checks. Editor checks do not replace runtime validation.
 
 ## Verify
 
 ```sh
-cargo test --release -p turbozone-core --test generate_schema
+cargo run --release -p turbozone-core --bin generate_schema --locked
 cargo test --release --workspace --all-features --locked
 cargo clippy --release --workspace --all-targets --all-features --locked -- -D warnings
 ```
 
-The dedicated generator test rewrites `data/config.schema.json`; the remaining tests compare schema
+The explicit generator binary rewrites `data/config.schema.json`; the remaining tests compare schema
 semantics with serialization and runtime behavior and verify that startup leaves existing config
 and sibling files untouched. Schemars updates can alter the generated output, so review schema
 behavior when updating the lockfile.

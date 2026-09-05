@@ -3,14 +3,17 @@ use std::rc::Rc;
 use euclid::default::{Point2D, Rect, Size2D};
 use turbozone_core::{ProgramInfo, WindowAction, WindowDetail, WindowInfo, WindowState};
 
+/// Supplies a one-shot owned snapshot so headless rendering uses the real engine boundary.
 #[derive(Default)]
-pub struct TestBackend;
+pub struct TestBackend {
+    pub windows: Vec<WindowInfo<u64>>,
+}
 
 impl turbozone_core::Backend for TestBackend {
     type Handle = u64;
 
     fn snapshot(&mut self) -> anyhow::Result<Vec<WindowInfo<Self::Handle>>> {
-        Ok(Vec::new())
+        Ok(std::mem::take(&mut self.windows))
     }
 
     fn perform(&mut self, _: WindowAction<Self::Handle>) -> anyhow::Result<()> {

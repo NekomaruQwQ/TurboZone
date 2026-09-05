@@ -1,14 +1,13 @@
-//! TOML parsing and validated rule compilation for platform-independent configuration.
+//! TOML parsing and non-mutating verification for platform-independent configuration.
 //!
-//! This module owns the transition from serialized [`Config`] values to compiled
-//! [`RuntimeRule`] values.
+//! This module owns structural and semantic acceptance of authored [`Config`] values.
+//! Matching and presentation interpret verified rules directly without a compiled model.
 //! Deserialization and semantic validation are transactional: any error rejects the
 //! complete configuration and is logged here before control returns to the caller.
 //! Filesystem access remains a caller concern.
 
 use std::collections::BTreeSet;
 
-use euclid::default::Size2D;
 use smol_str::*;
 
 use crate::*;
@@ -17,11 +16,11 @@ use crate::*;
 ///
 /// The whole serialized [`Config`] is deserialized before semantic validation begins.
 /// Any error is logged and returns `None`; valid rules are never exposed beside invalid
-/// siblings. Empty documents remain valid configurations with no runtime rules.
-pub fn parse_config(source: &str) -> Option<RuntimeConfig> {
+/// siblings. Empty documents remain valid configurations with no rules.
+pub fn parse_config(source: &str) -> Option<Config> {
     // The streaming TOML deserializer does not reject trailing elements in fixed-size
     // arrays. Converting one complete value tree preserves the exact `[width, height]`
-    // contract without recovering or compiling rules independently.
+    // contract without recovering or verifying rules independently.
     let config = toml::from_str::<toml::Value>(source)
         .and_then(toml::Value::try_into)
         .map_err(|mut error: toml::de::Error| {
@@ -32,21 +31,26 @@ pub fn parse_config(source: &str) -> Option<RuntimeConfig> {
             log::error!("failed to deserialize configuration: {error}");
         })
         .ok()?;
-    compile_config(config)
+    verify_config(&config)?;
+    Some(config)
 }
 
-/// Compiles every rule as one transaction, preserving source order on success.
-fn compile_config(config: Config) -> Option<RuntimeConfig> {
+/// Verifies all rules without modifying authored text, resize forms, or source order.
+///
+/// Returns `Some(())` only when every rule is usable. The first failure is logged
+/// with its field context and returns `None`; callers must reject the whole config.
+/// Deserialized or manually constructed configurations use the same semantic checks.
+/// Matching, normalization for comparisons, and filesystem access belong elsewhere.
+pub fn verify_config(config: &Config) -> Option<()> {
     let mut names = BTreeSet::new();
-    let mut rules = Vec::with_capacity(config.rules.len());
-    for (index, rule) in config.rules.into_iter().enumerate() {
-        if !names.insert(rule.name.clone()) {
+    for (index, rule) in config.rules.iter().enumerate() {
+        if !names.insert(rule.name.as_str()) {
             log::error!("duplicate rule name '{}'", rule.name);
             return None;
         }
-        rules.push(compile_rule(index, rule)?);
+        verify_rule(index, rule)?;
     }
-    Some(RuntimeConfig { rules })
+    Some(())
 }
 
 /// Returns whether a name is a lowercase sequence of TOML-style dotted bare keys.
@@ -63,8 +67,8 @@ pub fn is_valid_rule_name(name: &str) -> bool {
         })
 }
 
-/// Resolves defaults and compiles one rule without exposing partially validated state.
-fn compile_rule(index: usize, rule: Rule) -> Option<RuntimeRule> {
+/// Checks rule identity before its action and filter constraints, preserving diagnostics.
+fn verify_rule(index: usize, rule: &Rule) -> Option<()> {
     if !is_valid_rule_name(&rule.name) {
         log::error!(
             "rules[{index}].name '{}' must match [a-z0-9_-]+(?:\\.[a-z0-9_-]+)*",
@@ -72,59 +76,33 @@ fn compile_rule(index: usize, rule: Rule) -> Option<RuntimeRule> {
         return None;
     }
     let prefix = format_smolstr!("rules[{index}]");
-    let description = rule.description.trim();
-    let description = (!description.is_empty()).then(|| SmolStr::new(description));
-    let (resize_exact, resize_selector) = compile_resize(rule.resize, &prefix)?;
+    validate_resize(&rule.resize, &prefix)?;
     validate_program_match(&rule.program, &prefix)?;
-    validate_window_match(&rule.window, &prefix)?;
-
-    Some(RuntimeRule {
-        name: rule.name,
-        description,
-        relocate: rule.relocate,
-        resize_exact,
-        resize_selector,
-        program_filters: rule.program,
-        window_filters: rule.window,
-        priority: rule.priority,
-    })
+    validate_window_match(&rule.window, &prefix)
 }
 
-/// Compiles serialized resize forms into mutually exclusive exact and selector actions.
-/// Array shorthand remains a selector so it keeps an unbounded size menu.
-fn compile_resize(
-    resize: ResizeRule,
-    prefix: &str,
-) -> Option<(Option<Size2D<i32>>, Option<ResizeSelector>)> {
-    match resize {
-        ResizeRule::Boolean(false) => Some((None, None)),
-        ResizeRule::Boolean(true) => Some((None, Some(ResizeSelector::default()))),
+/// Checks every configured resize dimension while preserving its serialized variant.
+/// Primary targets are independent of selector bounds, which constrain menu choices.
+fn validate_resize(resize: &ResizeRule, prefix: &str) -> Option<()> {
+    match *resize {
+        ResizeRule::Boolean(_) => Some(()),
         ResizeRule::Exact { exact } => {
-            validate_size(exact, &format_smolstr!("{prefix}.resize.exact"))?;
-            Some((Some(Size2D::from(exact)), None))
+            validate_size(exact, &format_smolstr!("{prefix}.resize.exact"))
         }
         ResizeRule::SelectorDefault(default) => {
-            validate_size(default, &format_smolstr!("{prefix}.resize"))?;
-            Some((
-                None,
-                Some(ResizeSelector {
-                    default: Some(default),
-                    ..Default::default()
-                }),
-            ))
+            validate_size(default, &format_smolstr!("{prefix}.resize"))
         }
-        ResizeRule::Selector(selector) => {
+        ResizeRule::Selector(ref selector) => {
             if let Some(size) = selector.default {
                 validate_size(size, &format_smolstr!("{prefix}.resize.default"))?;
             }
-            validate_size_bounds(selector.min, selector.max, &format_smolstr!("{prefix}.resize"))?;
-            Some((None, Some(selector)))
+            validate_size_bounds(selector.min, selector.max, &format_smolstr!("{prefix}.resize"))
         }
     }
 }
 
 /// Checks executable patterns without changing authored case or path separators.
-fn validate_program_match(matcher: &ProgramFilter<Pattern>, prefix: &str) -> Option<()> {
+fn validate_program_match(matcher: &ProgramFilter, prefix: &str) -> Option<()> {
     if let Some(ref pattern) = matcher.name {
         validate_pattern(
             pattern,
@@ -141,7 +119,7 @@ fn validate_program_match(matcher: &ProgramFilter<Pattern>, prefix: &str) -> Opt
 }
 
 /// Checks title patterns and inclusive size bounds without interpreting case policy.
-fn validate_window_match(matcher: &WindowFilter<Pattern>, prefix: &str) -> Option<()> {
+fn validate_window_match(matcher: &WindowFilter, prefix: &str) -> Option<()> {
     if let Some(ref pattern) = matcher.title {
         validate_pattern(
             pattern,
@@ -201,8 +179,7 @@ fn validate_size([width, height]: [i32; 2], field: &str) -> Option<()> {
 fn validate_size_bounds(
     min: Option<[i32; 2]>,
     max: Option<[i32; 2]>,
-    prefix: &str,
-) -> Option<()> {
+    prefix: &str) -> Option<()> {
     if let Some(size) = min {
         validate_size(size, &format_smolstr!("{prefix}.min"))?;
     }

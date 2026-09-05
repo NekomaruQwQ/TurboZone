@@ -19,7 +19,10 @@ fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     value == &T::default()
 }
 
-/// The serialized top-level configuration for TurboZone.
+/// The shared serialized and engine-owned configuration for TurboZone.
+///
+/// Deserialization supplies structure and defaults. Call [`crate::verify_config`]
+/// before engine use; verification preserves these authored values unchanged.
 #[derive(Debug, Clone)]
 #[derive(Default)]
 #[derive(JsonSchema)]
@@ -31,17 +34,10 @@ pub struct Config {
     pub rules: Vec<Rule>,
 }
 
-/// A completely validated configuration ready for matching and UI rendering.
+/// One rule pairing authored window filters with the actions they enable.
 ///
-/// The parser constructs this boundary only after every serialized rule succeeds,
-/// preventing callers from observing a partially usable configuration.
-#[derive(Debug, Clone)]
-pub struct RuntimeConfig {
-    /// Rules in source order.
-    pub rules: Vec<RuntimeRule>,
-}
-
-/// One serialized rule pairing window filters with the actions they enable.
+/// The engine owns verified rules and interprets patterns on demand; presentation
+/// queries display and resize helpers without maintaining another rule model.
 #[derive(Debug, Clone)]
 #[derive(Default)]
 #[derive(JsonSchema)]
@@ -52,8 +48,7 @@ pub struct Rule {
     /// Unique stable identifier retained in the same compact representation
     /// at runtime.
     pub name: SmolStr,
-    /// Compact user-facing section name, falling back to the rule name when
-    /// empty.
+    /// Authored description; [`Self::display_name`] trims and resolves blank labels on access.
     #[serde(default, skip_serializing_if = "is_default")]
     pub description: SmolStr,
 
@@ -63,10 +58,10 @@ pub struct Rule {
     pub priority: i64,
     /// Program filters.
     #[serde(default, skip_serializing_if = "is_default")]
-    pub program: ProgramFilter<Pattern>,
+    pub program: ProgramFilter,
     /// Window filters.
     #[serde(default, skip_serializing_if = "is_default")]
-    pub window: WindowFilter<Pattern>,
+    pub window: WindowFilter,
 
     // ---- Actions ----
     /// Relocation controls, currently only the "center" button.
@@ -78,33 +73,13 @@ pub struct Rule {
     pub resize: ResizeRule,
 }
 
-/// A validated rule ready for matching and UI rendering.
-///
-/// This counterpart to [`Rule`] resolves display and resize settings while
-/// retaining authored patterns. The engine selects each field's case policy.
-#[derive(Debug, Clone)]
-pub struct RuntimeRule {
-    // --- Metadata ----
-    /// Stable unique rule identifier.
-    pub name: SmolStr,
-    /// Trimmed user-facing section name, when nonempty.
-    pub description: Option<SmolStr>,
-
-    // --- Filters ----
-    /// Authored patterns applied case-insensitively to program metadata.
-    pub program_filters: ProgramFilter<Pattern>,
-    /// Authored title pattern and client-size bounds.
-    pub window_filters: WindowFilter<Pattern>,
-    /// Explicit or default matching priority.
-    pub priority: i64,
-
-    // ---- Actions ----
-    /// Whether centering controls are available.
-    pub relocate: bool,
-    /// Optional exact target size, disabling the selector when present.
-    pub resize_exact: Option<Size2D<i32>>,
-    /// Selector settings, or none when resizing is disabled or exact-only.
-    pub resize_selector: Option<ResizeSelector>,
+impl Rule {
+    /// Borrows the trimmed display label, falling back to the stable rule name.
+    /// Authored description text remains intact for inspection and serialization.
+    pub fn display_name(&self) -> &str {
+        let description = self.description.trim();
+        if description.is_empty() { &self.name } else { description }
+    }
 }
 
 /// Complete serialized resize behavior.
@@ -135,6 +110,34 @@ pub enum ResizeRule {
     /// Selector properties, including optional default, minimum, and
     /// maximum sizes.
     Selector(ResizeSelector),
+}
+
+impl ResizeRule {
+    /// Returns the exact target or selector default, independently of menu bounds.
+    /// Configuration verification checks dimensions; this query only interprets mode.
+    pub fn primary_size(&self) -> Option<Size2D<i32>> {
+        match *self {
+            Self::Boolean(_) => None,
+            Self::Exact { exact } => Some(exact.into()),
+            Self::SelectorDefault(default) => Some(default.into()),
+            Self::Selector(ref selector) => selector.default.map(Size2D::from),
+        }
+    }
+
+    /// Returns selector settings for enabled selector modes, synthesizing shorthand.
+    /// The result contains only small optional size arrays; no heap storage or cached
+    /// runtime representation is needed. Exact and disabled modes have no selector.
+    pub fn selector(&self) -> Option<ResizeSelector> {
+        match *self {
+            Self::Boolean(false) | Self::Exact { .. } => None,
+            Self::Boolean(true) => Some(ResizeSelector::default()),
+            Self::SelectorDefault(default) => Some(ResizeSelector {
+                default: Some(default),
+                ..Default::default()
+            }),
+            Self::Selector(ref selector) => Some(selector.clone()),
+        }
+    }
 }
 
 /// Selector defaults and inclusive bounds; omitted bounds are unrestricted.
@@ -181,39 +184,32 @@ impl ResizeSelector {
 
 /// Program filters retaining authored patterns for runtime evaluation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Educe)]
+#[derive(Default)]
 #[derive(JsonSchema)]
 #[derive(Deserialize, Serialize)]
-#[educe(Default)]
 #[serde(deny_unknown_fields)]
-pub struct ProgramFilter<S> {
+pub struct ProgramFilter {
     /// Optional case-insensitive filename matcher.
-    #[educe(Default = None)]
-    pub name: Option<S>,
+    pub name: Option<Pattern>,
     /// Optional case-insensitive path matcher.
-    #[educe(Default = None)]
-    pub path: Option<S>,
+    pub path: Option<Pattern>,
 }
 
 /// Window filters retaining authored patterns for runtime evaluation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Educe)]
+#[derive(Default)]
 #[derive(JsonSchema)]
 #[derive(Deserialize, Serialize)]
-#[educe(Default)]
 #[serde(deny_unknown_fields)]
-pub struct WindowFilter<S> {
+pub struct WindowFilter {
     /// Optional case-sensitive window-title matcher.
-    #[educe(Default = None)]
-    pub title: Option<S>,
+    pub title: Option<Pattern>,
     /// Inclusive minimum client-area `[width, height]` in supported
     /// physical pixels.
-    #[educe(Default = None)]
     #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
     pub min: Option<[i32; 2]>,
     /// Inclusive maximum client-area `[width, height]` in supported
     /// physical pixels.
-    #[educe(Default = None)]
     #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
     pub max: Option<[i32; 2]>,
 }
