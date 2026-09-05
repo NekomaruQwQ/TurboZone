@@ -4,7 +4,8 @@
 //! Matching and presentation interpret verified rules directly without a compiled model.
 //! Deserialization and semantic validation are transactional: any error rejects the
 //! complete configuration and is logged here before control returns to the caller.
-//! Filesystem access remains a caller concern.
+//! A well-formed default outside resize bounds only warns; runtime queries suppress
+//! that target without modifying the authored config. Filesystem access remains a caller concern.
 
 use std::collections::BTreeSet;
 
@@ -40,6 +41,7 @@ pub fn parse_config(source: &str) -> Option<Config> {
 /// Returns `Some(())` only when every rule is usable. The first failure is logged
 /// with its field context and returns `None`; callers must reject the whole config.
 /// Deserialized or manually constructed configurations use the same semantic checks.
+/// Out-of-bounds defaults warn once per affected rule per verification and remain authored.
 /// Matching, normalization for comparisons, and filesystem access belong elsewhere.
 pub fn verify_config(config: &Config) -> Option<()> {
     let mut names = BTreeSet::new();
@@ -76,14 +78,15 @@ fn verify_rule(index: usize, rule: &Rule) -> Option<()> {
         return None;
     }
     let prefix = format_smolstr!("rules[{index}]");
-    validate_resize(&rule.resize, &prefix)?;
+    validate_resize(&rule.resize, &prefix, &rule.name)?;
     validate_program_match(&rule.program, &prefix)?;
     validate_window_match(&rule.window, &prefix)
 }
 
 /// Checks every configured resize dimension while preserving its serialized variant.
-/// Primary targets are independent of selector bounds, which constrain menu choices.
-fn validate_resize(resize: &ResizeRule, prefix: &str) -> Option<()> {
+/// Invalid dimensions or inverted bounds reject the config. A well-formed default outside
+/// those bounds is recoverable: warn here and let the primary-size query suppress it.
+fn validate_resize(resize: &ResizeRule, prefix: &str, rule_name: &str) -> Option<()> {
     match *resize {
         ResizeRule::Boolean(_) => Some(()),
         ResizeRule::Exact { exact } => {
@@ -96,7 +99,15 @@ fn validate_resize(resize: &ResizeRule, prefix: &str) -> Option<()> {
             if let Some(size) = selector.default {
                 validate_size(size, &format_smolstr!("{prefix}.resize.default"))?;
             }
-            validate_size_bounds(selector.min, selector.max, &format_smolstr!("{prefix}.resize"))
+            validate_size_bounds(selector.min, selector.max, &format_smolstr!("{prefix}.resize"))?;
+            if let Some(size) = selector.default && !selector.allows_size(size.into()) {
+                log::warn!(
+                    "{prefix}.resize.default {size:?} for rule '{rule_name}' is outside resize bounds \
+                     (min: {:?}, max: {:?}); ignoring default",
+                    selector.min,
+                    selector.max);
+            }
+            Some(())
         }
     }
 }

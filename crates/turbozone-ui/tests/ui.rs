@@ -131,6 +131,8 @@ fn resize_modes_preserve_primary_and_selector_controls() {
         ("resize.default = [1280, 720]", true, true),
         ("resize = { default = [1280, 720], max = [960, 540] }",
             false, true),
+        ("resize = { default = [1280, 720], min = [1281, 720] }",
+            false, true),
     ] {
         let source = format_smolstr!("[[rules]]\nname = 'app'\nmove = true\n{resize}");
         let text = rendered_text(&source);
@@ -197,7 +199,8 @@ fn one_satisfied_window_does_not_disable_actions_for_the_group() {
 
 #[test]
 fn selectors_keep_bounds_and_emit_group_or_individual_actions() {
-    let source = "[[rules]]\nname = 'app'\nresize = { min = [960, 540], max = [960, 600] }";
+    let source = "[[rules]]\nname = 'app'\n\
+        resize = { default = [1280, 720], min = [960, 540], max = [960, 600] }";
     let action = WindowAction::Resize(Size2D::new(960, 540));
     for (occurrence, targets) in [(0, vec![(1, action), (2, action)]), (2, vec![(2, action)])] {
         let mut view = View::new(source, grouped_windows());

@@ -124,7 +124,7 @@
       "type": "object",
       "properties": {
         "default": {
-          "description": "Primary `[width, height]` in physical pixels, independent of selector\nbounds.",
+          "description": "Primary `[width, height]` in physical pixels. A default outside the inclusive\nbounds is preserved in the configuration but warns during verification and\nis not offered as a resize target.",
           "type": [
             "array",
             "null"
@@ -139,7 +139,7 @@
           "minItems": 2
         },
         "max": {
-          "description": "Maximum `[width, height]` offered by the selector, in physical pixels.",
+          "description": "Maximum `[width, height]` for the default and menu choices, in physical pixels.",
           "type": [
             "array",
             "null"
@@ -154,7 +154,7 @@
           "minItems": 2
         },
         "min": {
-          "description": "Minimum `[width, height]` offered by the selector, in physical pixels.",
+          "description": "Minimum `[width, height]` for the default and menu choices, in physical pixels.",
           "type": [
             "array",
             "null"

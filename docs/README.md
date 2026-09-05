@@ -40,8 +40,9 @@ Description trimming is a borrowed query and program lowercase conversion occurs
 
 ## Startup and diagnostics
 
-1. Require `--config <FILE>` or `TURBOZONE_CONFIG`; the CLI takes precedence. Empty values are
-   rejected. Relative paths resolve against the executable's directory; there is no implicit fallback.
+1. Select `NekomaruQwQ/TurboZone/config.toml` under the Windows local application-data known
+   folder. The executable has no config CLI or environment override. The loader requires an
+   absolute file path and rejects empty or relative paths before filesystem access.
 2. Leave existing config bytes untouched, including comments, schema directives, BOM, and line
    endings. Create a missing file exclusively with only the canonical remote `#:schema` comment.
    Parent directories must already exist. Concurrent creation never authorizes overwriting the file.
@@ -82,11 +83,13 @@ mixed. All sizes are two-element arrays `[width, height]` of physical-pixel inte
 through `16,384`; incomplete pairs, extra components, fractional dimensions, and larger values
 are rejected.
 
-Minimum bounds must not exceed maximum bounds on either axis. Selector bounds filter built-in
-menu choices, not the independently configured primary target. A default or exact target need
-not appear in the built-in manifest. A selector with no surviving choices shows an explanatory
-message. The group primary button uses the default independently of selector bounds;
-the current per-window view displays a selector default button only when it passes those bounds.
+Minimum bounds must not exceed maximum bounds on either axis. Resize bounds constrain both
+the default target and built-in menu choices, inclusively. A well-formed default outside either
+bound logs a warning during verification and is unavailable to both group and per-window primary
+buttons. The configuration remains usable, its authored default stays intact, and bounded selector
+choices remain available. Runtime queries do not repeat the warning. Invalid dimensions and
+inverted bounds still reject the complete configuration. A default or exact target need not appear
+in the built-in manifest. A selector with no surviving choices shows an explanatory message.
 
 Position and resize permissions are independent. A matched rule with neither action remains an
 intentional actionless group. Native controls require both a successful window-detail query
@@ -173,7 +176,7 @@ details alive independently through `Rc`. Native actions query current geometry 
 ## Size filters
 
 `window.min` and `window.max` filter rule eligibility using `content_rect.size`.
-They are independent of `resize.min` and `resize.max`, which filter selector choices.
+They are independent of `resize.min` and `resize.max`, which constrain resize defaults and selector choices.
 
 Bounds are inclusive on both axes, limited to `1` through `16,384` when present, and otherwise
 unrestricted. Normal windows use live client size; minimized/maximized windows use restored
@@ -224,9 +227,9 @@ and normal/maximized/minimized state; restored actions update placement rather t
 the window. Oversized targets that cannot fit native dimensions return errors.
 
 Individual actions capture one handle from the rendered snapshot. Group controls append one
-action per eligible handle. Core's non-exhaustive `WindowAction<H>` currently contains
-`Resize(H, size)` and `MoveToCenter(H)`. The generic engine drains actions in order by calling
-`Backend::perform(action)`, then refreshes through `Backend::snapshot()`. The backend owns variant
+action per eligible handle. Core's non-exhaustive `WindowAction` currently contains
+`Resize(size)` and `Center`. The engine queues `(handle, action)` pairs and drains them in order
+by calling `Backend::perform(handle, action)`, then refreshes through `Backend::snapshot()`. The backend owns variant
 dispatch and deliberately panics on a future unsupported variant rather than silently doing nothing.
 
 The eframe app records the last completed logic tick and calls the engine immediately at startup,
@@ -248,16 +251,18 @@ failures are always logged and do not abort actions for the remaining targets.
    and startup config filesystem operations. It has no dependency on the Windows crate.
 3. `turbozone-windows/src/`: native handles, snapshot adaptation and caching, geometry queries, and
    the concrete Windows `Backend`. It has no dependency on the UI or executable crate.
-4. `turbozone/src/`: the Windows composition root, CLI, logger initialization, UI/backend assembly,
+4. `turbozone/src/`: the Windows composition root, config-path selection, logger initialization, UI/backend assembly,
    and the `turbozone.exe` entry point.
 
 ## Verification
 
 Integration tests cover schema/serialization, transactional config rejection, all resize modes,
 selector bounds, exact and partial matching, case sensitivity, priority ties, size filters,
-CLI/environment precedence, config preservation/creation, stderr output, error recurrence, grouping,
-headless UI rendering, and the public Windows snapshot, action, error, and restored-geometry
-contracts. Binary startup tests live with the `turbozone` composition root. Windows tests mutate
+absolute-path validation, config preservation/creation, stderr output, error recurrence, grouping,
+headless UI rendering and clicks, and the public Windows snapshot, action, error, and restored-geometry
+contracts. Startup loader tests live with the `turbozone` composition root and use fixture-owned paths;
+diagnostic subprocesses execute only a test probe. The production executable's known-folder
+selection and GUI launch are not automated. Windows tests mutate
 only fixture-owned windows. The monitor and process-path caches remain private implementation details; their
 snapshot-local ownership is documented rather than instrumented directly. Public snapshot tests
 cover the filename fallback when version metadata is unavailable. Core integration tests cover the

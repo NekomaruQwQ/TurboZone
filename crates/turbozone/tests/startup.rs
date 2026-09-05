@@ -25,7 +25,7 @@ fn command(path: &Path) -> Command {
     command
 }
 
-/// Captures UTF-8 diagnostics separately from normal CLI output.
+/// Captures UTF-8 diagnostics separately from the test harness output.
 fn stderr(output: &Output) -> SmolStr {
     SmolStr::new(std::str::from_utf8(&output.stderr).unwrap())
 }
@@ -120,4 +120,18 @@ fn configured_stderr_reports_panic_chains_without_source_excerpts() {
     assert!(diagnostics.contains("failed to parse configuration"));
     assert!(!diagnostics.contains("failed to deserialize configuration"));
     assert!(!diagnostics.contains("PRIVATE_SOURCE_SENTINEL"));
+}
+
+#[test]
+fn out_of_bounds_default_warns_without_failing_startup_loading() {
+    let directory = TempDir::new();
+    let path = directory.path().join("private.toml");
+    let source = "[[rules]]\nname = 'app'\nresize = { default = [1280, 720], max = [960, 540] }";
+    fs::write(&path, source).unwrap();
+    for (filter, visible) in [("warn", true), ("off", false)] {
+        let output = command(&path).env("RUST_LOG", filter).output().unwrap();
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(stderr(&output).contains("ignoring default"), visible);
+        assert_eq!(fs::read_to_string(&path).unwrap(), source);
+    }
 }

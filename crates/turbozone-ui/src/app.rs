@@ -280,8 +280,8 @@ impl<B: Backend> App<B> {
 
         ui.label("|");
 
-        // Exact mode is exclusive in the authored enum. Selector defaults retain
-        // this view's bounds gate; the group primary target is independent of it.
+        // Core owns primary-target eligibility, so group and individual controls both
+        // suppress out-of-bounds defaults while retaining the bounded size selector.
         if let ResizeRule::Exact { exact } = rule.resize {
             ui.weak("SIZE");
 
@@ -300,10 +300,7 @@ impl<B: Backend> App<B> {
         } else if let Some(selector) = rule.resize.selector() {
             ui.weak("SIZE");
 
-            if let Some(target_size) = selector.default &&
-                selector.allows_size(target_size.into()) {
-
-                let target_size = Size2D::from(target_size);
+            if let Some(target_size) = rule.resize.primary_size() {
                 let icon = if resized { CHAR_CHECK } else { CHAR_EMPTY };
                 ui.add_enabled_ui(!resized, |ui| {
                     Button::new(format!("{icon} {}x{}", target_size.width, target_size.height))

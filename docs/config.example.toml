@@ -9,7 +9,7 @@ name = "vscode.main"
 description = "  VS Code (Main Projects)  " # trimmed while loading
 
 move = true
-# Selector mode: a primary target plus independently bounded menu choices.
+# Selector mode: a primary target and menu choices within the same inclusive bounds.
 # `resize = [1440, 900]` is shorthand for a default with an otherwise unbounded selector.
 resize.default = [1440, 900]
 resize.min = [960, 540]

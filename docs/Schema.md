@@ -4,18 +4,18 @@
 comments. These supply field names, optionality, alternatives, and hover text. The TypeScript
 declarations in this directory are illustrative, not generator input.
 
-## Explicit config source
+## Config source
 
-Pass a file explicitly, or set `TURBOZONE_CONFIG`. The CLI wins when both are supplied:
+The executable selects `NekomaruQwQ/TurboZone/config.toml` under the Windows local
+application-data known folder. It has no config CLI or environment override:
 
 ```sh
-cargo run --release -p turbozone-windows --bin turbozone -- --config D:/Private/TurboZone/local.config.toml
+cargo run --release -p turbozone
 ```
 
-Relative paths use the executable's containing directory, independent of the launcher's working
-directory. There is no implicit default or search path; use an absolute path when private config
-lives elsewhere. Parent directories must already exist, and the app creates only the config file
-itself when it is missing.
+The loader accepts only absolute file paths, so the launcher's working directory does not
+affect configuration identity. Parent directories must already exist, and the app creates only
+the config file itself when it is missing.
 
 Startup never generates or updates schemas. Maintainers regenerate the checked-in canonical schema
 explicitly from the repository root:
@@ -73,6 +73,11 @@ The verifier checks rule-name grammar, duplicates, nonempty partial patterns, fo
 in program paths, dimensions from `1` through `16,384`, and `min <= max`. It performs no I/O;
 each failure is logged at error level without TOML source excerpts before parsing returns `None`. Successful parsing returns authored `Config`
 values, and `verify_config(&Config)` exposes the same non-mutating semantic checks. Editor checks do not replace runtime validation.
+
+Resize bounds apply inclusively to both defaults and menu choices. A well-formed default outside
+those bounds logs a warning and is unavailable to group and per-window primary buttons. The
+configuration and authored default are preserved, and bounded selector choices remain usable.
+Repeated rendering does not repeat the warning; invalid dimensions or inverted bounds remain errors.
 
 ## Verify
 

@@ -133,24 +133,12 @@ fn exact_resize_disables_selector() {
 }
 
 #[test]
-fn selector_default_is_independent_of_selector_bounds() {
-    let rules = validate(&parse(
-        r#"
-        [[rules]]
-        name = "app"
-        resize.default = [1440, 900]
-        resize.max = [1280, 800]
-    "#,
-    ))
-    .expect("default target need not be in selector bounds");
-
-    assert_eq!(
-        rules[0]
-            .resize.selector()
-            .as_ref()
-            .and_then(|selector| selector.default),
-        Some([1440, 900])
-    );
+fn out_of_bounds_default_is_preserved_but_not_offered_as_a_primary_target() {
+    let config = parse(
+        "[[rules]]\nname = 'app'\nresize.default = [1440, 900]\nresize.max = [1280, 800]");
+    let rules = validate(&config).expect("an unavailable default must not reject the rule");
+    assert_eq!(rules[0].resize.primary_size(), None);
+    assert_eq!(rules[0].resize.selector().unwrap().default, Some([1440, 900]));
 }
 
 #[test]

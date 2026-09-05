@@ -46,11 +46,11 @@ export type ResizeRule =
 
 /** Selector settings; an empty object enables an unbounded selector. */
 export interface ResizeLimits {
-    /** Primary target, independent of min/max and not required to be a manifest size. */
+    /** Primary target; warns and is unavailable outside min/max. Need not be a manifest size. */
     default?: Size;
-    /** Inclusive minimum menu choice. */
+    /** Inclusive minimum for the default and menu choices. */
     min?: Size;
-    /** Inclusive maximum menu choice; neither axis may be smaller than min. */
+    /** Inclusive maximum for the default and menu choices; neither axis may be smaller than min. */
     max?: Size;
 }
 

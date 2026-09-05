@@ -113,14 +113,16 @@ pub enum ResizeRule {
 }
 
 impl ResizeRule {
-    /// Returns the exact target or selector default, independently of menu bounds.
-    /// Configuration verification checks dimensions; this query only interprets mode.
+    /// Returns the exact target or a selector default within its inclusive bounds.
+    /// An out-of-bounds default remains authored but is unavailable to every consumer.
+    /// Verification reports that condition; this query stays silent during rendering.
     pub fn primary_size(&self) -> Option<Size2D<i32>> {
         match *self {
             Self::Boolean(_) => None,
             Self::Exact { exact } => Some(exact.into()),
             Self::SelectorDefault(default) => Some(default.into()),
-            Self::Selector(ref selector) => selector.default.map(Size2D::from),
+            Self::Selector(ref selector) => selector.default.map(Size2D::from)
+                .filter(|&size| selector.allows_size(size)),
         }
     }
 
@@ -147,14 +149,15 @@ impl ResizeRule {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResizeSelector {
-    /// Primary `[width, height]` in physical pixels, independent of selector
-    /// bounds.
+    /// Primary `[width, height]` in physical pixels. A default outside the inclusive
+    /// bounds is preserved in the configuration but warns during verification and
+    /// is not offered as a resize target.
     #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
     pub default: Option<[i32; 2]>,
-    /// Minimum `[width, height]` offered by the selector, in physical pixels.
+    /// Minimum `[width, height]` for the default and menu choices, in physical pixels.
     #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
     pub min: Option<[i32; 2]>,
-    /// Maximum `[width, height]` offered by the selector, in physical pixels.
+    /// Maximum `[width, height]` for the default and menu choices, in physical pixels.
     #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
     pub max: Option<[i32; 2]>,
 }

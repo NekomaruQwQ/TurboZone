@@ -5,9 +5,9 @@ use smol_str::SmolStr;
 
 /// One native side effect accepted from a rendered snapshot.
 ///
-/// Actions own exactly one handle so queues, ordering, and per-target failures remain
-/// explicit. New variants may be added without allowing presentation crates to assume
-/// they know the complete backend operation set.
+/// Actions describe an operation independently of its target. The engine queues each
+/// operation with one handle, preserving ordering and per-target failures. New variants
+/// may be added without presentation crates assuming the complete backend operation set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum WindowAction {

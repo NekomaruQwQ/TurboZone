@@ -1,8 +1,8 @@
-//! Explicit config selection and startup-only filesystem operations.
+//! Startup-only filesystem operations for an explicitly supplied absolute config path.
 //!
-//! Relative paths follow the installed executable so shortcuts and launchers do not
-//! silently redirect configuration through their process working directory. Schema
-//! generation remains an explicit development task rather than a startup side effect.
+//! The composition root owns path selection. Rejecting relative paths keeps the loader
+//! independent of process working directories. Schema generation remains an explicit
+//! development task rather than a startup side effect.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
@@ -15,12 +15,12 @@ use turbozone_core::Rule;
 const CONFIG_SCHEMA_URL: &str =
     "https://raw.githubusercontent.com/NekomaruQwQ/TurboZone/refs/heads/main/data/config.schema.json";
 
-/// Resolves the selected path, creates a missing config, and loads its complete rule set.
+/// Creates a missing config at the selected absolute path and loads its complete rule set.
 ///
-/// Relative paths use the executable's directory so launch context does not change
-/// configuration identity. Existing config bytes are never modified. Unreadable configs
-/// and invalid documents are fatal; the core parser logs the validation failure without
-/// writing back to the file. Parent directories must exist.
+/// Relative paths are rejected so launch context cannot change configuration identity.
+/// Existing config bytes are never modified. Unreadable configs and invalid documents
+/// are fatal; the core parser logs validation failures without writing back to the file.
+/// Parent directories must exist.
 pub fn load_config(path: &Path) -> Result<Vec<Rule>> {
     anyhow::ensure!(!path.is_empty(), "configuration path must not be empty");
     anyhow::ensure!(path.is_absolute(), "configuration path must be absolute");
