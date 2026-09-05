@@ -4,7 +4,7 @@ use turbozone_core::{
     WindowInfo   as CoreWindowInfo,
     WindowState,
     WindowDetail,
-    WindowAction as CoreWindowAction,
+    WindowAction,
     ProgramInfo,
 };
 
@@ -24,7 +24,6 @@ use std::path::Path;
 use anyhow::anyhow;
 use anyhow::Result;
 use anyhow::Context as _;
-use euclid::default::Size2D;
 use smol_str::SmolStr;
 use smol_str::StrExt as _;
 
@@ -36,8 +35,7 @@ use windows::Win32::Graphics::Gdi::{HMONITOR, MONITORINFO};
 /// Predicate type for general filtering operations.
 type Pred<T> = fn(&T) -> bool;
 
-type WindowInfo   = CoreWindowInfo<Handle<HWND>>;
-type WindowAction = CoreWindowAction<Handle<HWND>>;
+type WindowInfo = CoreWindowInfo<Handle<HWND>>;
 
 /// Type for caching [`MONITORINFO`] for the lifetime of a snapshot.
 ///
@@ -120,14 +118,19 @@ impl CoreBackend for Backend {
     }
 
     #[expect(clippy::panic_in_result_fn, reason = "an unknown action is a core/backend contract mismatch, not an operational failure")]
-    fn perform(&mut self, action: WindowAction) -> Result<()> {
+    fn perform(&mut self, target: Self::Handle, action: WindowAction) -> Result<()> {
         match action {
-            WindowAction::Resize(handle, size@Size2D { width, height, .. }) =>
-                resize_window(handle, size)
-                    .with_context(|| format!("failed to resize window {handle} to {width}x{height}")),
-            WindowAction::MoveToCenter(handle) =>
-                center_window(handle)
-                    .with_context(|| format!("failed to center window {handle}")),
+            WindowAction::Center =>
+                center_window(target)
+                    .with_context(|| format!("failed to center window {target}")),
+            WindowAction::Resize(size) =>
+                resize_window(target, size)
+                    .with_context(|| {
+                        format!(
+                            "failed to resize window {target} to {}x{}",
+                            size.width,
+                            size.height)
+                    }),
             _ => panic!("Windows backend received an unsupported TurboZone action"),
         }
     }

@@ -1,6 +1,21 @@
 use std::rc::Rc;
 use euclid::default::Rect;
+use euclid::default::Size2D;
 use smol_str::SmolStr;
+
+/// One native side effect accepted from a rendered snapshot.
+///
+/// Actions own exactly one handle so queues, ordering, and per-target failures remain
+/// explicit. New variants may be added without allowing presentation crates to assume
+/// they know the complete backend operation set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum WindowAction {
+    /// Centers the live or restored client area in its current monitor work area.
+    Center,
+    /// Sets the client area to an exact positive physical-pixel size.
+    Resize(Size2D<i32>),
+}
 
 /// The current visual state of a native window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -49,6 +64,12 @@ pub struct WindowDetail {
     /// Encountering invalid utf-8 strings in any of the fields is considered
     /// an error and will be reported as a failure to obtain the window detail.
     pub program: Rc<ProgramInfo>,
+}
+
+impl WindowDetail {
+    pub fn is_centered(&self) -> bool {
+        self.content_rect.center() == self.monitor_rect.center()
+    }
 }
 
 /// Information about a program executable owning one or more windows.

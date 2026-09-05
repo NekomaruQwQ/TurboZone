@@ -9,7 +9,6 @@ use euclid::default::Size2D;
 
 use eframe::egui;
 use egui::*;
-use egui_phosphor_icons::icons;
 
 /// Standard client-area sizes, ordered from largest to smallest.
 pub const STANDARD_SIZE: &[(&str, &[[i32; 2]])] = &[
@@ -78,7 +77,7 @@ impl<B: Backend> eframe::App for App<B> {
                     Self::app_ui(
                         ui,
                         &mut self.engine,
-                        &mut |action| actions.push(action));
+                        &mut |target, action| actions.push((target, action)));
                 });
         });
 
@@ -114,8 +113,14 @@ impl<B: Backend> App<B> {
             .with_maximize_button(false)
     }
 
-    pub fn setup_icon_font(fonts: &mut egui::FontDefinitions) {
-        egui_phosphor_icons::add_fonts(fonts);
+    pub fn setup_egui(egui: &Context) {
+        egui.set_visuals(Visuals::dark());
+        egui.style_mut_of(Theme::Dark, Self::setup_style);
+        egui.style_mut_of(Theme::Light, Self::setup_style);
+    }
+
+    const fn setup_style(style: &mut Style) {
+        style.interaction.selectable_labels = false;
     }
 
     /// Renders a snapshot without native effects and emits actions through the callback.
@@ -123,7 +128,7 @@ impl<B: Backend> App<B> {
     /// Group identity combines the stable rule name with its representative display path;
     /// window identity uses the backend handle. This keeps egui state stable while leaving
     /// all native mutation behind the engine queue boundary.
-    pub fn app_ui<F: FnMut(WindowAction<B::Handle>)>(
+    pub fn app_ui<F: FnMut(B::Handle, WindowAction)>(
         ui: &mut Ui,
         engine: &mut Engine<B>,
         action_callback: &mut F) {
@@ -148,7 +153,7 @@ impl<B: Backend> App<B> {
     }
 
     /// Uses the stable rule name for headings and queries resize availability on demand.
-    fn group_ui<F: FnMut(WindowAction<B::Handle>)>(
+    fn group_ui<F: FnMut(B::Handle, WindowAction)>(
         ui: &mut Ui,
         group: &Group<B::Handle>,
         rule: &Rule,
@@ -170,93 +175,104 @@ impl<B: Backend> App<B> {
         if  rule.relocate ||
             rule.resize.selector().is_some() ||
             rule.resize.primary_size().is_some() {
-            ui.horizontal(|ui| Self::group_action_ui(ui, group, rule, action_callback));
+            ui.horizontal(|ui| {
+                let is_centered =
+                    group
+                        .windows
+                        .iter()
+                        .all(|window| {
+                            window
+                                .detail
+                                .as_ref()
+                                .is_ok_and(WindowDetail::is_centered)
+                        });
+                let common_size =
+                    group
+                        .windows
+                        .iter()
+                        .map(|window| window.detail.as_ref().expect("window detail should always present in a rendered snapshot"))
+                        .all(|detail| detail.content_rect.size == rule.resize.primary_size().unwrap_or_default());
+                Self::action_ui(
+                    ui,
+                    rule,
+                    is_centered,
+                    common_size,
+                    &mut |action| {
+                        for window in &group.windows {
+                            action_callback(window.handle, action);
+                        }
+                    });
+            });
             ui.add_space(4.0);
         }
 
         for window in &group.windows {
             ui.push_id(window.handle, |ui| {
-                ui.style_mut().spacing.item_spacing.x = 4.0;
-                ui.horizontal(|ui| Self::window_header_ui(ui, window));
-                ui.horizontal(|ui| Self::window_action_ui(ui, window, rule, action_callback));
+                Self::window_ui(ui, rule, window, &mut |action| {
+                    action_callback(window.handle, action);
+                });
             });
             ui.add_space(2.0);
         }
         ui.add_space(8.0);
     }
 
-    /// Applies authored primary targets independently of selector limits to every group member.
-    fn group_action_ui<F: FnMut(WindowAction<B::Handle>)>(
+    fn window_ui<F: FnMut(WindowAction)>(
         ui: &mut Ui,
-        group: &Group<B::Handle>,
         rule: &Rule,
-        action_callback: &mut F) {
-        if rule.relocate && ui.add_sized((80.0, 16.0), Button::new("CENTER")).clicked() {
-            for window in &group.windows {
-                action_callback(WindowAction::MoveToCenter(window.handle));
-            }
-        }
-
-        if let Some(size) = rule.resize.primary_size() {
-            let response = ui.button(format!("RESIZE TO {}x{}", size.width, size.height));
-            if response.clicked() {
-                for window in &group.windows {
-                    action_callback(WindowAction::Resize(window.handle, size));
-                }
-            }
-        }
-
-        if let Some(selector) = rule.resize.selector() {
-            let selected =
-                ComboBox::from_id_salt("resize-all")
-                    .width(ui.available_width().min(120.0))
-                    .selected_text("RESIZE")
-                    .show_ui(ui, |ui| Self::resolution_ui(ui, None, &selector))
-                    .inner
-                    .flatten();
-            if let Some(size) = selected {
-                for window in &group.windows {
-                    action_callback(WindowAction::Resize(window.handle, size));
-                }
-            }
-        }
-    }
-
-    fn window_header_ui(ui: &mut Ui, window: &WindowInfo<B::Handle>) {
-        ui.label(format!("{CHAR_WINDOW}"));
-        match window.state {
-            WindowState::Maximized => { ui.weak("[max]"); },
-            WindowState::Minimized => { ui.weak("[min]"); },
-            WindowState::Normal => {},
-        }
-        ui.add(Label::new(window.title.as_str()).truncate());
-    }
-
-    /// Renders mutually exclusive resize modes while preserving per-window control policy.
-    fn window_action_ui<F: FnMut(WindowAction<B::Handle>)>(
-        ui: &mut Ui,
         window: &WindowInfo<B::Handle>,
-        rule: &Rule,
         action_callback: &mut F) {
-        let detail =
-            window
-                .detail
-                .as_ref()
-                .expect("window detail should always present in a rendered snapshot");
+        ui.horizontal(|ui| {
+            ui.style_mut().spacing.item_spacing.x = 4.0;
+            ui.label(format!("{CHAR_WINDOW}"));
+            match window.state {
+                WindowState::Maximized => { ui.weak("[max]"); },
+                WindowState::Minimized => { ui.weak("[min]"); },
+                WindowState::Normal => {},
+            }
+            ui.add(Label::new(window.title.as_str()).truncate());
+        });
 
+        ui.horizontal(|ui| {
+            let detail =
+                window
+                    .detail
+                    .as_ref()
+                    .expect("window detail should always present in a rendered snapshot");
+            let resized =
+                rule.resize
+                    .primary_size()
+                    .map(|size| size == detail.content_rect.size)
+                    .unwrap_or(true);
+            Self::action_ui(
+                ui,
+                rule,
+                detail.is_centered(),
+                resized,
+                action_callback);
+        });
+    }
+
+    fn action_ui<F: FnMut(WindowAction)>(
+        ui: &mut Ui,
+        rule: &Rule,
+        centered: bool,
+        resized: bool,
+        action_callback: &mut F) {
         if rule.relocate {
             ui.weak("POSITION");
 
-            let centered =
-                detail.monitor_rect.center() ==
-                detail.content_rect.center();
-            let centered_icon =
-                if centered { CHAR_CHECK } else { CHAR_EMPTY };
+            let icon =
+                if centered {
+                    CHAR_CHECK
+                } else {
+                    CHAR_EMPTY
+                };
             ui.add_enabled_ui(!centered, |ui| {
-                Button::new(format!("{centered_icon} CENTER"))
+                Button::new(format!("{icon} CENTER"))
                     .pipe(|button| ui.add_sized((80.0, 16.0), button))
                     .clicked()
-                    .then(|| action_callback(WindowAction::MoveToCenter(window.handle)));
+                    .then(|| action_callback(WindowAction::Center));
             });
         } else {
             ui.weak("MOVE DISABLED");
@@ -264,34 +280,48 @@ impl<B: Backend> App<B> {
 
         ui.label("|");
 
-
         // Exact mode is exclusive in the authored enum. Selector defaults retain
         // this view's bounds gate; the group primary target is independent of it.
         if let ResizeRule::Exact { exact } = rule.resize {
-            let size = Size2D::from(exact);
             ui.weak("SIZE");
 
-            Button::new(format!("{}x{}", size.width, size.height))
-                .pipe(|button| ui.add_sized((80.0, 16.0), button))
-                .clicked()
-                .then(|| action_callback(WindowAction::Resize(window.handle, size)));
-        } else if let Some(selector) = rule.resize.selector() {
-            ui.weak("SIZE");
-            if let Some(size) = selector.default && selector.allows_size(size.into()) {
-                Button::new(format!("{}x{}", size[0], size[1]))
+            let target_size = Size2D::from(exact);
+            let icon = if resized { CHAR_CHECK } else { CHAR_EMPTY };
+            ui.add_enabled_ui(!resized, |ui| {
+                Button::new(
+                    format!(
+                        "{icon} {}x{}",
+                        target_size.width,
+                        target_size.height))
                     .pipe(|button| ui.add_sized((80.0, 16.0), button))
                     .clicked()
-                    .then(|| action_callback(WindowAction::Resize(window.handle, size.into())));
+                    .then(|| action_callback(WindowAction::Resize(target_size)));
+            });
+        } else if let Some(selector) = rule.resize.selector() {
+            ui.weak("SIZE");
+
+            if let Some(target_size) = selector.default &&
+                selector.allows_size(target_size.into()) {
+
+                let target_size = Size2D::from(target_size);
+                let icon = if resized { CHAR_CHECK } else { CHAR_EMPTY };
+                ui.add_enabled_ui(!resized, |ui| {
+                    Button::new(format!("{icon} {}x{}", target_size.width, target_size.height))
+                        .pipe(|button| ui.add_sized((80.0, 16.0), button))
+                        .clicked()
+                        .then(|| action_callback(WindowAction::Resize(target_size)));
+                });
                 ui.weak("OR");
             }
+
             let selected = ComboBox::from_id_salt("size")
                 .width(80.0)
                 .selected_text("SELECT")
-                .show_ui(ui, |ui| Self::resolution_ui(ui, None, &selector))
+                .show_ui(ui, |ui| Self::size_select_ui(ui, None, &selector))
                 .inner
                 .flatten();
             if let Some(size) = selected {
-                action_callback(WindowAction::Resize(window.handle, size));
+                action_callback(WindowAction::Resize(size));
             }
         } else {
             ui.weak("RESIZE DISABLED");
@@ -299,7 +329,7 @@ impl<B: Backend> App<B> {
     }
 
     /// Converts selector clicks into values; native work stays outside egui callbacks.
-    fn resolution_ui(
+    fn size_select_ui(
         ui: &mut Ui,
         selected: Option<Size2D<i32>>,
         selector: &ResizeSelector) -> Option<Size2D<i32>> {
@@ -331,17 +361,5 @@ impl<B: Backend> App<B> {
             ui.weak("No sizes within configured limits");
         }
         selected_size
-    }
-
-    fn size_text(size: Size2D<i32>) -> String {
-        let marker =
-            if STANDARD_SIZE
-                .iter()
-                .any(|&(_, sizes)| sizes.contains(&[size.width, size.height])) {
-                CHAR_CHECK
-            } else {
-                CHAR_EMPTY
-            };
-        format!("{marker} {}x{}", size.width, size.height)
     }
 }

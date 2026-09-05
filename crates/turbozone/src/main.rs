@@ -1,14 +1,12 @@
 //! Entry point of TurboZone for Windows.
 
-use turbozone_windows::Backend;
-use turbozone_ui::app::App as AppBase;
-use turbozone_ui::config::load_config;
+use tap::prelude::*;
 
 use eframe::NativeOptions;
 use eframe::egui;
 use egui::*;
 
-type App = AppBase<Backend>;
+type App = turbozone_ui::app::App<turbozone_windows::Backend>;
 
 fn main() {
     pretty_env_logger::init();
@@ -20,7 +18,7 @@ fn main() {
             .join("TurboZone")
             .join("config.toml");
     let config =
-        load_config(&config_path)
+        turbozone_ui::config::load_config(&config_path)
             .expect("failed to load configuration file");
     let options =
         NativeOptions {
@@ -31,40 +29,35 @@ fn main() {
     let result =
         eframe::run_native("TurboZone", options, Box::new(move |cc| {
             setup_fonts(&cc.egui_ctx);
-            cc.egui_ctx.set_visuals(Visuals::dark());
-            cc.egui_ctx.style_mut_of(Theme::Light, setup_style);
-            cc.egui_ctx.style_mut_of(Theme::Dark, setup_style);
-
-            Ok(Box::new(App::new(config, Backend::default())))
+            App::setup_egui(&cc.egui_ctx);
+            Ok(Box::new(App::new(config, <_>::default())))
         }));
 
     result.expect("failed to start eframe application");
 }
 
-const fn setup_style(style: &mut Style) {
-    style.interaction.selectable_labels = false;
-}
-
 fn setup_fonts(egui: &Context) {
     use std::sync::Arc;
-
     let mut fonts = FontDefinitions::default();
-    App::setup_icon_font(&mut fonts);
 
     match std::fs::read("C:/Windows/Fonts/msyh.ttc") {
         Ok(bytes) => {
-            let mut font = FontData::from_owned(bytes);
-            font.index = 1;
-
-            fonts.font_data.insert("msyahei_ui".to_owned(), Arc::new(font));
-            fonts.families
+            fonts
+                .font_data
+                .insert(
+                    String::from("msyahei_ui"),
+                    FontData::from_owned(bytes)
+                        .tap_mut(|font| font.index = 1)
+                        .pipe(Arc::new));
+            fonts
+                .families
                 .entry(FontFamily::Proportional)
                 .or_default()
                 .push("msyahei_ui".to_owned());
 
         },
-        Err(error) =>
-            log::warn!("Microsoft YaHei UI font could not be loaded: {error}"),
+        Err(err) =>
+            log::warn!("failed to load font 'Microsoft YaHei UI': {err}"),
     }
 
     egui.set_fonts(fonts);

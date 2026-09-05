@@ -6,7 +6,7 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context as _, Result};
 use smol_str::{SmolStr, format_smolstr};

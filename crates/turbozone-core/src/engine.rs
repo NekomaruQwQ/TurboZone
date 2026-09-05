@@ -1,36 +1,13 @@
 //! Backend-independent action orchestration and snapshot lifecycle.
 
-use std::{fmt, rc::Rc};
-use std::hash::Hash;
 use std::collections::BTreeMap;
+use std::fmt;
+use std::hash::Hash;
+use std::rc::Rc;
 
-use euclid::default::Size2D;
-use smol_str::{SmolStr, StrExt as _, format_smolstr};
+use smol_str::*;
 
-use crate::{ProgramInfo, Rule, SnapshotLogging, WindowInfo};
-
-/// One native side effect accepted from a rendered snapshot.
-///
-/// Actions own exactly one handle so queues, ordering, and per-target failures remain
-/// explicit. New variants may be added without allowing presentation crates to assume
-/// they know the complete backend operation set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum WindowAction<H> {
-    /// Sets the client area to an exact positive physical-pixel size.
-    Resize(H, Size2D<i32>),
-    /// Centers the live or restored client area in its current monitor work area.
-    MoveToCenter(H),
-}
-
-impl<H: Copy> WindowAction<H> {
-    /// Returns the native identity captured when the action was accepted.
-    pub const fn handle(&self) -> H {
-        match *self {
-            Self::Resize(handle, _) | Self::MoveToCenter(handle) => handle,
-        }
-    }
-}
+use crate::*;
 
 /// Supplies snapshots and interprets native actions for one platform.
 ///
@@ -49,14 +26,19 @@ pub trait Backend {
         Copy + PartialEq + Eq + Hash + 'static;
 
     /// Captures the currently relevant application windows.
-    fn snapshot(&mut self) -> anyhow::Result<Vec<WindowInfo<Self::Handle>>>;
+    fn snapshot(&mut self)
+     -> anyhow::Result<Vec<WindowInfo<Self::Handle>>>;
 
     /// Performs one action against live native state.
     ///
     /// Implementations return operational failures and must panic for an unsupported
     /// future action variant rather than silently accepting an operation they did not
     /// perform.
-    fn perform(&mut self, action: WindowAction<Self::Handle>) -> anyhow::Result<()>;
+    fn perform(
+        &mut self,
+        target: Self::Handle,
+        action: WindowAction)
+     -> anyhow::Result<()>;
 }
 
 /// Owns product state and advances it only through explicit logic ticks.
@@ -68,7 +50,7 @@ pub struct Engine<B: Backend> {
     backend: B,
     rules: Vec<Rule>,
     groups: Vec<Group<B::Handle>>,
-    pending_actions: Vec<WindowAction<B::Handle>>,
+    pending_actions: Vec<(B::Handle, WindowAction)>,
     logging: SnapshotLogging<B::Handle>,
 }
 
@@ -98,7 +80,7 @@ impl<B: Backend> Engine<B> {
     pub fn groups(&self) -> &[Group<B::Handle>] { &self.groups }
 
     /// Defers native operations until the next logic tick in iterator order.
-    pub fn queue(&mut self, actions: impl IntoIterator<Item = WindowAction<B::Handle>>) {
+    pub fn queue(&mut self, actions: impl IntoIterator<Item = (B::Handle, WindowAction)>) {
         self.pending_actions.extend(actions);
     }
 
@@ -110,10 +92,9 @@ impl<B: Backend> Engine<B> {
     /// Individual action and snapshot failures are logged as non-fatal. A failed
     /// top-level snapshot clears sections so the UI never presents older data as live.
     pub fn tick(&mut self) {
-        for action in std::mem::take(&mut self.pending_actions) {
-            let handle = action.handle();
+        for (handle, action) in std::mem::take(&mut self.pending_actions) {
             let identity = self.window_identity(handle);
-            if let Err(error) = self.backend.perform(action) {
+            if let Err(error) = self.backend.perform(handle, action) {
                 log::error!("window action failed for {identity}: {error:#}");
             }
         }

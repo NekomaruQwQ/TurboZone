@@ -21,6 +21,7 @@ egui = { workspace = true }
 euclid = { workspace = true }
 log = { workspace = true }
 smol_str = { workspace = true }
+tap = { workspace = true }
 
 dirs = "6.0.0"
 pretty_env_logger = "0.5.0"
