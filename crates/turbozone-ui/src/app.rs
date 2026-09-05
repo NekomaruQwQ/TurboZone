@@ -285,7 +285,7 @@ impl<B: Backend> App<B> {
         if let ResizeRule::Exact { exact } = rule.resize {
             ui.weak("SIZE");
 
-            let target_size = Size2D::from(exact);
+            let target_size = exact;
             let icon = if resized { CHAR_CHECK } else { CHAR_EMPTY };
             ui.add_enabled_ui(!resized, |ui| {
                 Button::new(

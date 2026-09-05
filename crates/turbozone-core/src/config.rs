@@ -23,6 +23,9 @@ fn is_default<T: Default + PartialEq>(value: &T) -> bool {
 ///
 /// Deserialization supplies structure and defaults. Call [`crate::verify_config`]
 /// before engine use; verification preserves these authored values unchanged.
+// Sizes use euclid geometry directly. Its Serde tuple representation preserves
+// authored `[width, height]` arrays; Schemars overrides retain that wire contract
+// and its dimension limits independently of the runtime geometry type.
 #[derive(Debug, Clone)]
 #[derive(Default)]
 #[derive(JsonSchema)]
@@ -98,14 +101,14 @@ pub enum ResizeRule {
     Exact {
         /// Supported client-area `[width, height]` in physical pixels,
         /// independent of selector limits.
-        #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
-        exact: [i32; 2],
+        #[schemars(with = "[i32; 2]", inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
+        exact: Size2D<i32>,
     },
     /// Selector properties with only a default size, no minimum, and
     /// no maximum.
     SelectorDefault(
-        #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
-        [i32; 2],
+        #[schemars(with = "[i32; 2]", inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
+        Size2D<i32>,
     ),
     /// Selector properties, including optional default, minimum, and
     /// maximum sizes.
@@ -119,15 +122,15 @@ impl ResizeRule {
     pub fn primary_size(&self) -> Option<Size2D<i32>> {
         match *self {
             Self::Boolean(_) => None,
-            Self::Exact { exact } => Some(exact.into()),
-            Self::SelectorDefault(default) => Some(default.into()),
-            Self::Selector(ref selector) => selector.default.map(Size2D::from)
+            Self::Exact { exact } => Some(exact),
+            Self::SelectorDefault(default) => Some(default),
+            Self::Selector(ref selector) => selector.default
                 .filter(|&size| selector.allows_size(size)),
         }
     }
 
     /// Returns selector settings for enabled selector modes, synthesizing shorthand.
-    /// The result contains only small optional size arrays; no heap storage or cached
+    /// The result contains only small optional sizes; no heap storage or cached
     /// runtime representation is needed. Exact and disabled modes have no selector.
     pub fn selector(&self) -> Option<ResizeSelector> {
         match *self {
@@ -152,14 +155,14 @@ pub struct ResizeSelector {
     /// Primary `[width, height]` in physical pixels. A default outside the inclusive
     /// bounds is preserved in the configuration but warns during verification and
     /// is not offered as a resize target.
-    #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
-    pub default: Option<[i32; 2]>,
+    #[schemars(with = "Option<[i32; 2]>", inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
+    pub default: Option<Size2D<i32>>,
     /// Minimum `[width, height]` for the default and menu choices, in physical pixels.
-    #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
-    pub min: Option<[i32; 2]>,
+    #[schemars(with = "Option<[i32; 2]>", inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
+    pub min: Option<Size2D<i32>>,
     /// Maximum `[width, height]` for the default and menu choices, in physical pixels.
-    #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
-    pub max: Option<[i32; 2]>,
+    #[schemars(with = "Option<[i32; 2]>", inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
+    pub max: Option<Size2D<i32>>,
 }
 
 impl ResizeSelector {
@@ -169,15 +172,15 @@ impl ResizeSelector {
             return false;
         }
 
-        if let Some([min_width, min_height]) = self.min && (
-            size.width < min_width ||
-            size.height < min_height) {
+        if let Some(min) = self.min && (
+            size.width < min.width ||
+            size.height < min.height) {
             return false;
         }
 
-        if let Some([max_width, max_height]) = self.max && (
-            size.width > max_width ||
-            size.height > max_height) {
+        if let Some(max) = self.max && (
+            size.width > max.width ||
+            size.height > max.height) {
             return false;
         }
 
@@ -209,12 +212,12 @@ pub struct WindowFilter {
     pub title: Option<Pattern>,
     /// Inclusive minimum client-area `[width, height]` in supported
     /// physical pixels.
-    #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
-    pub min: Option<[i32; 2]>,
+    #[schemars(with = "Option<[i32; 2]>", inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
+    pub min: Option<Size2D<i32>>,
     /// Inclusive maximum client-area `[width, height]` in supported
     /// physical pixels.
-    #[schemars(inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
-    pub max: Option<[i32; 2]>,
+    #[schemars(with = "Option<[i32; 2]>", inner(range(min = 1, max = MAX_SIZE_DIMENSION)))]
+    pub max: Option<Size2D<i32>>,
 }
 
 /// An exact string or a conjunction of nonempty literal partial patterns.

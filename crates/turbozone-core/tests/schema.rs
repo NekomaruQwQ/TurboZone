@@ -1,3 +1,4 @@
+use euclid::default::Size2D;
 use turbozone_core::*;
 
 use schemars::Schema;
@@ -66,7 +67,7 @@ fn untagged_resize_schema_keeps_exact_and_selector_fields_separate() {
         .unwrap()
         .as_array()
         .unwrap();
-    let serialized = serde_json::to_value(ResizeRule::Exact { exact: [640, 480] }).unwrap();
+    let serialized = serde_json::to_value(ResizeRule::Exact { exact: Size2D::new(640, 480) }).unwrap();
     let exact = variants
         .iter()
         .find(|variant| variant["properties"].get("exact").is_some())
@@ -104,7 +105,7 @@ fn size_schema_matches_array_serialization_and_runtime_bounds() {
         .find_map(|variant| variant.pointer("/properties/exact"))
         .unwrap();
     let serialized = serde_json::to_value(ResizeRule::Exact {
-        exact: [1, MAX_SIZE_DIMENSION],
+        exact: Size2D::new(1, MAX_SIZE_DIMENSION),
     })
     .unwrap();
     let serialized_size = &serialized["exact"];

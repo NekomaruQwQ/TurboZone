@@ -60,8 +60,10 @@ or `resize.exact = [0, 900]`. An exact resize cannot be combined with selector f
 
 The schema uses JSON Schema Draft 2020-12 with `$defs` internal references, without additional downloads.
 It describes input structure, defaults, renamed keys, untagged alternatives, and rejected unknown
-fields. Sizes use `[i32; 2]`, serialized as `[width, height]` in physical pixels. Schemars derives the
-fixed array length; per-element annotations require integers from `1` through `16,384`.
+fields. Sizes use `euclid::default::Size2D<i32>`, serialized by euclid’s Serde support as
+`[width, height]` in physical pixels. Schemars field overrides describe the wire type as
+`[i32; 2]` (optional where appropriate), preserving fixed array length and per-element
+integer limits from `1` through `16,384`.
 Optional Rust fields can include JSON `null` in the schema; TOML has no null, so omit them instead.
 
 `turbozone-core::parse_config()` deserializes the complete document before semantic validation.

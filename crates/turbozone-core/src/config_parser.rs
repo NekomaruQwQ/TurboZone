@@ -9,6 +9,7 @@
 
 use std::collections::BTreeSet;
 
+use euclid::default::Size2D;
 use smol_str::*;
 
 use crate::*;
@@ -100,12 +101,13 @@ fn validate_resize(resize: &ResizeRule, prefix: &str, rule_name: &str) -> Option
                 validate_size(size, &format_smolstr!("{prefix}.resize.default"))?;
             }
             validate_size_bounds(selector.min, selector.max, &format_smolstr!("{prefix}.resize"))?;
-            if let Some(size) = selector.default && !selector.allows_size(size.into()) {
+            if let Some(size) = selector.default && !selector.allows_size(size) {
                 log::warn!(
-                    "{prefix}.resize.default {size:?} for rule '{rule_name}' is outside resize bounds \
+                    "{prefix}.resize.default {:?} for rule '{rule_name}' is outside resize bounds \
                      (min: {:?}, max: {:?}); ignoring default",
-                    selector.min,
-                    selector.max);
+                    size.to_array(),
+                    selector.min.map(Size2D::to_array),
+                    selector.max.map(Size2D::to_array));
             }
             Some(())
         }
@@ -180,16 +182,17 @@ fn validate_literal(pattern: &str, field: &str, is_path: bool) -> Option<()> {
     Some(())
 }
 
-/// Validates both array dimensions using their configuration indices.
-fn validate_size([width, height]: [i32; 2], field: &str) -> Option<()> {
-    validate_dimension(width, &format_smolstr!("{field}[0]"))?;
-    validate_dimension(height, &format_smolstr!("{field}[1]"))
+/// Validates geometry dimensions while retaining indices from the serialized pair
+/// in diagnostics so users can locate the invalid configuration component.
+fn validate_size(size: Size2D<i32>, field: &str) -> Option<()> {
+    validate_dimension(size.width, &format_smolstr!("{field}[0]"))?;
+    validate_dimension(size.height, &format_smolstr!("{field}[1]"))
 }
 
 /// Checks supported bounds and rejects inverted axes when both bounds are present.
 fn validate_size_bounds(
-    min: Option<[i32; 2]>,
-    max: Option<[i32; 2]>,
+    min: Option<Size2D<i32>>,
+    max: Option<Size2D<i32>>,
     prefix: &str) -> Option<()> {
     if let Some(size) = min {
         validate_size(size, &format_smolstr!("{prefix}.min"))?;
@@ -198,7 +201,7 @@ fn validate_size_bounds(
         validate_size(size, &format_smolstr!("{prefix}.max"))?;
     }
     if let (Some(min), Some(max)) = (min, max) {
-        for (axis, (minimum, maximum)) in min.into_iter().zip(max).enumerate() {
+        for (axis, (minimum, maximum)) in min.to_array().into_iter().zip(max.to_array()).enumerate() {
             if minimum > maximum {
                 log::error!(
                     "{prefix}.min[{axis}] must not exceed {prefix}.max[{axis}]");

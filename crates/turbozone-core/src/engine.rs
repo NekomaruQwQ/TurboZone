@@ -198,10 +198,10 @@ fn matches_window<H>(rule: &Rule, window: &WindowInfo<H>) -> bool {
         return false;
     }
     let size = detail.content_rect.size;
-    filters.min.is_none_or(|[min_width, min_height]| {
-        size.width >= min_width && size.height >= min_height
-    }) && filters.max.is_none_or(|[max_width, max_height]| {
-        size.width <= max_width && size.height <= max_height
+    filters.min.is_none_or(|min| {
+        size.width >= min.width && size.height >= min.height
+    }) && filters.max.is_none_or(|max| {
+        size.width <= max.width && size.height <= max.height
     })
 }
 

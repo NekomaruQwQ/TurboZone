@@ -32,6 +32,9 @@ partially verified rule sets are never exposed. Successful rules retain declarat
 An empty document is a valid configuration with no rules.
 
 `parse_config()` returns the same `Config` model used by Serde and schema generation.
+Configured sizes are `euclid::default::Size2D<i32>` values shared directly with runtime
+geometry. Euclid’s Serde support preserves `[width, height]` pairs, and schema overrides
+retain the fixed-array input contract.
 `verify_config(&Config)` can also check deserialized or manually constructed values. It logs the
 first semantic failure and returns `None`, or `Some(())` after every rule passes. Verification
 changes no authored text, resize variants, or rule order. `Engine::new` takes ownership of

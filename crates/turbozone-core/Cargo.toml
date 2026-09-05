@@ -9,7 +9,7 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-euclid = { workspace = true }
+euclid = { workspace = true, features = ["serde"] }
 log = { workspace = true }
 smol_str = { workspace = true }
 

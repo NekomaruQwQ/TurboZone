@@ -138,7 +138,7 @@ fn out_of_bounds_default_is_preserved_but_not_offered_as_a_primary_target() {
         "[[rules]]\nname = 'app'\nresize.default = [1440, 900]\nresize.max = [1280, 800]");
     let rules = validate(&config).expect("an unavailable default must not reject the rule");
     assert_eq!(rules[0].resize.primary_size(), None);
-    assert_eq!(rules[0].resize.selector().unwrap().default, Some([1440, 900]));
+    assert_eq!(rules[0].resize.selector().unwrap().default, Some(Size2D::new(1440, 900)));
 }
 
 #[test]
@@ -148,7 +148,7 @@ fn selector_default_shorthand_enables_an_unbounded_selector() {
     assert_eq!(
         rules[0].resize.selector(),
         Some(ResizeSelector {
-            default: Some([1440, 900]),
+            default: Some(Size2D::new(1440, 900)),
             min: None,
             max: None,
         })

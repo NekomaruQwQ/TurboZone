@@ -3,6 +3,7 @@
 
 use std::sync::Mutex;
 
+use euclid::default::Size2D;
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use smol_str::{SmolStr, format_smolstr};
 use turbozone_core::{parse_config, verify_config};
@@ -53,7 +54,7 @@ fn verification_warns_once_per_unusable_default_and_preserves_other_rules() {
         let authored = serde_json::to_value(&config).unwrap();
         for _ in 0..3 {
             assert_eq!(config.rules[0].resize.primary_size(), None);
-            assert_eq!(config.rules[0].resize.selector().unwrap().default, Some([1280, 720]));
+            assert_eq!(config.rules[0].resize.selector().unwrap().default, Some(Size2D::new(1280, 720)));
         }
         assert_eq!(take_logs(), []);
         assert_eq!(verify_config(&config), Some(()));
