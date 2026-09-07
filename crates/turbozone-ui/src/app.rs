@@ -1,4 +1,5 @@
 use turbozone_core::*;
+use smol_str::{SmolStr, format_smolstr};
 
 use std::time::Duration;
 use std::time::Instant;
@@ -55,15 +56,21 @@ const CHAR_WINDOW: char = '\u{1f5d6}';
 /// and turns one immutable snapshot into an ordered batch of user-requested actions.
 pub struct App<B: Backend> {
     engine: Engine<B>,
-    last_update: Instant,
+    window_diagnostics: Vec<WindowDiagnostic<B::Handle>>,
+}
+
+/// Presentation text for one failed window, refreshed only after engine updates.
+/// Native Display may query live metadata, so repainting must reuse the captured text.
+struct WindowDiagnostic<H> {
+    handle: H,
+    description: SmolStr,
+    message: SmolStr,
 }
 
 impl<B: Backend> eframe::App for App<B> {
     fn logic(&mut self, _: &Context, _: &mut eframe::Frame) {
-        if  self.engine.has_pending_actions() ||
-            self.last_update.elapsed() >= UPDATE_INTERVAL {
-            self.engine.update();
-            self.last_update = Instant::now();
+        if self.should_update(Instant::now()) {
+            self.update();
         }
     }
 
@@ -74,9 +81,8 @@ impl<B: Backend> eframe::App for App<B> {
             ScrollArea::vertical()
                 .auto_shrink(false)
                 .show(ui, |ui| {
-                    Self::app_ui(
+                    self.app_ui(
                         ui,
-                        &mut self.engine,
                         &mut |target, action| actions.push((target, action)));
                 });
         });
@@ -95,12 +101,36 @@ impl<B: Backend> eframe::App for App<B> {
 impl<B: Backend> App<B> {
     /// Takes ownership of verified authored rules and captures the initial snapshot.
     pub fn new(rules: Vec<Rule>, backend: B) -> Self {
-        let mut engine = Engine::new(rules, backend);
-        engine.update();
+        let mut app = Self {
+            engine: Engine::new(rules, backend),
+            window_diagnostics: Vec::new(),
+        };
+        app.update();
+        app
+    }
 
-        Self {
-            engine,
-            last_update: Instant::now(),
+    /// Uses completion time for both successful captures and failed retry attempts.
+    /// Pending actions bypass the cadence; no clock or timer policy enters the backend.
+    fn should_update(&self, now: Instant) -> bool {
+        self.engine.has_pending_actions() ||
+        now.saturating_duration_since(self.engine.snapshot_timestamp()) >= UPDATE_INTERVAL
+    }
+
+    /// Advances native observations and rebuilds their diagnostic presentation together.
+    /// Sorting captured descriptions removes HashMap ordering from the UI without
+    /// requiring ordered native handles or using changing titles as widget identity.
+    fn update(&mut self) {
+        self.engine.update();
+        self.window_diagnostics.clear();
+        if let Ok(snapshot) = self.engine.snapshot().as_ref() {
+            self.window_diagnostics.extend(snapshot.errors.iter().map(|(&handle, error)| {
+                WindowDiagnostic {
+                    handle,
+                    description: format_smolstr!("{handle}"),
+                    message: format_smolstr!("{error:#}"),
+                }
+            }));
+            self.window_diagnostics.sort_by(|a, b| a.description.cmp(&b.description));
         }
     }
 
@@ -123,36 +153,49 @@ impl<B: Backend> App<B> {
         style.interaction.selectable_labels = false;
     }
 
-    /// Renders a snapshot without native effects and emits actions through the callback.
-    ///
-    /// Group identity combines the stable rule name with its representative display path;
-    /// window identity uses the backend handle. This keeps egui state stable while leaving
-    /// all native mutation behind the engine queue boundary.
-    pub fn app_ui<F: FnMut(B::Handle, WindowAction)>(
+    /// Derives a borrowed view for this paint and emits actions without native effects.
+    /// Enumeration failure replaces all previous content; per-window failures coexist
+    /// with usable groups. Both diagnostic states remain visible when logs are silent.
+    fn app_ui<F: FnMut(B::Handle, WindowAction)>(
+        &self,
         ui: &mut Ui,
-        engine: &mut Engine<B>,
         action_callback: &mut F) {
-        let Ok(view) = engine.view() else {
-            ui.weak("- nothing here -");
-            return;
+        let view = match self.engine.view() {
+            Ok(view) => view,
+            Err(error) => {
+                ui.colored_label(ui.visuals().error_fg_color, "Couldn't read windows");
+                ui.add(Label::new(format!("{error:#}")).wrap().selectable(true));
+                ui.weak("Retrying automatically.");
+                return;
+            },
         };
-        let groups = &view.groups;
 
-        if !groups.is_empty() {
-            for group in groups {
-                let group_id = (
-                    group.rule_name.as_str(),
-                    group.program.path.as_str());
-                let rule =
-                    engine
-                        .rule(group.rule_name)
-                        .expect("a rendered group must reference an active rule");
-                ui.push_id(group_id, |ui| {
-                    Self::group_ui(ui, group, rule, action_callback);
+        for group in &view.groups {
+            let group_id = (group.rule_name.as_str(), group.program.path.as_str());
+            let rule = self.engine.rule(group.rule_name)
+                .expect("a rendered group must reference an active rule");
+            ui.push_id(group_id, |ui| {
+                Self::group_ui(ui, group, rule, action_callback);
+            });
+        }
+        if view.groups.is_empty() && view.errors.is_empty() {
+            ui.weak("- nothing here -");
+        }
+        if !self.window_diagnostics.is_empty() {
+            if !view.groups.is_empty() {
+                ui.separator();
+            }
+            ui.colored_label(ui.visuals().warn_fg_color,
+                format!("Windows with errors ({})", self.window_diagnostics.len()));
+            for diagnostic in &self.window_diagnostics {
+                // Identity remains stable across title changes and sorting/recovery.
+                ui.push_id(("window-error", diagnostic.handle), |ui| {
+                    ui.add(Label::new(diagnostic.description.as_str()).wrap().selectable(true));
+                    ui.add(Label::new(RichText::new(diagnostic.message.as_str()).weak())
+                        .wrap().selectable(true));
+                    ui.add_space(4.0);
                 });
             }
-        } else {
-            ui.weak("- nothing here -");
         }
     }
 
@@ -358,3 +401,7 @@ impl<B: Backend> App<B> {
         selected_size
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/include/app_ext.rs"]
+mod test;

@@ -1,19 +1,20 @@
 use std::rc::Rc;
+use std::collections::VecDeque;
 
 use euclid::default::{Point2D, Rect, Size2D};
 use turbozone_core::{ProgramInfo, Snapshot, WindowAction, WindowInfo, WindowState};
 
-/// Supplies a one-shot owned snapshot so headless rendering uses the real engine boundary.
+/// Supplies scripted observations so UI transitions use the real engine boundary.
 #[derive(Default)]
 pub struct TestBackend {
-    pub windows: Vec<WindowInfo<u64>>,
+    pub snapshots: VecDeque<anyhow::Result<Snapshot<u64>>>,
 }
 
 impl turbozone_core::Backend for TestBackend {
     type Handle = u64;
 
     fn snapshot(&mut self) -> anyhow::Result<Snapshot<Self::Handle>> {
-        Ok(Snapshot { windows: std::mem::take(&mut self.windows), ..Default::default() })
+        self.snapshots.pop_front().unwrap_or_else(|| Ok(Snapshot::default()))
     }
 
     #[expect(clippy::panic_in_result_fn, reason = "a render-side effect must fail the test, not be logged as an operational error")]
