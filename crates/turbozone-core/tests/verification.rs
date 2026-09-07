@@ -3,6 +3,7 @@ use std::rc::Rc;
 use euclid::default::{Point2D, Rect, Size2D};
 use smol_str::SmolStr;
 use turbozone_core::*;
+use turbozone_core::config_parser::*;
 
 /// Deserializes fixtures that exercise semantic verification separately from document parsing.
 fn parse(source: &str) -> Config {
@@ -24,15 +25,13 @@ fn window_with_size(
         handle: (),
         title: title.into(),
         state: WindowState::Normal,
-        detail: Ok(WindowDetail {
-            monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
-            content_rect: Rect::new(Point2D::zero(), size),
-            process_id: 42,
-            program: Rc::new(ProgramInfo {
-                path: program_path.into(),
-                name: program_name.into(),
-                description: program_name.into(),
-            }),
+        monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
+        content_rect: Rect::new(Point2D::zero(), size),
+        process_id: 42,
+        program: Rc::new(ProgramInfo {
+            path: program_path.into(),
+            name: program_name.into(),
+            description: program_name.into(),
         }),
     }
 }
@@ -373,24 +372,6 @@ fn matching_rule_uses_source_order_for_equal_priority() {
     );
 }
 
-#[test]
-fn size_filtered_rule_rejects_incomplete_window_details() {
-    let rules = validate(&parse(
-        r#"
-        [[rules]]
-        name = "large"
-        window.min = [640, 480]
-    "#,
-    ))
-    .expect("size matcher must validate");
-
-    let mut candidate = window("app.exe", "c:/app.exe", "App");
-    candidate.detail = Err(anyhow::anyhow!("client size unavailable"));
-
-    assert_eq!(matching_rule_name(&rules, &candidate), None);
-}
-
-/// Native geometry must satisfy both array bounds, including equal endpoints.
 #[test]
 fn size_bounds_are_inclusive() {
     let rules = validate(&parse(

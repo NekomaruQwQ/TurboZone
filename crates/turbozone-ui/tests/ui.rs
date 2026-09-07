@@ -1,7 +1,8 @@
+use turbozone_core::config_parser::parse_config;
 use eframe::egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Shape, Vec2};
 use euclid::default::{Point2D, Size2D};
 use smol_str::{SmolStr, format_smolstr};
-use turbozone_core::{Engine, WindowAction, WindowInfo, parse_config};
+use turbozone_core::{Engine, WindowAction, WindowInfo};
 use turbozone_ui::app::{App, TURBOZONE_WINDOW_SIZE};
 
 #[path = "support/window.rs"]
@@ -166,9 +167,8 @@ fn satisfied_controls_are_disabled_for_windows_and_complete_groups() {
     let source = "[[rules]]\nname = 'app'\nmove = true\nresize.exact = [1280, 720]";
     let mut windows = grouped_windows();
     for window in &mut windows {
-        let detail = window.detail.as_mut().unwrap();
-        detail.content_rect.origin = Point2D::new(320, 180);
-        detail.content_rect.size = Size2D::new(1280, 720);
+        window.content_rect.origin = Point2D::new(320, 180);
+        window.content_rect.size = Size2D::new(1280, 720);
     }
     let mut view = View::new(source, windows);
     for label in ["\u{2705} CENTER", "\u{2705} 1280x720"] {
@@ -182,9 +182,8 @@ fn satisfied_controls_are_disabled_for_windows_and_complete_groups() {
 fn one_satisfied_window_does_not_disable_actions_for_the_group() {
     let source = "[[rules]]\nname = 'app'\nmove = true\nresize = [1280, 720]";
     let mut windows = grouped_windows();
-    let detail = windows[0].detail.as_mut().unwrap();
-    detail.content_rect.origin = Point2D::new(320, 180);
-    detail.content_rect.size = Size2D::new(1280, 720);
+    windows[0].content_rect.origin = Point2D::new(320, 180);
+    windows[0].content_rect.size = Size2D::new(1280, 720);
     let mut view = View::new(source, windows);
     assert_eq!(view.click("\u{2705} CENTER", 0), []);
     assert_eq!(view.click("\u{2705} 1280x720", 0), []);

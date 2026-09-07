@@ -1,7 +1,7 @@
 //! Public-contract tests for Windows snapshots, actions, diagnostics, and geometry.
 
 use euclid::default::Size2D;
-use turbozone_core::{Backend as _, WindowAction, WindowState};
+use turbozone_core::{Backend as _, WindowAction, WindowInfo, WindowState};
 use turbozone_windows::{Backend, Handle, NativeError};
 use windows::Win32::Foundation::{E_INVALIDARG, HWND};
 
@@ -10,26 +10,22 @@ mod test_window;
 use test_window::TestWindow;
 
 #[test]
-fn snapshot_returns_complete_details_for_an_owned_visible_window() {
+fn snapshot_returns_complete_fields_for_an_owned_visible_window() {
     let window = TestWindow::visible_offscreen();
     let expected_content = window.content_rect(WindowState::Normal);
     let expected_monitor = window.monitor_rect();
 
-    let captured = Backend::default().snapshot().unwrap()
-        .into_iter()
-        .find(|candidate| candidate.handle == window.handle())
-        .expect("snapshot must retain the fixture window");
-    let detail = captured.detail.unwrap();
+    let captured = capture(&window);
 
     assert_eq!(
         (
             captured.title.as_str(),
-            detail.process_id,
-            detail.monitor_rect,
-            detail.content_rect,
-            detail.program.path.is_empty(),
-            detail.program.name.is_empty(),
-            detail.program.description.is_empty(),
+            captured.process_id,
+            captured.monitor_rect,
+            captured.content_rect,
+            captured.program.path.is_empty(),
+            captured.program.name.is_empty(),
+            captured.program.description.is_empty(),
         ),
         (
             window.title(),
@@ -45,14 +41,9 @@ fn snapshot_returns_complete_details_for_an_owned_visible_window() {
 #[test]
 fn snapshot_uses_program_name_when_executable_has_no_description() {
     let window = TestWindow::visible_offscreen();
-    let detail = Backend::default().snapshot().unwrap()
-        .into_iter()
-        .find(|candidate| candidate.handle == window.handle())
-        .expect("snapshot must retain the fixture window")
-        .detail
-        .unwrap();
+    let captured = capture(&window);
 
-    assert_eq!(detail.program.description, detail.program.name);
+    assert_eq!(captured.program.description, captured.program.name);
 }
 
 #[test]
@@ -116,4 +107,41 @@ fn restored_state_query_matches_the_fixture_normal_geometry() {
     assert_eq!(
         window.content_rect(WindowState::Minimized),
         window.content_rect(WindowState::Normal));
+}
+
+#[test]
+fn handle_display_uses_current_title_and_falls_back_to_native_identity() {
+    let window = TestWindow::hidden();
+    let prefix = format!("0x{:X}", window.handle().value());
+    assert_eq!(window.handle().to_string(), format!("{prefix} (\"{}\")", window.title()));
+    // SAFETY: Only the fixture-owned window is modified, on its creating thread.
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SetWindowTextW(
+            window.handle().0, &windows::core::HSTRING::new())
+    }.unwrap();
+    assert_eq!(window.handle().to_string(), prefix);
+    assert_eq!(Handle::<HWND>::invalid().to_string(), "0x0");
+}
+
+#[test]
+fn handle_display_escapes_control_characters_without_losing_unicode() {
+    let window = TestWindow::hidden();
+    let title = windows::core::HSTRING::from("Editor \"quoted\"\n\u{5de5}\u{5177}");
+    // SAFETY: Only the fixture-owned window is modified, on its creating thread.
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SetWindowTextW(window.handle().0, &title)
+    }.unwrap();
+    let description = window.handle().to_string();
+    let prefix = format!("0x{:X}", window.handle().value());
+    assert_eq!(description.strip_prefix(&prefix).unwrap(), " (\"Editor \\\"quoted\\\"\\n\u{5de5}\u{5177}\")");
+}
+
+/// Inspect the fixture failure explicitly; unrelated desktop windows may fail normally.
+fn capture(window: &TestWindow) -> WindowInfo<Handle<HWND>> {
+    let snapshot = Backend::default().snapshot().unwrap();
+    assert!(!snapshot.errors.contains_key(&window.handle()),
+        "fixture capture failed: {:?}", snapshot.errors.get(&window.handle()));
+    snapshot.windows.into_iter()
+        .find(|candidate| candidate.handle == window.handle())
+        .expect("snapshot must retain the fixture window")
 }

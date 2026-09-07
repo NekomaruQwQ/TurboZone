@@ -1,12 +1,12 @@
 //! Verifies the recoverable resize-default diagnostic independently of global loggers
 //! installed by other integration-test executables. Repeated UI queries must stay silent.
 
+use turbozone_core::config_parser::{parse_config, verify_config};
 use std::sync::Mutex;
 
 use euclid::default::Size2D;
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use smol_str::{SmolStr, format_smolstr};
-use turbozone_core::{parse_config, verify_config};
 
 struct CapturedLogs(Mutex<Vec<(Level, SmolStr)>>);
 

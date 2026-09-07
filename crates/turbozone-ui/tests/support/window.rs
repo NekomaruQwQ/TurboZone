@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use euclid::default::{Point2D, Rect, Size2D};
-use turbozone_core::{ProgramInfo, WindowAction, WindowDetail, WindowInfo, WindowState};
+use turbozone_core::{ProgramInfo, Snapshot, WindowAction, WindowInfo, WindowState};
 
 /// Supplies a one-shot owned snapshot so headless rendering uses the real engine boundary.
 #[derive(Default)]
@@ -12,8 +12,8 @@ pub struct TestBackend {
 impl turbozone_core::Backend for TestBackend {
     type Handle = u64;
 
-    fn snapshot(&mut self) -> anyhow::Result<Vec<WindowInfo<Self::Handle>>> {
-        Ok(std::mem::take(&mut self.windows))
+    fn snapshot(&mut self) -> anyhow::Result<Snapshot<Self::Handle>> {
+        Ok(Snapshot { windows: std::mem::take(&mut self.windows), ..Default::default() })
     }
 
     #[expect(clippy::panic_in_result_fn, reason = "a render-side effect must fail the test, not be logged as an operational error")]
@@ -28,15 +28,13 @@ pub fn window(path: &str, title: &str) -> WindowInfo<u64> {
         handle: 1,
         title: title.into(),
         state: WindowState::Normal,
-        detail: Ok(WindowDetail {
-            monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
-            content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
-            process_id: 42,
-            program: Rc::new(ProgramInfo {
-                path: path.into(),
-                name: path.rsplit('/').next().unwrap().into(),
-                description: "App Description".into(),
-            }),
+        monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
+        content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
+        process_id: 42,
+        program: Rc::new(ProgramInfo {
+            path: path.into(),
+            name: path.rsplit('/').next().unwrap().into(),
+            description: "App Description".into(),
         }),
     }
 }

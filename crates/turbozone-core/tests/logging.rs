@@ -1,69 +1,128 @@
-use std::rc::Rc;
+//! Exercises snapshot diagnostics through the real engine, in an isolated logger process.
+
+use std::collections::VecDeque;
+use std::fmt;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use euclid::default::{Point2D, Rect, Size2D};
-use log::{LevelFilter, Log, Metadata, Record};
+use log::{Level, LevelFilter, Log, Metadata, Record};
 use smol_str::{SmolStr, format_smolstr};
-use turbozone_core::{ProgramInfo, SnapshotLogging, WindowDetail, WindowInfo, WindowState};
+use turbozone_core::{Backend, Engine, Snapshot, WindowAction};
 
-/// Captures logging transitions without installing a terminal logger.
-struct CapturedLogs(Mutex<Vec<SmolStr>>);
+struct CapturedLogs(Mutex<Vec<(Level, SmolStr)>>);
 
 impl Log for CapturedLogs {
     fn enabled(&self, _: &Metadata<'_>) -> bool { true }
     fn log(&self, record: &Record<'_>) {
-        self.0.lock().unwrap().push(format_smolstr!("{}", record.args()));
+        self.0.lock().unwrap().push((record.level(), format_smolstr!("{}", record.args())));
     }
     fn flush(&self) {}
 }
 
-/// A logger must remain alive for the entire integration-test process.
 static LOGS: CapturedLogs = CapturedLogs(Mutex::new(Vec::new()));
+const NO_LOGS: [(Level, SmolStr); 0] = [];
+static DESCRIPTION: AtomicUsize = AtomicUsize::new(0);
 
-fn window(title: &str) -> WindowInfo<u64> {
-    WindowInfo {
-        handle: 7,
-        title: title.into(),
-        state: WindowState::Normal,
-        detail: Ok(WindowDetail {
-            monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
-            content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
-            process_id: 42,
-            program: Rc::new(ProgramInfo {
-                path: "C:/Private/Tool.exe".into(),
-                name: "tool.exe".into(),
-                description: "Tool".into(),
-            }),
-        }),
+/// Display deliberately differs from Debug and can change without changing identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct TestHandle(u64);
+
+impl fmt::Display for TestHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "native-window-{}-title-{}", self.0, DESCRIPTION.load(Ordering::Relaxed))
     }
 }
 
-/// Drains each transition so unchanged failures are observable as no new output.
-fn take_logs() -> Vec<SmolStr> { std::mem::take(&mut *LOGS.0.lock().unwrap()) }
+struct ScriptedBackend(VecDeque<anyhow::Result<Snapshot<TestHandle>>>);
 
+impl Backend for ScriptedBackend {
+    type Handle = TestHandle;
+    fn snapshot(&mut self) -> anyhow::Result<Snapshot<TestHandle>> {
+        self.0.pop_front().expect("each update needs a scripted observation")
+    }
+    fn perform(&mut self, _: TestHandle, _: WindowAction) -> anyhow::Result<()> {
+        Err(anyhow::anyhow!("action denied").context("native action"))
+    }
+}
+
+fn failures(entries: &[(u64, &str)]) -> Snapshot<TestHandle> {
+    Snapshot {
+        errors: entries.iter().map(|&(handle, cause)| {
+            (TestHandle(handle), anyhow::anyhow!("{cause}").context("capture"))
+        }).collect(),
+        ..Default::default()
+    }
+}
+
+fn enumeration(cause: &str) -> anyhow::Result<Snapshot<TestHandle>> {
+    Err(anyhow::anyhow!("{cause}").context("enumerate"))
+}
+
+fn advance(engine: &mut Engine<ScriptedBackend>) -> Vec<(Level, SmolStr)> {
+    engine.update();
+    std::mem::take(&mut *LOGS.0.lock().unwrap())
+}
+
+/// Ordered transitions share one global logger; no other test can consume these records.
 #[test]
-fn snapshot_logging_reports_changes_recovery_and_recurrence_without_periodic_spam() {
+fn engine_deduplicates_adjacent_snapshots_without_hiding_current_errors() {
     log::set_logger(&LOGS).unwrap();
     log::set_max_level(LevelFilter::Trace);
-    let mut logging = SnapshotLogging::default();
-    let mut snapshot = window("Private Window");
-    snapshot.detail = Err(anyhow::anyhow!("access denied").context("Program path"));
-    logging.update(std::slice::from_ref(&snapshot));
-    assert_eq!(take_logs(), ["window 7 title=\"Private Window\": Program path: access denied"]);
+    let backend = ScriptedBackend([
+        Ok(failures(&[(7, "denied")])),
+        Ok(failures(&[(7, "denied")])),
+        Ok(failures(&[(7, "denied")])),
+        Ok(failures(&[(7, "gone")])),
+        Ok(failures(&[(7, "gone"), (8, "denied")])),
+        Ok(failures(&[(7, "gone")])),
+        Ok(failures(&[(7, "gone"), (8, "denied")])),
+        enumeration("outage"),
+        enumeration("outage"),
+        enumeration("different cause"),
+        Ok(failures(&[(7, "gone"), (8, "denied")])),
+        Ok(failures(&[])),
+        Ok(failures(&[(7, "gone")])),
+        Ok(failures(&[])),
+        Ok(failures(&[(7, "gone")])),
+        Ok(failures(&[])),
+        Ok(failures(&[(7, "denied")])),
+        Ok(failures(&[(7, "denied")])),
+    ].into());
+    let mut engine = Engine::new(Vec::new(), backend);
+    assert_eq!(advance(&mut engine), [(Level::Warn,
+        "failed to snapshot window native-window-7-title-0: capture: denied".into())]);
+    assert_eq!(advance(&mut engine), NO_LOGS);
+    DESCRIPTION.store(1, Ordering::Relaxed);
+    assert_eq!(advance(&mut engine), NO_LOGS, "identity description does not enter the dedup key");
+    assert_eq!(advance(&mut engine), [(Level::Warn,
+        "failed to snapshot window native-window-7-title-1: capture: gone".into())]);
+    assert_eq!(advance(&mut engine), [(Level::Warn,
+        "failed to snapshot window native-window-8-title-1: capture: denied".into())]);
+    assert_eq!(advance(&mut engine), NO_LOGS);
+    assert_eq!(advance(&mut engine).len(), 1, "an absent handle can recur");
+    assert_eq!(advance(&mut engine), [(Level::Error,
+        "window enumeration failed: enumerate: outage".into())]);
+    assert_eq!(advance(&mut engine), NO_LOGS);
+    assert_eq!(advance(&mut engine), [(Level::Error,
+        "window enumeration failed: enumerate: different cause".into())]);
+    assert_eq!(advance(&mut engine).len(), 2, "an outage discards window failure history");
+    assert_eq!(advance(&mut engine), NO_LOGS);
+    assert_eq!(advance(&mut engine).len(), 1);
+    assert_eq!(advance(&mut engine), NO_LOGS);
+    assert_eq!(advance(&mut engine).len(), 1);
 
-    logging.update(std::slice::from_ref(&snapshot));
-    assert_eq!(take_logs(), Vec::<SmolStr>::new());
+    engine.queue([(TestHandle(7), WindowAction::Center); 2]);
+    let actions = advance(&mut engine);
+    assert_eq!(actions.len(), 2, "repeated user action failures are never suppressed");
+    assert!(actions.iter().all(|&(level, ref message)| {
+        level == Level::Error && message.as_str() ==
+            "failed to perform action Center on native-window-7-title-1: native action: action denied"
+    }));
 
-    snapshot.detail = Err(anyhow::anyhow!("window disappeared").context("Client geometry"));
-    logging.update(std::slice::from_ref(&snapshot));
-    assert_eq!(take_logs(), ["window 7 title=\"Private Window\": Client geometry: window disappeared"]);
-
-    logging.enumeration_failed("enumeration unavailable");
-    assert_eq!(take_logs(), ["window enumeration failed: enumeration unavailable"]);
-    logging.enumeration_failed("enumeration unavailable");
-    assert_eq!(take_logs(), Vec::<SmolStr>::new());
-
-    logging.update(&[window("Recovered")]);
-    logging.update(std::slice::from_ref(&snapshot));
-    assert_eq!(take_logs().len(), 1);
+    log::set_max_level(LevelFilter::Off);
+    assert_eq!(advance(&mut engine), NO_LOGS);
+    assert_eq!(engine.snapshot().as_ref().unwrap().errors.len(), 1);
+    log::set_max_level(LevelFilter::Trace);
+    assert_eq!(advance(&mut engine), NO_LOGS, "disabled output still advances dedup state");
+    assert_eq!(engine.view().unwrap().errors.len(), 1);
 }

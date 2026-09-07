@@ -132,7 +132,11 @@ impl<B: Backend> App<B> {
         ui: &mut Ui,
         engine: &mut Engine<B>,
         action_callback: &mut F) {
-        let groups = engine.groups();
+        let Ok(view) = engine.view() else {
+            ui.weak("- nothing here -");
+            return;
+        };
+        let groups = &view.groups;
 
         if !groups.is_empty() {
             for group in groups {
@@ -141,7 +145,7 @@ impl<B: Backend> App<B> {
                     group.program.path.as_str());
                 let rule =
                     engine
-                        .rule(&group.rule_name)
+                        .rule(group.rule_name)
                         .expect("a rendered group must reference an active rule");
                 ui.push_id(group_id, |ui| {
                     Self::group_ui(ui, group, rule, action_callback);
@@ -155,7 +159,7 @@ impl<B: Backend> App<B> {
     /// Uses the stable rule name for headings and queries resize availability on demand.
     fn group_ui<F: FnMut(B::Handle, WindowAction)>(
         ui: &mut Ui,
-        group: &Group<B::Handle>,
+        group: &Group<'_, B::Handle>,
         rule: &Rule,
         action_callback: &mut F) {
         ui.horizontal(|ui| {
@@ -180,8 +184,7 @@ impl<B: Backend> App<B> {
                     group
                         .windows
                         .iter()
-                        .filter_map(|window| window.detail.as_ref().ok())
-                        .all(WindowDetail::is_centered);
+                        .all(|window| window.is_centered());
                 let common_size =
                     rule.resize
                         .primary_size()
@@ -189,8 +192,7 @@ impl<B: Backend> App<B> {
                             group
                                 .windows
                                 .iter()
-                                .filter_map(|window| window.detail.as_ref().ok())
-                                .map(|detail| detail.content_rect.size)
+                                .map(|window| window.content_rect.size)
                                 .all(|size| size == primary_size)
                         });
                 Self::action_ui(
@@ -235,20 +237,15 @@ impl<B: Backend> App<B> {
         });
 
         ui.horizontal(|ui| {
-            let detail =
-                window
-                    .detail
-                    .as_ref()
-                    .expect("window detail should always present in a rendered snapshot");
             let resized =
                 rule.resize
                     .primary_size()
-                    .map(|size| size == detail.content_rect.size)
+                    .map(|size| size == window.content_rect.size)
                     .unwrap_or(true);
             Self::action_ui(
                 ui,
                 rule,
-                detail.is_centered(),
+                window.is_centered(),
                 resized,
                 action_callback);
         });

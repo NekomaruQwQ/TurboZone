@@ -1,6 +1,7 @@
+use turbozone_core::config_parser::{parse_config, verify_config};
 use euclid::default::Size2D;
 use smol_str::format_smolstr;
-use turbozone_core::{Config, Pattern, ResizeRule, ResizeSelector, Rule, parse_config, verify_config};
+use turbozone_core::{Config, Pattern, ResizeRule, ResizeSelector, Rule};
 
 /// Both successful and failed verification must leave authored values available for
 /// inspection. Serialization observes every config field without adding equality derives.

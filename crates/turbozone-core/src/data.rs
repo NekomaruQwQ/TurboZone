@@ -30,7 +30,9 @@ pub enum WindowState {
     Minimized,
 }
 
-/// An immutable native window snapshot used by classification and rendering.
+/// A complete immutable native observation used by classification and rendering.
+/// Failed required queries are retained separately in [`crate::Snapshot::errors`].
+#[derive(Debug)]
 pub struct WindowInfo<H> {
     /// The native handle identifying the exact enumerated window.
     pub handle: H,
@@ -60,11 +62,12 @@ pub struct WindowInfo<H> {
     /// [`Backend`](crate::Backend).
     ///
     /// Encountering invalid utf-8 strings in any of the fields is considered
-    /// an error and will be reported as a failure to obtain the window detail.
+    /// an error and will be reported as a failure to capture this window.
     pub program: Rc<ProgramInfo>,
 }
 
 impl<H> WindowInfo<H> {
+    /// Compares integer client/work-area centers, matching native centering actions.
     pub fn is_centered(&self) -> bool {
         self.content_rect.center() == self.monitor_rect.center()
     }

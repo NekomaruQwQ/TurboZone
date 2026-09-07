@@ -1,11 +1,11 @@
+use turbozone_core::config_parser::parse_config;
 use std::rc::Rc;
 
 use euclid::default::{Point2D, Rect, Size2D};
 use schemars::generate::SchemaSettings;
 use smol_str::format_smolstr;
 use turbozone_core::{
-    Config, Pattern, ProgramInfo, WindowDetail, WindowInfo, WindowState, matches_rule,
-    parse_config,
+    Config, Pattern, ProgramInfo, WindowInfo, WindowState, matches_rule,
 };
 
 const DESCRIPTION: &str =
@@ -79,15 +79,13 @@ fn matching_handles_long_unicode_patterns_without_truncation() {
         handle: (),
         title: "Tool".into(),
         state: WindowState::Normal,
-        detail: Ok(WindowDetail {
-            monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
-            content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
-            process_id: 42,
-            program: Rc::new(ProgramInfo {
-                path: "c:/apps/tool.exe".into(),
-                name: "\u{e4}bcdefghijklmnopqrstuvwxyz".into(),
-                description: "Tool".into(),
-            }),
+        monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
+        content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
+        process_id: 42,
+        program: Rc::new(ProgramInfo {
+            path: "c:/apps/tool.exe".into(),
+            name: "\u{e4}bcdefghijklmnopqrstuvwxyz".into(),
+            description: "Tool".into(),
         }),
     };
 

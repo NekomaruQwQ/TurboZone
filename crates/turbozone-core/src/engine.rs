@@ -1,76 +1,81 @@
 //! Backend-independent action orchestration and snapshot lifecycle.
+//!
+//! Native observations remain independent of configured rules. Updates replace owned
+//! snapshots and compare their failures; borrowed views classify only when requested.
 
 use crate::*;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::hash::Hash;
-use std::rc::Rc;
-use std::time::Duration;
 use std::time::Instant;
 
 use smol_str::*;
 
-pub struct Snapshot<B: Backend> {
-    pub groups: Vec<Group<B::Handle>>,
-    pub errors: HashMap<B::Handle, anyhow::Error>,
+/// One backend observation, retaining every successful relevant window and failure.
+///
+/// Handles must be unique across both collections. Platform filtering belongs to the
+/// backend; unmatched successes stay here because rule selection is a derived query.
+#[derive(Debug)]
+pub struct Snapshot<H> {
+    pub windows: Vec<WindowInfo<H>>,
+    pub errors: HashMap<H, anyhow::Error>,
 }
 
+impl<H> Default for Snapshot<H> {
+    fn default() -> Self { Self { windows: Vec::new(), errors: HashMap::new() } }
+}
+
+/// A rule-dependent view borrowing one immutable engine snapshot.
+///
+/// Groups allocate only their membership lists; windows, program metadata, rule names,
+/// and failures still belong to the engine. Dropping a view never loses observations.
+#[derive(Debug)]
+pub struct EngineView<'a, H> {
+    pub groups: Vec<Group<'a, H>>,
+    pub errors: &'a HashMap<H, anyhow::Error>,
+}
 
 /// Supplies snapshots and interprets native actions for one platform.
 ///
-/// Core forwards [`WindowAction`] values without dispatching their variants. This keeps
-/// platform-specific dispatch beside the native mechanisms while core retains queue
-/// order, refresh policy, and non-fatal error handling.
-pub trait Backend: Sized {
-    /// Cheap, stable identity retained between a snapshot and its deferred action.
+/// Core forwards actions without dispatching variants. Platform adapters own native
+/// reads, writes, filtering, and per-window error partitioning; core owns orchestration.
+pub trait Backend {
+    /// Cheap native identity, stable independently of changing display metadata.
     ///
-    /// Its [`fmt::Display`] implementation is used for logging and error messages,
-    /// so it should provide a human-readable representation of the native window
-    /// identity as much as possible.
-    type Handle:
-        fmt::Debug +
-        fmt::Display +
-        Copy + PartialEq + Eq + Hash + 'static;
+    /// Display provides a best-effort description even when capture failed or the
+    /// window disappeared. It must not fail merely because metadata is unavailable.
+    type Handle: fmt::Debug + fmt::Display + Copy + Eq + Hash + 'static;
 
-    /// Captures the currently relevant application windows.
-    fn snapshot(&mut self)
-     -> anyhow::Result<Snapshot<Self>>;
+    /// Captures relevant windows; an outer failure invalidates the entire enumeration.
+    fn snapshot(&mut self) -> anyhow::Result<Snapshot<Self::Handle>>;
 
-    /// Performs one action against live native state.
-    ///
-    /// Implementations return operational failures and must panic for an unsupported
-    /// future action variant rather than silently accepting an operation they did not
-    /// perform.
+    /// Performs one action against live state, retaining contextual native failures.
+    /// Implementations must panic for an unsupported future action variant.
     fn perform(&mut self, target: Self::Handle, action: WindowAction)
      -> anyhow::Result<()>;
 }
 
-/// Owns product state and advances it only through explicit logic ticks.
+/// Owns native observations and advances them only through explicit updates.
 ///
-/// Presentation code may queue work and inspect the latest sections, but only a tick
-/// performs native effects or replaces the snapshot. Actions run before refresh so the
-/// resulting snapshot reflects accepted user operations.
+/// Actions run before capture so the next observation reflects accepted operations.
+/// Presentation decides when to update; grouping is a pure, uncached borrowed query.
 pub struct Engine<B: Backend> {
     backend: B,
     rules: Vec<Rule>,
-    snapshot: anyhow::Result<Snapshot<B>>,
+    snapshot: anyhow::Result<Snapshot<B::Handle>>,
     snapshot_timestamp: Instant,
     pending_actions: Vec<(B::Handle, WindowAction)>,
 }
 
 impl<B: Backend> Engine<B> {
-    /// Creates an unticked engine taking ownership of verified rules and the backend.
-    /// Callers supply rules from [`crate::parse_config`] or verify their config first.
-    /// Borrowed access keeps authored values stable for matching and presentation.
+    /// Creates an engine with no native capture yet and an empty successful snapshot.
+    /// Callers provide rules from [`config_parser::parse_config`] or verify them first.
     pub fn new(rules: Vec<Rule>, backend: B) -> Self {
         Self {
             backend,
             rules,
-            snapshot: Ok(Snapshot {
-                groups: Vec::new(),
-                errors: HashMap::new(),
-            }),
+            snapshot: Ok(Snapshot::default()),
             snapshot_timestamp: Instant::now(),
             pending_actions: Vec::new(),
         }
@@ -78,33 +83,40 @@ impl<B: Backend> Engine<B> {
 
     /// Resolves a verified rule through its stable configuration identity.
     pub fn rule(&self, name: &str) -> Option<&Rule> {
-        self.rules
-            .iter()
-            .find(|rule| rule.name == name)
+        self.rules.iter().find(|rule| rule.name == name)
     }
 
-    /// Returns the latest successfully grouped snapshot, or a top-level
-    /// error with its timestamp.
-    pub fn snapshot(&self) -> &anyhow::Result<Snapshot<B>> {
-        &self.snapshot
+    /// Borrows the latest raw observation, preserving enumeration failure explicitly.
+    pub const fn snapshot(&self) -> &anyhow::Result<Snapshot<B::Handle>> { &self.snapshot }
+
+    /// Returns construction time before the first update, then the last completion time.
+    /// Failed attempts advance it too, allowing presentation to pace automatic retries.
+    pub const fn snapshot_timestamp(&self) -> Instant { self.snapshot_timestamp }
+
+    /// Classifies captured successes without native queries, logging, or cached state.
+    /// Enumeration failure propagates instead of masquerading as an empty matched view.
+    pub fn view(&self) -> Result<EngineView<'_, B::Handle>, &anyhow::Error> {
+        self.snapshot.as_ref().map(|snapshot| EngineView {
+            groups: group_windows(&self.rules, &snapshot.windows),
+            errors: &snapshot.errors,
+        })
     }
 
-    /// Defers native operations until the next logic tick in iterator order.
+    /// Defers native operations until the next update in iterator order.
     pub fn queue<I>(&mut self, actions: I)
     where
         I: IntoIterator<Item = (B::Handle, WindowAction)>, {
         self.pending_actions.extend(actions);
     }
 
-    /// Returns whether user work should trigger a tick before the periodic deadline.
-    pub const fn has_pending_actions(&self) -> bool {
-        !self.pending_actions.is_empty()
-    }
+    /// Returns whether user work should trigger an update before the periodic deadline.
+    pub const fn has_pending_actions(&self) -> bool { !self.pending_actions.is_empty() }
 
-    /// Applies queued operations and refreshes the complete derived view state.
+    /// Attempts the complete queued batch, then replaces the raw snapshot on any outcome.
     ///
-    /// Individual action and snapshot failures are logged as non-fatal. A failed
-    /// top-level snapshot clears sections so the UI never presents older data as live.
+    /// Each action failure is logged, while snapshot failures are compared only with the
+    /// preceding observation. An enumeration outage discards per-window dedup history;
+    /// resumed window failures are therefore reported again. No grouping runs here.
     pub fn update(&mut self) {
         for (handle, action) in self.pending_actions.drain(..) {
             if let Err(error) = self.backend.perform(handle, action) {
@@ -112,38 +124,50 @@ impl<B: Backend> Engine<B> {
             }
         }
 
-        let windows = match self.backend.snapshot() {
-            Ok(windows) => windows,
-            Err(error) => {
-                self.logging.enumeration_failed(format_smolstr!("{error}"));
-                self.snapshot_groups.clear();
-                return;
+        let next = self.backend.snapshot();
+        match next {
+            Ok(ref snapshot) => {
+                let previous = self.snapshot.as_ref().ok();
+                #[expect(clippy::iter_over_hash_type, reason = "per-window log order is not part of the snapshot contract")]
+                for (handle, error) in &snapshot.errors {
+                    let previous_error = previous.and_then(|snapshot| snapshot.errors.get(handle));
+                    if !same_error(previous_error, error) {
+                        log::warn!("failed to snapshot window {handle}: {error:#}");
+                    }
+                }
             },
-        };
-
-        self.snapshot_groups = group_windows(&self.rules, windows);
+            Err(ref error) => {
+                if !same_error(self.snapshot.as_ref().err(), error) {
+                    log::error!("window enumeration failed: {error:#}");
+                }
+            },
+        }
+        self.snapshot = next;
+        self.snapshot_timestamp = Instant::now();
     }
+}
+
+/// Compares full contextual chains while leaving the original errors available to callers.
+/// Native descriptions are excluded: a changing title does not make an error new.
+fn same_error(previous: Option<&anyhow::Error>, current: &anyhow::Error) -> bool {
+    previous.is_some_and(|previous| {
+        format_smolstr!("{previous:#}") == format_smolstr!("{current:#}")
+    })
 }
 
 /// Complete windows selected by one stable rule and case-insensitive program path.
 ///
-/// The representative program snapshot comes from the first matched window and
-/// preserves its display casing. Sharing it through [`Rc`] lets presentation code
-/// render group metadata without recovering it from an arbitrary window.
-pub struct Group<H> {
-    /// Stable rule identity; source-array position is deliberately not retained.
-    pub rule_name: SmolStr,
-    /// Representative immutable metadata for the grouped program.
-    pub program: Rc<ProgramInfo>,
-    /// Complete native snapshots belonging to this group.
-    pub windows: Vec<WindowInfo<H>>,
+/// All members borrow the original observation. The first matched window supplies the
+/// representative program, preserving display casing without cloning its Rc or metadata.
+#[derive(Debug)]
+pub struct Group<'a, H> {
+    pub rule_name: &'a SmolStr,
+    pub program: &'a ProgramInfo,
+    pub windows: Vec<&'a WindowInfo<H>>,
 }
 
 /// Returns the winning rule name for a complete native window snapshot.
-///
-/// Higher priorities replace an existing winner while equal priorities retain
-/// source order. Incomplete snapshots cannot match because their program and client
-/// geometry are not trustworthy inputs to the configured filters.
+/// Higher priorities replace the winner while equal priorities retain source order.
 pub fn matching_rule_name<'a, H>(
     rules: &'a [Rule],
     window: &WindowInfo<H>) -> Option<&'a SmolStr> {
@@ -159,11 +183,10 @@ pub fn matching_rule_name<'a, H>(
     winner.map(|(name, _)| name)
 }
 
-/// Returns whether every configured filter accepts a complete window snapshot.
-/// The rule must come from a verified configuration; incomplete details fail closed.
+/// Returns whether every configured filter accepts a complete snapshot.
+/// Failed captures cannot enter this boundary; the rule must be verified first.
 pub fn matches_rule<H>(rule: &Rule, window: &WindowInfo<H>) -> bool {
-    let Ok(detail) = window.detail.as_ref() else { return false; };
-    matches_program(rule, detail.program.as_ref()) && matches_window(rule, window)
+    matches_program(rule, &window.program) && matches_window(rule, window)
 }
 
 /// Selects case-insensitive evaluation for authored executable patterns.
@@ -177,16 +200,15 @@ fn matches_program(rule: &Rule, program: &ProgramInfo) -> bool {
     })
 }
 
-/// Matches title and client-area filters against one complete window snapshot.
+/// Matches case-sensitive titles and inclusive client-area bounds on both axes.
 fn matches_window<H>(rule: &Rule, window: &WindowInfo<H>) -> bool {
-    let Ok(detail) = window.detail.as_ref() else { return false; };
     let filters = &rule.window;
     if !filters.title.as_ref().is_none_or(|pattern| {
         pattern.matches(&window.title)
     }) {
         return false;
     }
-    let size = detail.content_rect.size;
+    let size = window.content_rect.size;
     filters.min.is_none_or(|min| {
         size.width >= min.width && size.height >= min.height
     }) && filters.max.is_none_or(|max| {
@@ -194,28 +216,23 @@ fn matches_window<H>(rule: &Rule, window: &WindowInfo<H>) -> bool {
     })
 }
 
-/// Groups complete matches in rule source order and then program-path order.
+/// Borrows complete matches in rule source order and then lowercase program-path order.
 ///
-/// Rule names are the only durable rule lookup key. Lowercase paths remain internal
-/// grouping and ordering keys, while each resulting [`Group`] retains the first
-/// window's display-preserving program snapshot.
-pub fn group_windows<H>(
-    rules: &[Rule],
-    windows: Vec<WindowInfo<H>>) -> Vec<Group<H>> {
+/// Unmatched windows stay in the caller's snapshot. Each emitted group is nonempty,
+/// retains member enumeration order, and uses its first member's program metadata.
+pub fn group_windows<'a, H>(
+    rules: &'a [Rule],
+    windows: &'a [WindowInfo<H>]) -> Vec<Group<'a, H>> {
     let mut matched = BTreeMap::<
-        SmolStr,
-        BTreeMap<SmolStr, (Rc<ProgramInfo>, Vec<WindowInfo<H>>)>>::new();
+        &SmolStr,
+        BTreeMap<SmolStr, (&ProgramInfo, Vec<&WindowInfo<H>>)>>::new();
     for window in windows {
-        let Ok(ref detail) = window.detail else { continue; };
-        let program_path = detail.program.path.to_lowercase_smolstr();
-        let program = Rc::clone(&detail.program);
-        let Some(rule_name) = matching_rule_name(rules, &window) else {
-            continue;
-        };
-        matched.entry(rule_name.clone())
+        let Some(rule_name) = matching_rule_name(rules, window) else { continue; };
+        let program_path = window.program.path.to_lowercase_smolstr();
+        matched.entry(rule_name)
             .or_default()
             .entry(program_path)
-            .or_insert_with(|| (program, Vec::new()))
+            .or_insert_with(|| (&window.program, Vec::new()))
             .1
             .push(window);
     }
@@ -224,7 +241,7 @@ pub fn group_windows<H>(
     for rule in rules {
         let Some(programs) = matched.remove(&rule.name) else { continue; };
         groups.extend(programs.into_values().map(|(program, windows)| Group {
-            rule_name: rule.name.clone(),
+            rule_name: &rule.name,
             program,
             windows,
         }));
@@ -232,5 +249,6 @@ pub fn group_windows<H>(
     groups
 }
 
+#[cfg(test)]
 #[path = "../tests/include/engine_ext.rs"]
-pub mod test;
+mod test;

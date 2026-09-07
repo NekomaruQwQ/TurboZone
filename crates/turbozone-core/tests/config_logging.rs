@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use log::{LevelFilter, Log, Metadata, Record};
 use smol_str::{SmolStr, format_smolstr};
-use turbozone_core::parse_config;
+use turbozone_core::config_parser::parse_config;
 
 /// Captures the parser's sole diagnostic channel without installing a terminal logger.
 struct CapturedLogs(Mutex<Vec<SmolStr>>);

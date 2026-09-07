@@ -2,8 +2,7 @@ use turbozone_core::util::Cache;
 use turbozone_core::{
     Backend      as CoreBackend,
     WindowInfo   as CoreWindowInfo,
-    WindowState,
-    WindowDetail,
+    Snapshot,
     WindowAction,
     ProgramInfo,
 };
@@ -32,10 +31,10 @@ use windows::core::Result as NativeResult;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{HMONITOR, MONITORINFO};
 
-/// Predicate type for general filtering operations.
-type Pred<T> = fn(&T) -> bool;
-
 type WindowInfo = CoreWindowInfo<Handle<HWND>>;
+
+/// Failed capture retains only native identity; Display supplies optional diagnostics.
+type WindowSnapshot = Result<WindowInfo, (Handle<HWND>, anyhow::Error)>;
 
 /// Type for caching [`MONITORINFO`] for the lifetime of a snapshot.
 ///
@@ -55,23 +54,19 @@ type ProgramCache = Cache<u64, OsString, Result<Rc<ProgramInfo>, &'static str>>;
 
 const TICK_BEFORE_EVICT: u64 = 600;
 
-const IGNORE_WINDOWS: &[Pred<WindowInfo>] = &[
-    |window| window.title.is_empty(),
-    |window| {
+/// Applies native relevance rules even when required capture failed.
+/// Empty titles are excluded independently of capture success. Identifying the shell
+/// requires complete program metadata, so a failed Program Manager capture is retained.
+fn include_window(empty_title: bool, window: &WindowSnapshot) -> bool {
+    !empty_title && !window.as_ref().is_ok_and(|window| {
         window.title == "Program Manager" &&
-        window.detail
-            .as_ref()
-            .is_ok_and(|detail| {
-                detail
-                    .program
-                    .name
-                    .eq_ignore_ascii_case("explorer.exe")
-            })},
-];
+        window.program.name.eq_ignore_ascii_case("explorer.exe")
+    })
+}
 
 /// Owns query caches and program-path liveness bookkeeping for one snapshot.
 struct SnapshotContext<'a> {
-    /// The current snapshot sequence, incremented for each successful enumeration.
+    /// The current snapshot sequence, incremented before each enumeration attempt.
     seq: u64,
     /// Temporary cache of [`MONITORINFO`] results for the lifetime of this snapshot.
     monitor_cache: MonitorCache,
@@ -93,7 +88,7 @@ pub struct Backend {
 impl CoreBackend for Backend {
     type Handle = Handle<HWND>;
 
-    fn snapshot(&mut self) -> Result<Vec<WindowInfo>> {
+    fn snapshot(&mut self) -> Result<Snapshot<Self::Handle>> {
         self.next_seq += 1;
 
         let mut ctx = SnapshotContext {
@@ -103,18 +98,28 @@ impl CoreBackend for Backend {
             program_cache: &mut self.program_cache,
         };
 
-        let windows =
-            native::enumerate_windows()?
-                .into_iter()
-                .filter(|&handle| native::is_app_window(handle))
-                .map(|handle| snapshot_window(&mut ctx, handle))
-                .filter(|window| !IGNORE_WINDOWS.iter().any(|pred| pred(window)))
-                .collect::<Vec<_>>();
+        let mut snapshot = Snapshot::default();
+        for handle in native::enumerate_windows()?
+            .into_iter()
+            .filter(|&handle| native::is_app_window(handle)) {
+            let title = native::get_window_text(handle);
+            let empty_title = title.is_empty();
+            let window = snapshot_window(&mut ctx, handle, title);
+            // Filtering follows capture so ignored windows retain the existing cache
+            // refresh behavior. The optional title stays a backend-local concern.
+            if !include_window(empty_title, &window) {
+                continue;
+            }
+            match window {
+                Ok(window) => snapshot.windows.push(window),
+                Err((handle, error)) => { snapshot.errors.insert(handle, error); },
+            }
+        }
 
         self.program_cache.evict_before(
             self.next_seq.saturating_sub(TICK_BEFORE_EVICT));
 
-        Ok(windows)
+        Ok(snapshot)
     }
 
     #[expect(clippy::panic_in_result_fn, reason = "an unknown action is a core/backend contract mismatch, not an operational failure")]
@@ -136,28 +141,18 @@ impl CoreBackend for Backend {
     }
 }
 
-/// Snapshots the [`WindowInfo`] for a given window.
-fn snapshot_window(ctx: &mut SnapshotContext, handle: HWND)
- -> WindowInfo {
-    let title = native::get_window_text(handle);
-    let state = get_window_state(handle);
-    WindowInfo {
-        handle: Handle(handle),
-        title,
-        state,
-        detail: snapshot_window_detail(ctx, handle, state),
-    }
+/// Associates the first required query failure with its native handle.
+/// Display metadata is optional and remains separate from required capture success.
+fn snapshot_window(ctx: &mut SnapshotContext, handle: HWND, title: SmolStr)
+ -> WindowSnapshot {
+    capture_window(ctx, handle, title).map_err(|error| (Handle(handle), error))
 }
 
-/// Snapshots the [`WindowDetail`] for a given window.
-///
-/// Stops at the first required query failure while treating display metadata
-/// as optional.
-fn snapshot_window_detail(
-    ctx: &mut SnapshotContext,
-    handle: HWND,
-    window_state: WindowState)
- -> Result<WindowDetail> {
+/// Captures complete geometry and program data in required-query order.
+/// Per-snapshot caches share native results; program metadata can outlive this call.
+fn capture_window(ctx: &mut SnapshotContext, handle: HWND, title: SmolStr)
+ -> Result<WindowInfo> {
+    let state = get_window_state(handle);
     let monitor_handle =
         native::get_monitor(handle);
     let monitor =
@@ -170,7 +165,7 @@ fn snapshot_window_detail(
             .clone()
             .context("failed to get monitor info")?;
     let content_rect =
-        get_content_rect(handle, window_state, &monitor)
+        get_content_rect(handle, state, &monitor)
             .context("failed to get content rect")?;
     let process_id =
         native::get_process_id(handle)
@@ -194,7 +189,10 @@ fn snapshot_window_detail(
             .as_ref()
             .map(Rc::clone)
             .map_err(|error| anyhow!("failed to get program detail of {:?}: {error}", program_path.display()))?;
-    Ok(WindowDetail {
+    Ok(WindowInfo {
+        handle: Handle(handle),
+        title,
+        state,
         monitor_rect: monitor.rcWork.convert(),
         content_rect,
         process_id,
@@ -204,8 +202,8 @@ fn snapshot_window_detail(
 
 /// Snapshots the [`ProgramInfo`] for a given program.
 ///
-/// This function does not cache the result; use [`SnapshotContext::get_program_detail`]
-/// to avoid repeated queries for the same path.
+/// The caller retains results in [`SnapshotContext::program_cache`] to avoid
+/// repeated metadata queries for the same native path.
 ///
 /// Encountering invalid utf-8 strings in any of the fields is considered
 /// an error and will be reported as a failure to obtain the program detail.
@@ -243,3 +241,7 @@ fn snapshot_program(native_path: &Path) -> Result<ProgramInfo, &'static str> {
         description,
     })
 }
+
+#[cfg(test)]
+#[path = "../tests/include/backend_ext.rs"]
+mod test;

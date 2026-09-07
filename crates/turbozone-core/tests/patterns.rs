@@ -1,4 +1,5 @@
-use turbozone_core::{Pattern, parse_config};
+use turbozone_core::config_parser::parse_config;
+use turbozone_core::Pattern;
 
 #[test]
 fn exact_patterns_compare_the_whole_input_including_empty_strings() {

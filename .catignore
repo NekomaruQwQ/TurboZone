@@ -20,3 +20,8 @@ tests/
 LICENSE
 *.lock
 *.schema.json
+
+# BEGIN agent
+/crates/turbozone-windows/src/backend.rs
+/crates/turbozone-ui/src/app.rs
+# END agent

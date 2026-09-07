@@ -1,8 +1,9 @@
+use turbozone_core::config_parser::parse_config;
 use std::rc::Rc;
 
 use euclid::default::{Point2D, Rect, Size2D};
 use turbozone_core::{
-    ProgramInfo, WindowDetail, WindowInfo, WindowState, group_windows, parse_config,
+    ProgramInfo, WindowInfo, WindowState, group_windows,
 };
 
 /// Makes complete snapshots whose handles remain opaque to core grouping.
@@ -11,15 +12,13 @@ fn window(handle: u64, path: &str, title: &str) -> WindowInfo<u64> {
         handle,
         title: title.into(),
         state: WindowState::Normal,
-        detail: Ok(WindowDetail {
-            monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
-            content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
-            process_id: 42,
-            program: Rc::new(ProgramInfo {
-                path: path.into(),
-                name: path.rsplit('/').next().unwrap().into(),
-                description: "Tool".into(),
-            }),
+        monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
+        content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
+        process_id: 42,
+        program: Rc::new(ProgramInfo {
+            path: path.into(),
+            name: path.rsplit('/').next().unwrap().into(),
+            description: "Tool".into(),
         }),
     }
 }
@@ -32,33 +31,21 @@ fn grouping_keeps_only_complete_matches_and_uses_case_insensitive_program_identi
         program.name = "TOOL.EXE"
         window.title.starts_with = "Tool"
     "#).unwrap().rules;
-    let mut failed = window(5, "C:/Apps/Tool.exe", "Tool failed");
-    failed.detail = Err(anyhow::anyhow!("Client query failed"));
-    let groups = group_windows(&rules, vec![
+    let windows = [
         window(1, "C:/Apps/Tool.exe", "Tool one"),
         window(2, "c:/apps/tool.EXE", "Tool two"),
         window(3, "C:/Apps/Tool.exe", "tool lowercase title"),
         window(4, "C:/Other/Tool.exe", "Tool other installation"),
-        failed,
-    ]);
+    ];
+    let groups = group_windows(&rules, &windows);
     assert_eq!(groups.len(), 2);
     assert_eq!(groups[0].rule_name, "tool");
     assert_eq!(groups[0].program.path, "C:/Apps/Tool.exe");
     assert_eq!(groups[0].windows.len(), 2);
-    assert!(Rc::ptr_eq(
-        &groups[0].program,
-        &groups[0].windows[0].detail.as_ref().unwrap().program));
+    assert!(std::ptr::eq(
+        groups[0].program,
+        groups[0].windows[0].program.as_ref()));
     assert_eq!(groups[1].program.path, "C:/Other/Tool.exe");
-}
-
-#[test]
-fn failed_details_never_match_even_unfiltered_rules_and_recovery_uses_new_details() {
-    let rules = parse_config("[[rules]]\nname = 'all'").unwrap().rules;
-    let mut failed = window(1, "C:/Apps/Tool.exe", "Tool");
-    failed.detail = Err(anyhow::anyhow!("Program access denied"));
-    assert!(group_windows(&rules, vec![failed]).is_empty());
-    let groups = group_windows(&rules, vec![window(2, "C:/Apps/Other.exe", "Recovered")]);
-    assert_eq!(groups[0].program.path, "C:/Apps/Other.exe");
 }
 
 #[test]
@@ -71,10 +58,11 @@ fn groups_retain_stable_names_and_source_order_after_rule_reordering() {
         priority = 10
         window.title = "Specific"
     "#).unwrap().rules;
-    let groups = group_windows(&rules, vec![
+    let windows = [
         window(1, "C:/Apps/Tool.exe", "Specific"),
         window(2, "C:/Apps/Tool.exe", "Fallback"),
-    ]);
+    ];
+    let groups = group_windows(&rules, &windows);
     assert_eq!(groups.iter().map(|group| group.rule_name.as_str())
         .collect::<Vec<_>>(), ["fallback", "specific"]);
 
@@ -86,10 +74,34 @@ fn groups_retain_stable_names_and_source_order_after_rule_reordering() {
         [[rules]]
         name = "fallback"
     "#).unwrap().rules;
-    let regrouped = group_windows(&reordered, vec![
+    let windows = [
         window(1, "C:/Apps/Tool.exe", "Specific"),
         window(2, "C:/Apps/Tool.exe", "Fallback"),
-    ]);
+    ];
+    let regrouped = group_windows(&reordered, &windows);
     assert_eq!(regrouped.iter().map(|group| group.rule_name.as_str())
         .collect::<Vec<_>>(), ["specific", "fallback"]);
+}
+
+#[test]
+fn centered_query_uses_integer_centers_without_requiring_equal_rectangles() {
+    let mut candidate = window(1, "C:/Apps/Tool.exe", "Tool");
+    candidate.monitor_rect = Rect::new(Point2D::new(-100, 50), Size2D::new(1001, 801));
+    candidate.content_rect = Rect::new(Point2D::new(150, 250), Size2D::new(501, 401));
+    assert!(candidate.is_centered());
+    candidate.content_rect.origin.x += 1;
+    assert!(!candidate.is_centered());
+}
+
+#[test]
+fn grouping_borrows_members_without_cloning_program_snapshots() {
+    let rules = parse_config("[[rules]]\nname = 'all'").unwrap().rules;
+    let windows = [window(1, "C:/Apps/Tool.exe", "Tool")];
+    let before = Rc::strong_count(&windows[0].program);
+    let first = group_windows(&rules, &windows);
+    let second = group_windows(&rules, &windows);
+    assert!(std::ptr::eq(first[0].windows[0], &raw const windows[0]));
+    assert!(std::ptr::eq(second[0].windows[0], &raw const windows[0]));
+    assert!(std::ptr::eq(first[0].rule_name, &raw const rules[0].name));
+    assert_eq!(Rc::strong_count(&windows[0].program), before);
 }

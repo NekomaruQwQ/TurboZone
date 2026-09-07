@@ -2,9 +2,10 @@
 //! Check every size position independently so optional fields and untagged resize
 //! variants cannot silently acquire a different Serde representation.
 
+use turbozone_core::config_parser::parse_config;
 use euclid::default::Size2D;
 use serde_json::json;
-use turbozone_core::{Config, ResizeRule, parse_config};
+use turbozone_core::{Config, ResizeRule};
 
 #[test]
 fn every_size_field_decodes_as_geometry_and_serializes_as_a_pair() {

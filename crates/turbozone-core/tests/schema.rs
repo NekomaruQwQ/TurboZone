@@ -1,5 +1,6 @@
 use euclid::default::Size2D;
 use turbozone_core::*;
+use turbozone_core::config_parser::*;
 
 use schemars::Schema;
 use schemars::generate::SchemaSettings;

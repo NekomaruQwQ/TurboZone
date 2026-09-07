@@ -28,7 +28,7 @@ pub fn load_config(path: &Path) -> Result<Vec<Rule>> {
     log::info!("config_path: {}", path.display());
 
     let source = read_or_create_config(path)?;
-    let config = turbozone_core::parse_config(&source)
+    let config = turbozone_core::config_parser::parse_config(&source)
         .with_context(|| format_smolstr!("failed to parse configuration: {}", path.display()))?;
     log::info!("loaded {} rules", config.rules.len());
     Ok(config.rules)
