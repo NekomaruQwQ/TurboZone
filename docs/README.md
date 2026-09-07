@@ -26,7 +26,7 @@ Names are not trimmed or normalized. Omitted `rules` means an empty rule list.
 Unknown properties, old `match_*`, `set_position`, and `set_size` keys, and unsupported
 matcher forms are rejected. There are no compatibility aliases.
 
-`turbozone-core::parse_config()` deserializes the entire document before semantic validation.
+`turbozone_core::config_parser::parse_config()` deserializes the entire document before semantic validation.
 Invalid TOML, top-level structure, or any individual rule rejects the complete configuration;
 partially verified rule sets are never exposed. Successful rules retain declaration order.
 An empty document is a valid configuration with no rules.
@@ -38,7 +38,7 @@ retain the fixed-array input contract.
 `verify_config(&Config)` can also check deserialized or manually constructed values. It logs the
 first semantic failure and returns `None`, or `Some(())` after every rule passes. Verification
 changes no authored text, resize variants, or rule order. `Engine::new` takes ownership of
-verified `Vec<Rule>` values and exposes borrowed rules; direct callers must verify first.
+verified `Vec<Rule>` values and exposes name-based rule lookup; direct callers must verify first.
 Description trimming is a borrowed query and program lowercase conversion occurs only in matching.
 
 ## Startup and diagnostics
@@ -58,10 +58,13 @@ Startup never generates schemas, and user-authored config is never rewritten aut
 
 TurboZone assumes a terminal is available. The Windows binary installs
 `pretty_env_logger::init()` without a custom filter builder; `RUST_LOG` controls filtering.
-Diagnostics omit TOML source excerpts. Per-window and action failures include the handle,
-contextual error chain, and available title or executable path. Unchanged periodic failures are
-suppressed until they change, recover, or disappear and recur. Enumeration failures are also
-deduplicated. No diagnostic UI state is kept.
+Diagnostics omit TOML source excerpts. Per-window and action failures use the backend handle's
+best-effort Display identity and the full contextual error chain. Windows Display includes the
+native hex identity and an escaped current title when available; it does not promise a historical
+title or executable path. Repeated snapshot failures are compared with the immediately preceding
+snapshot. Recovery, disappearance, or an enumeration outage breaks per-window dedup history.
+Enumeration failures also compare complete chains, including nested causes. User-requested action
+failures are always logged. The UI displays current snapshot errors even when logging is disabled.
 
 ## Actions and resize modes
 
@@ -95,7 +98,7 @@ inverted bounds still reject the complete configuration. A default or exact targ
 in the built-in manifest. A selector with no surviving choices shows an explanatory message.
 
 Position and resize permissions are independent. A matched rule with neither action remains an
-intentional actionless group. Native controls require both a successful window-detail query
+intentional actionless group. Native controls require both a successful window capture
 and a matching rule that enables the action.
 Configuration validation prevents pathological dimensions but does not guarantee that every
 accepted size can be applied. Native resize operations remain fallible because the compositor
@@ -115,8 +118,8 @@ directly, without predicate vectors or function pointers. Entirely empty partial
 by validation and fail closed if constructed manually. Absent filters remain `None` and need no
 matching conversion. Matching normalization is independent of platform-backend cache identity.
 
-`Engine` directly owns one source-order `Vec<Rule>` and exposes it as a borrowed slice.
-For each `WindowInfo` with complete details:
+`Engine` directly owns one source-order `Vec<Rule>`. Its uncached `view()` query evaluates
+each complete `WindowInfo` against those rules:
 
 1. Scan all rules in source order.
 2. AND all configured filters.
@@ -130,25 +133,28 @@ rule/window counts.
 
 ## Window geometry and snapshots
 
-The core crate owns `WindowInfo<H>`, `WindowDetail`, `ProgramInfo`, `WindowState`, and the
-generic `Backend` contract. The Windows crate owns the concrete `Handle<HWND>` and returns
-`WindowInfo<Handle<HWND>>`. A `WindowDetail` holds its immutable `ProgramInfo` through `Rc`,
-allowing a backend to share one program snapshot between multiple windows. Owned UTF-8 text
-crossing TurboZone API boundaries uses `SmolStr`, including serialized config values,
-diagnostics, startup file contents, runtime names, titles, paths, and matcher literals.
-Standard-library and serializer helpers may construct temporary buffers before conversion;
-persisted bytes and external string formats remain unchanged.
+The core crate owns `Snapshot<H>`, `WindowInfo<H>`, `ProgramInfo`, `WindowState`, and the
+generic `Backend` contract. The Windows crate owns the concrete `Handle<HWND>`. A successful
+`WindowInfo` directly contains its handle, title, visual state, monitor work area, client rectangle,
+PID, and immutable `Rc<ProgramInfo>`. Multiple windows can share one program snapshot.
+Owned UTF-8 text crossing TurboZone boundaries uses `SmolStr`; external string formats and
+persisted bytes remain unchanged.
 
-Every snapshot retains its handle, title, and visual state. Its `detail` is either:
+`Backend::snapshot()` returns `Result<Snapshot<H>, anyhow::Error>`, where `Snapshot` owns:
 
-1. `Ok(WindowDetail)`: monitor work area, controllable client rectangle, process ID, normalized
-   program path, matching filename, and human-facing program description are all available.
-2. `Err(anyhow::Error)`: the first contextual query failure, preserving its original cause.
-   Successful subsets of detail fields are not retained; this is an all-or-nothing detail boundary.
+1. `windows: Vec<WindowInfo<H>>`: all successfully captured relevant windows, including unmatched ones.
+2. `errors: HashMap<H, anyhow::Error>`: failures of required per-window queries, retaining their original causes.
 
-Detail queries stop at the first failure. Errors with documented native codes retain those
-causes; APIs without a documented last-error contract get an explicit failure message instead
-of a stale code.
+The outer error invalidates the entire enumeration. Each included handle must occur exactly once,
+in either windows or errors. Backend capture uses `Result<WindowInfo<H>, (H, anyhow::Error)>`
+before partitioning. Required queries stop at the first failure; partial fields do not cross this
+boundary. Optional title/description behavior remains unchanged. APIs with documented native errors
+retain those causes; APIs without a last-error contract report an explicit failure message.
+
+The backend filters native relevance before core sees the snapshot. Empty or unreadable titles
+remain excluded even if required capture fails. Program Manager is excluded only when successful
+capture identifies explorer.exe. Capture still precedes those title/program filters so cache refresh
+behavior remains unchanged. These omissions are not per-window failures exposed to the UI.
 
 Both rectangles use physical screen coordinates. `monitor_rect` is the work area excluding
 taskbars, not the full monitor extent. `content_rect` is the live client rectangle for normal
@@ -163,7 +169,7 @@ Custom non-client layouts and wrapped menus are not fully inferable from window 
 client geometry retains this limitation of the standard-frame approach.
 
 Each `Backend::snapshot()` call owns call-local monitor and process-path caches. Monitor results are
-shared by all window-detail queries for that monitor, including failures. Process-path results are
+shared by all window-capture queries for that monitor, including failures. Process-path results are
 shared by process ID so multiple windows from one process issue only one path query during the
 snapshot. Both caches are discarded when the call returns: monitor work areas may change, monitors
 may disappear, and process IDs may be reused.
@@ -173,7 +179,9 @@ path. It does not case-fold or normalize separators for cache identity. Successf
 immutable `Rc<ProgramInfo>`; deterministic path-conversion failures can occupy the same cache.
 Missing, empty, or unreadable version metadata produces a successful program detail whose display
 description falls back to the program filename. Program-cache retention is an internal backend
-policy rather than part of the core snapshot contract. Existing snapshots keep their program
+policy rather than part of the core snapshot contract. Its threshold remains 600 enumeration-attempt
+sequence steps (roughly 200 seconds at steady 3 Hz polling, faster with actions). Failed enumeration
+advances the sequence but skips eviction; this is not a wall-clock expiration policy. Existing snapshots keep their program
 details alive independently through `Rc`. Native actions query current geometry separately.
 
 ## Size filters
@@ -183,43 +191,59 @@ They are independent of `resize.min` and `resize.max`, which constrain resize de
 
 Bounds are inclusive on both axes, limited to `1` through `16,384` when present, and otherwise
 unrestricted. Normal windows use live client size; minimized/maximized windows use restored
-client size. Any detail-query failure excludes the whole snapshot from matching, even for
+client size. Any required query failure excludes that window from matching, even for
 unfiltered rules.
 
-Matching is reevaluated on every snapshot, so moving, resizing, or query recovery may change a
-window's winning rule.
+Matching is reevaluated whenever a view is requested. Moving, resizing, or query recovery can
+change a window's winning rule after the next native snapshot.
 
 ## Classification and UI
 
-Snapshots are logged before classification, then only complete matches are retained:
+`Engine::update()` performs pending actions, captures and stores raw backend state, and compares
+errors with the previous snapshot. It performs no grouping. `Engine::snapshot()` borrows that raw
+Result; `Engine::view()` returns `Result<EngineView<'_, H>, &anyhow::Error>` on demand:
 
 ```text
-WindowInfo
-    Err(error) -> log first/changed failure, discard snapshot
-    Ok(detail), no winning rule -> discard normally
-    Ok(detail), winning rule -> (rule, program path) group
+Raw snapshot
+    Err(enumeration error) -> EngineView query returns the same borrowed error
+    Ok(windows, errors)   -> group successful matches and borrow the error map
+
+Successful window
+    no winning rule -> retained in raw snapshot, absent from groups
+    winning rule    -> borrowed member of a (rule, lowercase program path) group
 ```
 
-`group_windows()` moves matched snapshots into `Vec<Group<H>>` without cloning the window
-snapshots. Groups are ordered by valid rule source order, then lowercase program path. The
-lowercase path remains an internal grouping and ordering key; each group exposes the first matched
-window's shared `Rc<ProgramInfo>`, preserving display casing without an arbitrary later lookup.
+`EngineView` contains `Vec<Group<'_, H>>` and a borrowed error map. `group_windows()` borrows a
+window slice; each Group borrows its rule name, first member's ProgramInfo, and member windows.
+No window or program Rc is cloned. Groups are nonempty, ordered by rule source order and then
+lowercase program path; members preserve enumeration order and representative display casing.
+The query has no native effects, logs, or grouping cache. Calling it once per paint currently
+means grouping at approximately 30 Hz; native capture remains independently paced at 3 Hz.
 
 Windows from the same program matching the same rule share a group. Different paths or winning
-rules form separate groups. Actionless matched rules still appear. The flat UI keeps group and
-window actions, program paths and descriptions, titles, visual states, and current-size markers.
-It deliberately omits process IDs and read-only badges. Program descriptions are display-only;
-configuration continues to match executable filenames.
+rules form separate groups. Actionless matches still appear. Successful rows retain their program
+paths/descriptions, captured titles, visual states, current-size markers, and existing actions.
+Program descriptions remain display-only; rules match executable filenames.
 
-A geometry failure removes the whole snapshot from matching until a later snapshot succeeds.
-Old details are never substituted. Unmatched windows are normal, with no warning or diagnostic
-bucket. An empty matched list shows the ordinary empty state. There is no diagnostics page,
-page navigation, error card, diagnostic count, or configuration-path heading.
+Snapshot failures have explicit UI states:
+
+1. An enumeration error replaces previous groups and failed-window rows with `Couldn't read windows`,
+   the full wrapped cause, and `Retrying automatically.`
+2. Per-window errors appear in `Windows with errors (N)` below usable groups. Each row shows the
+   handle's Display description and full wrapped, selectable error chain. Failed rows have no actions.
+3. An errors-only view shows that section without the ordinary empty message. No groups or errors
+   shows `- nothing here -`. Recovery replaces error state on the next update.
+
+The App captures failed-handle descriptions and error text after each update and sorts those rows
+by description. Repainting reuses the text, avoiding repeated native title reads. Widget identity
+uses the handle rather than the mutable description or row position. The engine owns original errors;
+these cached strings are presentation data only. Action failures remain logs without persistent UI
+state. No diagnostic page, modal, or manual retry control is added.
 
 ## Native paths and actions
 
 Windows is assumed to return paths with backslash separators. The native path must be representable
-as Rust UTF-8 text; otherwise program-detail capture fails and the complete window detail is
+as Rust UTF-8 text; otherwise program-detail capture fails and the complete window capture is
 unavailable for that snapshot. After conversion, the adapter replaces backslashes with forward
 slashes without lexical normalization or filesystem canonicalization. Display casing is preserved.
 Configured patterns are not path-normalized, and backslashes in them are rejected.
@@ -235,20 +259,21 @@ action per eligible handle. Core's non-exhaustive `WindowAction` currently conta
 by calling `Backend::perform(handle, action)`, then refreshes through `Backend::snapshot()`. The backend owns variant
 dispatch and deliberately panics on a future unsupported variant rather than silently doing nothing.
 
-The eframe app records the last completed logic tick and calls the engine immediately at startup,
-when an action is pending, or at the presentation-owned 1 Hz cadence. Painting remains independent
-at 30 Hz. A snapshot is not an atomic OS
+The engine records the completion time of every update, including failure. Before its first
+update, that timestamp is construction time and its snapshot is an empty success. The App updates
+immediately at startup, when an action is pending, or at its presentation-owned 3 Hz cadence using
+that completion timestamp. Painting remains independent at 30 Hz. A snapshot is not an atomic OS
 transaction: windows can disappear or change between queries and actions, so native actions
 remain fallible.
 
-If top-level enumeration fails, stale matched groups are cleared and the enumeration error
-is logged. Per-window detail failures do not invalidate other windows. User-requested action
+If top-level enumeration fails, the raw snapshot becomes an error, so no stale groups can be
+derived. Per-window capture failures do not invalidate other windows. User-requested action
 failures are always logged and do not abort actions for the remaining targets.
 
 ## Source layout
 
 1. `turbozone-core/src/`: serialized config and schema types, validation, runtime matching,
-   backend contract, action queue, snapshot lifecycle, stable groups, log deduplication, and window
+   backend contract, action queue, raw snapshot lifecycle, borrowed EngineView grouping, log deduplication, and window
    models. It performs no filesystem I/O and does not install a logger.
 2. `turbozone-ui/src/`: generic `App<B>`, app-owned scheduling cadence, flat egui presentation,
    and startup config filesystem operations. It has no dependency on the Windows crate.
@@ -259,7 +284,11 @@ failures are always logged and do not abort actions for the remaining targets.
 
 ## Verification
 
-Integration tests cover schema/serialization, transactional config rejection, all resize modes,
+The [testing convention](Testing.md) keeps all test bodies and fixtures under `tests/`. Private
+Engine, App, and Windows backend suites are included child unit-test modules through test-only
+extension traits; public-contract and isolated-logger tests remain integration targets.
+
+Tests cover schema/serialization, transactional config rejection, all resize modes,
 selector bounds, exact and partial matching, case sensitivity, priority ties, size filters,
 absolute-path validation, config preservation/creation, stderr output, error recurrence, grouping,
 headless UI rendering and clicks, and the public Windows snapshot, action, error, and restored-geometry
@@ -274,7 +303,9 @@ program-cache identity and its 600-tick retention policy do not yet have direct 
 
 The schema generator is an explicit core binary, and the TOML example is parsed
 and verified by a core regression test. Core fake-backend tests verify
-queue ordering, failure isolation, refresh behavior, name-based identity, grouping, and logging
-deduplication. Schema-only tests stay in the core integration suite. Verification uses release-mode
+queue ordering, failure isolation, refresh behavior, raw unmatched-window retention, borrowed
+EngineView identity, grouping, and adjacent-snapshot logging deduplication. UI tests cover failure
+states, mixed usable/error views, recovery, wrapping, cached Display calls, and cadence boundaries.
+Windows capture/filter and Display tests retain native causes and operate on fixture-owned windows. Schema-only tests stay in the core integration suite. Verification uses release-mode
 workspace tests and Clippy with warnings denied. Formatting is manual; no formatter is run.
 Interactive UI checks remain manual.

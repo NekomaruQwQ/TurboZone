@@ -1,6 +1,6 @@
-# Proposed testing convention
+# Testing convention
 
-Status: proposed with [the snapshot refactor](PoC-SnapshotRefactor.md); not yet adopted.
+Adopted with [the snapshot refactor](PoC-SnapshotRefactor.md) on 2026-09-07.
 
 Keep every test body, fixture, test helper, and extension-trait implementation in the
 crate's `tests/` directory. Source files may declare externally located test modules.
@@ -56,7 +56,7 @@ impl<B: Backend> EngineTestExt<B> for Engine<B> {
 mod cases;
 ```
 
-The included `tests/unit/engine.rs` imports `super::EngineTestExt` and production
+The included `tests/unit/engine.rs` imports `super::EngineTestExt as _` and production
 types through `crate::...`. It declares its tests normally with `#[test]`. Shared
 fixtures can be included with `#[path = "../support/<name>.rs"]` from that file.
 Keep explicit imports in fixtures so they work under their declared parent; avoid
@@ -130,3 +130,18 @@ dependencies merely because their source modules are included from a production 
 Documented private seam names and test locations may evolve with their owning modules;
 the enduring contract is physical separation, narrow test-only access, and preserved
 behavioral coverage.
+
+## Current private suites
+
+1. Core: `src/engine.rs` includes `tests/include/engine_ext.rs`, whose cases live in
+   `tests/unit/engine.rs`. The trait exposes borrowed authored rules and consuming
+   backend extraction. Snapshot and EngineView assertions use the public API.
+2. UI: `src/app.rs` includes `tests/include/app_ext.rs`, whose cases live in
+   `tests/unit/ui.rs`. The trait invokes the real renderer, refresh, and cadence
+   predicate and supplies only the engine timing/queue access those tests need.
+3. Windows: `src/backend.rs` includes `tests/include/backend_ext.rs`, whose cases live
+   in `tests/unit/backend.rs`. The trait invokes single-window capture and the actual
+   native inclusion predicate without enumerating or mutating user windows.
+
+The core `tests/logging.rs` integration binary owns its global capture logger. No
+private unit suite installs a competing process-global logger.

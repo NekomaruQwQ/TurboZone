@@ -1,31 +1,40 @@
 # Proposal of Change: complete snapshot refactor
 
-Status: proposed; implementation approval pending. Prepared on 2026-09-07.
+Status: approved on 2026-09-07, including raw snapshots and on-demand EngineView refinement. Implemented and validated.
 
 This proposal continues unnamed change `yptnlwmo` (`bf673e4a`), compared with
 `ktlklstn` (`b1804cec`). The working copy was empty when investigation began.
 The user explicitly requested both enumeration and per-window failures in the UI.
-Only planning documents were changed during this investigation.
+The initial investigation changed only planning documents. The subsequent approval covers implementation of the three PoCs with the refinements below.
 
 ## Recommended architecture
 
 Keep platform capture, engine classification, and UI presentation separate. A backend
-returns complete windows or handle-keyed failures; the engine owns rules, groups,
-the latest errors, and comparison with the preceding snapshot. The UI renders that
+returns a Snapshot containing successful windows and handle-keyed failures; the engine owns rules,
+the raw snapshot, and comparison with the preceding snapshot. Grouping is an uncached borrowed query. The UI renders that
 state and decides when to request another update.
 
 ```rust
-pub type WindowSnapshot<H> = Result<WindowInfo<H>, (H, anyhow::Error)>;
-
 pub struct Snapshot<H> {
-    pub groups: Vec<Group<H>>,
+    pub windows: Vec<WindowInfo<H>>,
     pub errors: HashMap<H, anyhow::Error>,
+}
+
+pub struct EngineView<'a, H> {
+    pub groups: Vec<Group<'a, H>>,
+    pub errors: &'a HashMap<H, anyhow::Error>,
+}
+
+pub struct Group<'a, H> {
+    pub rule_name: &'a SmolStr,
+    pub program: &'a ProgramInfo,
+    pub windows: Vec<&'a WindowInfo<H>>,
 }
 
 pub trait Backend {
     type Handle: fmt::Debug + fmt::Display + Copy + Eq + Hash + 'static;
 
-    fn snapshot(&mut self) -> anyhow::Result<Vec<WindowSnapshot<Self::Handle>>>;
+    fn snapshot(&mut self) -> anyhow::Result<Snapshot<Self::Handle>>;
     fn perform(&mut self, target: Self::Handle, action: WindowAction)
      -> anyhow::Result<()>;
 }
@@ -34,7 +43,13 @@ pub trait Backend {
 `Snapshot` is parameterized by the handle, matching `WindowInfo` and `Group`.
 It need not depend on a backend implementation. This also removes the draft's
 need to require `Backend: Sized` merely to express its snapshot return type.
-The alias names the repeated per-window result without introducing another wrapper.
+The per-window result remains a backend capture boundary. The public Backend boundary returns partitioned windows and errors.
+
+`Engine::view(&self) -> Result<EngineView<'_, B::Handle>, &anyhow::Error>` builds an
+uncached view containing `groups: Vec<Group<'_, H>>` and a borrowed error map. Each
+Group borrows its rule name, representative ProgramInfo, and windows. No snapshot
+window is cloned or consumed by grouping. Successful unmatched windows remain in
+the raw snapshot. Calling view performs no native queries or logging.
 
 ```text
 Before
@@ -42,21 +57,20 @@ Windows -> WindowInfo { handle, title, state, detail: Result<WindowDetail> }
         -> separate SnapshotLogging history -> matching/grouping -> successful UI
 
 After
-Windows -> Result<Vec<Result<WindowInfo, (Handle, Error)>>, Error>
-        -> Engine: compare previous state, partition failures, classify successes
-        -> Result<Snapshot { groups, errors }, Error> + completion timestamp
+Windows -> Result<Snapshot { windows, errors }, Error>
+        -> Engine: compare previous state, log, store + completion timestamp
+        -> Engine::view(): borrow snapshot, match/group successful windows
         -> App: successful controls + snapshot diagnostics
 ```
 
 For example, a resize click queues `(handle, Resize(size))`. The next update attempts
 every queued action in order, logs each action failure using the handle's Display,
 and captures a new backend snapshot. A window whose geometry query fails contributes
-only `(handle, error)`; another successful window can still match and appear in a
-group. The engine logs new or changed failures and replaces its complete state.
-The UI refreshes its diagnostic text from that state. An enumeration failure instead
+only `(handle, error)`; another successful window remains available for subsequent matching and grouping. The engine logs new or changed failures and replaces its complete state.
+The UI refreshes its diagnostic text from that state and requests EngineView when rendering. An enumeration failure instead
 replaces the entire state with an outer error, removing all previous action targets.
 
-## Established current state
+## Baseline established during review
 
 1. `WindowInfo` is already flattened. `WindowDetail` and `logging.rs` are deleted.
    Matching, grouping, the Windows adapter, UI, and fixtures still use the old fields.
@@ -78,7 +92,7 @@ replaces the entire state with an outer error, removing all previous action targ
 `cargo check --workspace --all-targets --release --locked --offline` was run. It stops
 in core with seven errors (removed fields and mismatched snapshot types) and an unused
 `Duration` import warning. Downstream failures were identified by inspection, not by
-a successful downstream build. No test suite has passed on this baseline.
+a successful downstream build. This was the pre-implementation baseline; completed validation is recorded below.
 
 ## PoC 1: backend capture and engine snapshot lifecycle
 
@@ -95,11 +109,11 @@ a successful downstream build. No test suite has passed on this baseline.
 3. The backend continues to decide which native windows are relevant. The engine
    alone applies configured rules. Failed relevant windows are retained even when
    no rule could be evaluated or there are no configured rules. Successful unmatched
-   windows remain an ordinary omission, not a diagnostic.
+   windows remain in the raw snapshot and are omitted only from EngineView groups, not diagnosed.
 4. The engine stores `anyhow::Result<Snapshot<B::Handle>>` and exposes it through
    `snapshot(&self) -> &anyhow::Result<Snapshot<B::Handle>>`. Do not restore `groups()`
    as a fallback accessor that hides enumeration failure.
-5. `update()` drains actions, captures, classifies, compares/logs, and replaces state.
+5. `update()` drains actions, captures, compares/logs, and replaces state. `view()` classifies only when requested.
    Action failures never abort later actions or refresh and do not become snapshot
    errors. They remain individual error logs even when identical actions fail twice.
 6. Retain `snapshot_timestamp: Instant`; expose
@@ -114,12 +128,11 @@ a successful downstream build. No test suite has passed on this baseline.
 ### Classification and native capture invariants
 
 Only successful `WindowInfo` values enter `matching_rule_name`, `matches_rule`, and
-`group_windows`. Their successful-input algorithms and existing public signatures
-remain available. Remove detail guards and unwraps; their input type now expresses
+`group_windows`. Their successful-input algorithms remain available. `group_windows` now takes a borrowed window slice and returns borrowed groups. Remove detail guards and unwraps; their input type now expresses
 the completeness precondition. Keep source-order priority ties, inclusive size bounds,
 case-insensitive program matching/grouping, case-sensitive titles, first-window
 representative program casing, and window enumeration order within groups.
-Do not create empty groups. Move windows and errors; do not reconstruct or clone errors.
+Do not create empty groups. The backend owns windows and errors; groups borrow their windows. Do not reconstruct or clone errors.
 Retain native causes so callers can inspect/downcast them.
 
 The Windows adapter keeps capture temporaries local. It must retain enough local
@@ -167,8 +180,7 @@ Preserving outage-spanning deduplication would require separate historical state
 that alternative is not recommended for this design. Repeated alternating global
 and per-window failures can therefore produce one log on each transition.
 
-Keep per-window warnings in backend input order where practical; HashMap iteration
-order is not a log or UI contract. Compare before dropping the previous state. Logging
+Per-window warning order follows the error map and is unspecified; UI diagnostic rows are sorted independently. Compare before dropping the previous state. Logging
 filters must not change what errors are stored or displayed.
 
 ### Handle descriptions
@@ -196,8 +208,8 @@ new guarantee of a nonblocking Display implementation.
 
 ### Implementation latitude and alternatives
 
-Partitioning and grouping may be separate local passes or one orchestration pass,
-provided ownership, ordering, and error isolation remain as specified. Error comparison
+Partitioning belongs to the backend; grouping is a separate, uncached borrowed query.
+Internal helpers may vary provided ownership, ordering, and error isolation remain as specified. Error comparison
 can be a private helper. No new dependency, shared error wrapper, logger component,
 backend grouping responsibility, or persistent dedup cache is needed.
 
@@ -245,7 +257,7 @@ Windows with errors (2)
 
 The App captures failed-handle descriptions and rendered error chains once after
 each engine update, including initialization. Paints reuse those strings. The engine
-keeps the authoritative Error objects; the App owns only derived presentation text.
+keeps the authoritative WindowInfo and Error objects; the App owns only derived presentation text.
 
 ```rust
 // Private to the UI; the concrete builder is a local implementation choice.
@@ -279,7 +291,7 @@ cache tied to actual updates avoids that cost without moving descriptions into c
 
 ## PoC 3: test access and migration
 
-Adopt the proposed [testing convention](Testing.md): public API tests remain ordinary
+Adopt the [testing convention](Testing.md): public API tests remain ordinary
 integration tests; tests requiring private seams are physically under `tests/` but
 compiled as child unit-test modules using `#[cfg(test)]` and `#[path]`. The extension
 trait lives below the module it accesses and its source file lives in `tests/include/`.
@@ -289,7 +301,7 @@ It does not restore `groups()`: assertions must observe the actual snapshot Resu
 The App seam invokes the private renderer and update/cadence helper. A Windows backend
 seam may invoke single-window capture with a test-supplied handle for deterministic
 failure tests, reusing production capture and cache context rather than duplicating it.
-These traits and all fixtures compile only into their crate's unit-test target.
+These traits compile only into their crate's unit-test target. Shared fixtures compile only in the test targets that include them.
 
 Do not add a feature or public test-support module merely to retain the integration
 test harness for private tests. Cargo integration tests cannot access a dependency's
@@ -305,14 +317,14 @@ available in this scope. This is not a general audit or pruning of crate APIs.
 | --- | --- |
 | `core/tests/engine.rs` | Move to `core/tests/unit/engine.rs`, included through `engine_ext.rs`; retain queue ordering, drain, failure isolation, authored rules, and fresh-state checks |
 | `core/tests/logging.rs` | Keep a separate integration binary, replace SnapshotLogging calls with scripted real Engine updates; test the full transition table and action logs |
-| `core/tests/data.rs` | Flatten successful fixtures and preserve ordering/casing/Rc grouping checks; relocate failed-detail cases to Engine partition/recovery tests |
+| `core/tests/data.rs` | Flatten successful fixtures and preserve ordering/casing/Rc grouping checks; relocate failed-detail cases to Engine raw-state/recovery tests |
 | `core/tests/verification.rs` | Keep config and successful matching tests; flatten fixtures; move the impossible incomplete-window matcher test to an Engine failure-exclusion test |
 | `core/tests/smol_strings.rs` | Flatten its window fixture; preserve Unicode, long text, and schema checks |
 | `core/tests/config_queries.rs`, `config_sizes.rs`, `config_logging.rs`, `patterns.rs`, `resize_warnings.rs`, `schema.rs` | Update parser/validator imports to `turbozone_core::config_parser`; retain existing semantics and separate logging processes |
 | `core/tests/cache.rs` | No semantic migration; retain and run existing public cache tests |
 | `ui/tests/ui.rs` | Move to `ui/tests/unit/ui.rs`, included through new `tests/include/app_ext.rs`; render the real App via AppTestExt |
-| `ui/tests/support/window.rs` | Supply raw per-window results, scripted outer errors, and a handle with distinguishable Display/Debug; preserve the panic on render-time native actions |
-| `windows/tests/window_backend.rs` | Find the fixture by handle in either result variant, then assert success explicitly; never discard its error with filter_map; retain geometry, fallback, action, and native-cause tests |
+| `ui/tests/support/window.rs` | Supply partitioned snapshots and scripted outer errors; the UI unit suite also supplies a handle with distinguishable Display/Debug; preserve the panic on render-time native actions |
+| `windows/tests/window_backend.rs` | Check the fixture handle in the error map, then find its successful window; never discard its error with filter_map; retain geometry, fallback, action, and native-cause tests |
 | New Windows private capture/filter tests | Include from `tests/` under backend's test module; validate failure handle/cause retention and title/Program Manager filtering without depending on a user's inaccessible windows |
 | `windows/tests/window_geometry.rs`, `tests/support/test_window.rs` | Retain existing separate-file geometry tests and fixture ownership; add title/Display cases using fixture-owned windows |
 | `turbozone/tests/startup.rs` and support | Retain config byte preservation and subprocess diagnostics; run after the config loader import migration |
@@ -361,7 +373,8 @@ Here `core`, `ui`, and `windows` abbreviate their existing `crates/turbozone-*` 
    successful titles remain the rule-matching and successful-row source of truth.
 4. Error HashMaps retain original errors until the next snapshot; previous storage retained
    rendered strings. Comparison now formats prior/current chains during updates. Memory
-   stays bounded by current errors, plus transient previous/next state and UI text.
+   retains all current successful windows and errors, plus transient previous/next state,
+   borrowed view membership lists, and cached UI diagnostic text.
 5. Flattening removes invalid-input branches from grouping and view rendering. Empty
    groups remain forbidden so `.all()` cannot accidentally enable a vacuous group action.
    The draft's explicit primary-size presence check remains intact.
@@ -372,7 +385,7 @@ Here `core`, `ui`, and `windows` abbreviate their existing `crates/turbozone-*` 
    state preservation, foreground behavior, cache keys, and normalization are unchanged.
    No dependency/toolchain upgrade, formatter, or real user-window mutation is included.
 
-## Implementation order and validation
+## Approved implementation order and validation
 
 1. Land PoC 1 and its directly required migrations as one coherent unit: core model,
    Windows adapter, engine transitions, parser call sites, and minimum UI consumption of
@@ -417,19 +430,69 @@ Headless egui tests establish rendered content and interactions, not subjective 
 quality. An optional user desktop check can assess readability of long error chains in
 the fixed viewport. Native desktop automation is not part of validation.
 
-## Approval requested for
+## Approved scope
 
-1. PoC 1: raw per-window backend results, handle-generic grouped snapshots, single-state
+1. PoC 1: partitioned raw backend snapshots, uncached borrowed EngineView grouping, single-state
    error ownership, adjacent-snapshot deduplication including its outage behavior,
    best-effort Display identity, and completion-time semantics.
 2. PoC 2: enumeration and per-window failure UI as specified, presentation-owned cached
    diagnostic text, private App rendering, and existing 3 Hz scheduling from engine time.
 3. PoC 3: the external-file unit-test/extension-trait convention, listed test migrations,
    parser-path propagation, source-intent documentation, and validation plan.
-4. Local implementation latitude: internal helpers, partition pass structure, narrow
+4. Local implementation latitude: internal helpers, backend partition helper structure, narrow
    test fixture construction, and UI spacing/wrapping within these contracts. No new
    dependencies or additional public test-support surface.
 
-No required design question remains open: the user selected visible failure UI. The
-remaining choices above are recommendations submitted for approval, not implemented
-behavior or previously approved requirements.
+The user approved all three PoCs, including the subsequent raw Snapshot and EngineView
+refinement. Grouping is an uncached borrowed query rather than work performed during update.
+No additional architecture changes or dependencies were introduced during implementation.
+
+## As-built reconciliation
+
+1. `47b3063a` implements raw backend snapshots, original-error ownership, full-chain
+   adjacent-snapshot deduplication, borrowed EngineView queries, Windows partitioning,
+   escaped handle descriptions, parser-path propagation, and directly affected tests.
+2. `bef84c9f` implements the failure UI, update-owned diagnostic text, engine-completion
+   scheduling, and the App test extension with headless interaction coverage.
+3. The final documentation unit adopts Testing.md and reconciles the design guide with
+   raw snapshots, on-demand grouping, diagnostics, 3 Hz polling, and test placement.
+
+The implemented public boundary is `Backend::snapshot() -> Result<Snapshot<H>>` and
+`Engine::view() -> Result<EngineView<'_, H>, &anyhow::Error>`. Each view owns only its
+membership vectors; all source windows, rule names, program records, and errors are
+borrowed. The private Windows WindowSnapshot alias retains `(Handle, Error)` at the
+single-window capture boundary. There is no public per-window alias or logger object.
+
+All approved runtime units are implemented. The EngineView name and ownership were
+approved in the follow-up discussion; there were no unapproved architectural deviations.
+Local mechanisms remain isolated: required native capture/cache reuse, native inclusion
+filtering, rule matching/grouping, full-chain comparison, and diagnostic text derivation.
+Their comments record their responsibilities and invariants without embedding test code.
+
+Completed checks:
+
+1. `cargo test --workspace --release --locked --offline -- --list`: included private
+   suites are discovered once (7 core, 13 UI, 3 Windows), alongside public integrations.
+2. `cargo test --workspace --release --locked --offline`: 122 tests passed, none failed
+   or ignored, including startup subprocesses, native fixture windows, and headless UI.
+3. `cargo clippy --workspace --all-targets --all-features --release --locked --offline -- -D warnings`:
+   passed with no warnings.
+4. Focused core, UI, Windows, logging, and handle-formatting tests passed during their
+   implementation stages. No formatter or unrelated dependency update was run.
+5. `cargo check --workspace --all-targets --release --locked --offline`: passed.
+   Source audit confirms three cfg(test)-gated extension modules and no test bodies
+   under src. Removed APIs have no remaining Rust references. Documentation links,
+   code fences, and effective CatIgnore matching were checked.
+
+Migration retains queue ordering, grouping/casing, rule priority, size bounds, Unicode,
+geometry/native causes, configuration, startup, and resize controls. Previously invalid
+WindowDetail inputs moved to the Engine failure boundary. New tests cover borrowed identity,
+unmatched-window retention, snapshot transitions, filtered log state, error rows and recovery,
+long-text wrapping, native Display fallback/escaping, and failure retry cadence.
+
+Stable diagnostic widget identity was checked directly in the source: the push_id key is
+`("window-error", handle)`, independent of description and row index. Sorting and display
+reuse are behavior-tested. Desktop visual inspection was not performed; headless tests
+verify content, interaction, and width/wrapping in the fixed viewport. No performance
+benchmark was added: uncached grouping runs at paint cadence and remains intentionally
+simple for current desktop-scale inputs.
