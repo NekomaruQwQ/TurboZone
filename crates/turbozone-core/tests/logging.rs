@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use smol_str::{SmolStr, format_smolstr};
-use turbozone_core::{Backend, Engine, Snapshot, WindowAction};
+use turbozone_core::{Backend, Engine, WindowAction, WindowInfo};
 
 struct CapturedLogs(Mutex<Vec<(Level, SmolStr)>>);
 
@@ -33,11 +33,12 @@ impl fmt::Display for TestHandle {
     }
 }
 
-struct ScriptedBackend(VecDeque<anyhow::Result<Snapshot<TestHandle>>>);
+#[expect(clippy::type_complexity, reason = "scripted observations mirror the backend's direct result contract")]
+struct ScriptedBackend(VecDeque<anyhow::Result<Vec<(TestHandle, anyhow::Result<WindowInfo<TestHandle>>)>>>);
 
 impl Backend for ScriptedBackend {
     type Handle = TestHandle;
-    fn snapshot(&mut self) -> anyhow::Result<Snapshot<TestHandle>> {
+    fn snapshot(&mut self) -> anyhow::Result<Vec<(TestHandle, anyhow::Result<WindowInfo<TestHandle>>)>> {
         self.0.pop_front().expect("each update needs a scripted observation")
     }
     fn perform(&mut self, _: TestHandle, _: WindowAction) -> anyhow::Result<()> {
@@ -45,16 +46,13 @@ impl Backend for ScriptedBackend {
     }
 }
 
-fn failures(entries: &[(u64, &str)]) -> Snapshot<TestHandle> {
-    Snapshot {
-        errors: entries.iter().map(|&(handle, cause)| {
-            (TestHandle(handle), anyhow::anyhow!("{cause}").context("capture"))
-        }).collect(),
-        ..Default::default()
-    }
+fn failures(entries: &[(u64, &str)]) -> Vec<(TestHandle, anyhow::Result<WindowInfo<TestHandle>>)> {
+    entries.iter().map(|&(handle, cause)| {
+        (TestHandle(handle), Err(anyhow::anyhow!("{cause}").context("capture")))
+    }).collect()
 }
 
-fn enumeration(cause: &str) -> anyhow::Result<Snapshot<TestHandle>> {
+fn enumeration(cause: &str) -> anyhow::Result<Vec<(TestHandle, anyhow::Result<WindowInfo<TestHandle>>)>> {
     Err(anyhow::anyhow!("{cause}").context("enumerate"))
 }
 
@@ -74,12 +72,13 @@ fn engine_deduplicates_adjacent_snapshots_without_hiding_current_errors() {
         Ok(failures(&[(7, "denied")])),
         Ok(failures(&[(7, "gone")])),
         Ok(failures(&[(7, "gone"), (8, "denied")])),
+        Ok(failures(&[(8, "denied"), (7, "gone")])),
         Ok(failures(&[(7, "gone")])),
         Ok(failures(&[(7, "gone"), (8, "denied")])),
         enumeration("outage"),
         enumeration("outage"),
         enumeration("different cause"),
-        Ok(failures(&[(7, "gone"), (8, "denied")])),
+        Ok(failures(&[(8, "denied"), (7, "gone")])),
         Ok(failures(&[])),
         Ok(failures(&[(7, "gone")])),
         Ok(failures(&[])),
@@ -98,6 +97,9 @@ fn engine_deduplicates_adjacent_snapshots_without_hiding_current_errors() {
         "failed to snapshot window native-window-7-title-1: capture: gone".into())]);
     assert_eq!(advance(&mut engine), [(Level::Warn,
         "failed to snapshot window native-window-8-title-1: capture: denied".into())]);
+    assert_eq!(advance(&mut engine), NO_LOGS, "moving a failure changes neither its identity nor its cause");
+    assert_eq!(engine.snapshot().as_ref().unwrap().iter().map(|&(handle, _)| handle.0)
+        .collect::<Vec<_>>(), [8, 7]);
     assert_eq!(advance(&mut engine), NO_LOGS);
     assert_eq!(advance(&mut engine).len(), 1, "an absent handle can recur");
     assert_eq!(advance(&mut engine), [(Level::Error,
@@ -105,7 +107,10 @@ fn engine_deduplicates_adjacent_snapshots_without_hiding_current_errors() {
     assert_eq!(advance(&mut engine), NO_LOGS);
     assert_eq!(advance(&mut engine), [(Level::Error,
         "window enumeration failed: enumerate: different cause".into())]);
-    assert_eq!(advance(&mut engine).len(), 2, "an outage discards window failure history");
+    assert_eq!(advance(&mut engine), [
+        (Level::Warn, "failed to snapshot window native-window-8-title-1: capture: denied".into()),
+        (Level::Warn, "failed to snapshot window native-window-7-title-1: capture: gone".into()),
+    ], "an outage resets dedup history; new warnings follow enumeration order");
     assert_eq!(advance(&mut engine), NO_LOGS);
     assert_eq!(advance(&mut engine).len(), 1);
     assert_eq!(advance(&mut engine), NO_LOGS);
@@ -121,7 +126,7 @@ fn engine_deduplicates_adjacent_snapshots_without_hiding_current_errors() {
 
     log::set_max_level(LevelFilter::Off);
     assert_eq!(advance(&mut engine), NO_LOGS);
-    assert_eq!(engine.snapshot().as_ref().unwrap().errors.len(), 1);
+    assert_eq!(engine.snapshot().as_ref().unwrap().iter().filter(|&&(_, ref result)| result.is_err()).count(), 1);
     log::set_max_level(LevelFilter::Trace);
     assert_eq!(advance(&mut engine), NO_LOGS, "disabled output still advances dedup state");
     assert_eq!(engine.view().unwrap().errors.len(), 1);

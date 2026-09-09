@@ -31,7 +31,7 @@ pub enum WindowState {
 }
 
 /// A complete immutable native observation used by classification and rendering.
-/// Failed required queries are retained separately in [`crate::Snapshot::errors`].
+/// Failed required queries appear beside their handle in [`crate::Backend::snapshot`].
 #[derive(Debug)]
 pub struct WindowInfo<H> {
     /// The native handle identifying the exact enumerated window.

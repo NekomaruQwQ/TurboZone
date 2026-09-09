@@ -139,9 +139,10 @@ fn handle_display_escapes_control_characters_without_losing_unicode() {
 /// Inspect the fixture failure explicitly; unrelated desktop windows may fail normally.
 fn capture(window: &TestWindow) -> WindowInfo<Handle<HWND>> {
     let snapshot = Backend::default().snapshot().unwrap();
-    assert!(!snapshot.errors.contains_key(&window.handle()),
-        "fixture capture failed: {:?}", snapshot.errors.get(&window.handle()));
-    snapshot.windows.into_iter()
-        .find(|candidate| candidate.handle == window.handle())
-        .expect("snapshot must retain the fixture window")
+    let (handle, result) = snapshot.into_iter()
+        .find(|&(handle, _)| handle == window.handle())
+        .expect("snapshot must retain the fixture window");
+    let captured = result.expect("fixture capture failed");
+    assert_eq!(handle, captured.handle, "successful tuple and window identities agree");
+    captured
 }

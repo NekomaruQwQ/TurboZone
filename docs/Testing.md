@@ -135,7 +135,7 @@ behavioral coverage.
 
 1. Core: `src/engine.rs` includes `tests/include/engine_ext.rs`, whose cases live in
    `tests/unit/engine.rs`. The trait exposes borrowed authored rules and consuming
-   backend extraction. Snapshot and EngineView assertions use the public API.
+   backend extraction. Raw snapshot and EngineView assertions use the public API.
 2. UI: `src/app.rs` includes `tests/include/app_ext.rs`, whose cases live in
    `tests/unit/ui.rs`. The trait invokes the real renderer, refresh, and cadence
    predicate and supplies only the engine timing/queue access those tests need.

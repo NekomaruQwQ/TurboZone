@@ -2,19 +2,20 @@ use std::rc::Rc;
 use std::collections::VecDeque;
 
 use euclid::default::{Point2D, Rect, Size2D};
-use turbozone_core::{ProgramInfo, Snapshot, WindowAction, WindowInfo, WindowState};
+use turbozone_core::{ProgramInfo, WindowAction, WindowInfo, WindowState};
 
 /// Supplies scripted observations so UI transitions use the real engine boundary.
 #[derive(Default)]
 pub struct TestBackend {
-    pub snapshots: VecDeque<anyhow::Result<Snapshot<u64>>>,
+    #[expect(clippy::type_complexity, reason = "scripted observations mirror the backend's direct result contract")]
+    pub snapshots: VecDeque<anyhow::Result<Vec<(u64, anyhow::Result<WindowInfo<u64>>)>>>,
 }
 
 impl turbozone_core::Backend for TestBackend {
     type Handle = u64;
 
-    fn snapshot(&mut self) -> anyhow::Result<Snapshot<Self::Handle>> {
-        self.snapshots.pop_front().unwrap_or_else(|| Ok(Snapshot::default()))
+    fn snapshot(&mut self) -> anyhow::Result<Vec<(Self::Handle, anyhow::Result<WindowInfo<Self::Handle>>)>> {
+        self.snapshots.pop_front().unwrap_or_else(|| Ok(Vec::new()))
     }
 
     #[expect(clippy::panic_in_result_fn, reason = "a render-side effect must fail the test, not be logged as an operational error")]

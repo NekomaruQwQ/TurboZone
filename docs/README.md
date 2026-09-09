@@ -133,22 +133,22 @@ rule/window counts.
 
 ## Window geometry and snapshots
 
-The core crate owns `Snapshot<H>`, `WindowInfo<H>`, `ProgramInfo`, `WindowState`, and the
+The core crate owns `WindowInfo<H>`, `ProgramInfo`, `WindowState`, and the
 generic `Backend` contract. The Windows crate owns the concrete `Handle<HWND>`. A successful
 `WindowInfo` directly contains its handle, title, visual state, monitor work area, client rectangle,
 PID, and immutable `Rc<ProgramInfo>`. Multiple windows can share one program snapshot.
 Owned UTF-8 text crossing TurboZone boundaries uses `SmolStr`; external string formats and
 persisted bytes remain unchanged.
 
-`Backend::snapshot()` returns `Result<Snapshot<H>, anyhow::Error>`, where `Snapshot` owns:
+`Backend::snapshot()` returns `anyhow::Result<Vec<(H, anyhow::Result<WindowInfo<H>>)>>`.
+The vector retains successful and failed captures together in backend enumeration order.
+Each included handle occurs exactly once; on success, the tuple handle equals `WindowInfo.handle`.
+Unmatched successful windows remain in raw state because matching is a derived query.
 
-1. `windows: Vec<WindowInfo<H>>`: all successfully captured relevant windows, including unmatched ones.
-2. `errors: HashMap<H, anyhow::Error>`: failures of required per-window queries, retaining their original causes.
-
-The outer error invalidates the entire enumeration. Each included handle must occur exactly once,
-in either windows or errors. Backend capture uses `Result<WindowInfo<H>, (H, anyhow::Error)>`
-before partitioning. Required queries stop at the first failure; partial fields do not cross this
-boundary. Optional title/description behavior remains unchanged. APIs with documented native errors
+The outer error invalidates the entire enumeration. An inner error retains the original cause
+beside its handle. Required queries stop at the first failure; partial fields do not cross this
+boundary. Enumeration order is preserved within each observation, not guaranteed stable between
+observations. Optional title/description behavior remains unchanged. APIs with documented native errors
 retain those causes; APIs without a last-error contract report an explicit failure message.
 
 The backend filters native relevance before core sees the snapshot. Empty or unreadable titles
@@ -200,22 +200,25 @@ change a window's winning rule after the next native snapshot.
 ## Classification and UI
 
 `Engine::update()` performs pending actions, captures and stores raw backend state, and compares
-errors with the previous snapshot. It performs no grouping. `Engine::snapshot()` borrows that raw
-Result; `Engine::view()` returns `Result<EngineView<'_, H>, &anyhow::Error>` on demand:
+errors with the previous snapshot using a temporary borrowed lookup by handle. Entry reordering
+never makes a failure new; newly emitted window warnings follow enumeration order. It performs
+no grouping. `Engine::snapshot()` borrows that raw Result; `Engine::view()` returns `Result<EngineView<'_, H>, &anyhow::Error>` on demand:
 
 ```text
 Raw snapshot
     Err(enumeration error) -> EngineView query returns the same borrowed error
-    Ok(windows, errors)   -> group successful matches and borrow the error map
+    Ok(ordered outcomes) -> group successful matches and collect borrowed error entries
 
 Successful window
     no winning rule -> retained in raw snapshot, absent from groups
     winning rule    -> borrowed member of a (rule, lowercase program path) group
 ```
 
-`EngineView` contains `Vec<Group<'_, H>>` and a borrowed error map. `group_windows()` borrows a
-window slice; each Group borrows its rule name, first member's ProgramInfo, and member windows.
-No window or program Rc is cloned. Groups are nonempty, ordered by rule source order and then
+`EngineView` contains `Vec<Group<'_, H>>` and `Vec<(H, &anyhow::Error)>`. Its error entries retain
+the relative enumeration order of failures. `group_windows()` accepts an iterator of borrowed
+windows, including slices, so the engine can select successes without an intermediate window list.
+Each Group borrows its rule name, first member's ProgramInfo, and member windows. No window,
+error, or program Rc is cloned. Groups are nonempty, ordered by rule source order and then
 lowercase program path; members preserve enumeration order and representative display casing.
 The query has no native effects, logs, or grouping cache. Calling it once per paint currently
 means grouping at approximately 30 Hz; native capture remains independently paced at 3 Hz.
@@ -235,8 +238,8 @@ Snapshot failures have explicit UI states:
    shows `- nothing here -`. Recovery replaces error state on the next update.
 
 The App captures failed-handle descriptions and error text after each update and sorts those rows
-by description. Repainting reuses the text, avoiding repeated native title reads. Widget identity
-uses the handle rather than the mutable description or row position. The engine owns original errors;
+by description independently of raw enumeration order. Repainting reuses the text, avoiding
+repeated native title reads. Widget identity uses the handle rather than the mutable description or row position. The engine owns original errors;
 these cached strings are presentation data only. Action failures remain logs without persistent UI
 state. No diagnostic page, modal, or manual retry control is added.
 
@@ -304,8 +307,8 @@ program-cache identity and its 600-tick retention policy do not yet have direct 
 The schema generator is an explicit core binary, and the TOML example is parsed
 and verified by a core regression test. Core fake-backend tests verify
 queue ordering, failure isolation, refresh behavior, raw unmatched-window retention, borrowed
-EngineView identity, grouping, and adjacent-snapshot logging deduplication. UI tests cover failure
-states, mixed usable/error views, recovery, wrapping, cached Display calls, and cadence boundaries.
+EngineView identity, interleaved outcome order, grouping, and adjacent-snapshot logging deduplication
+after entry reordering. UI tests cover failure states, mixed usable/error views, recovery, wrapping, cached Display calls, and cadence boundaries.
 Windows capture/filter and Display tests retain native causes and operate on fixture-owned windows. Schema-only tests stay in the core integration suite. Verification uses release-mode
 workspace tests and Clippy with warnings denied. Formatting is manual; no formatter is run.
 Interactive UI checks remain manual.

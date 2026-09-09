@@ -2,7 +2,7 @@ use turbozone_core::config_parser::parse_config;
 use eframe::egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Shape, Vec2};
 use euclid::default::{Point2D, Size2D};
 use smol_str::{SmolStr, format_smolstr};
-use turbozone_core::{Backend, Snapshot, WindowAction, WindowInfo};
+use turbozone_core::{Backend, WindowAction, WindowInfo};
 use crate::app::{App, TURBOZONE_WINDOW_SIZE};
 use super::AppTestExt as _;
 
@@ -22,7 +22,7 @@ struct View<B: Backend = TestBackend> {
 impl View {
     fn new(source: &str, windows: Vec<WindowInfo<u64>>) -> Self {
         Self::with_backend(source, TestBackend {
-            snapshots: [Ok(Snapshot { windows, ..Default::default() })].into(),
+            snapshots: [Ok(windows.into_iter().map(|window| (window.handle, Ok(window))).collect())].into(),
         })
     }
 }
@@ -233,26 +233,27 @@ fn selector_with_no_manifest_choices_explains_its_empty_state() {
 #[test]
 fn window_failures_coexist_with_controls_and_recover_without_stale_diagnostics() {
     let source = "[[rules]]\nname = 'app'\nmove = true";
+    // Reverse handle order and interleave a failure to catch accidental sorting or
+    // partition-based reconstruction of the usable rows and group action targets.
+    let mut initial: Vec<_> = grouped_windows().into_iter().rev()
+        .map(|window| (window.handle, Ok(window))).collect();
+    initial.insert(1, (7, Err(anyhow::anyhow!("access denied").context("program path"))));
     let backend = TestBackend {
         snapshots: [
-            Ok(Snapshot {
-                windows: grouped_windows(),
-                errors: [(7, anyhow::anyhow!("access denied").context("program path"))].into(),
-            }),
+            Ok(initial),
             Err(anyhow::anyhow!("desktop unavailable").context("enumeration")),
-            Ok(Snapshot { windows: grouped_windows(), ..Default::default() }),
-            Ok(Snapshot {
-                errors: [(7, anyhow::anyhow!("still unavailable"))].into(),
-                ..Default::default()
-            }),
-            Ok(Snapshot::default()),
+            Ok(grouped_windows().into_iter().map(|window| (window.handle, Ok(window))).collect()),
+            Ok(vec![(7, Err(anyhow::anyhow!("still unavailable")))]),
+            Ok(Vec::new()),
         ].into(),
     };
     let mut view = View::with_backend(source, backend);
     assert!(view.labels.iter().any(|entry| entry.0 == "Windows with errors (1)"));
     assert!(view.labels.iter().any(|entry| entry.0 == "program path: access denied"));
+    assert_eq!(view.labels.iter().filter(|entry| entry.0 == "First" || entry.0 == "Second")
+        .map(|entry| entry.0.as_str()).collect::<Vec<_>>(), ["Second", "First"]);
     assert_eq!(view.click("\u{26ab} CENTER", 0), [
-        (1, WindowAction::Center), (2, WindowAction::Center),
+        (2, WindowAction::Center), (1, WindowAction::Center),
     ]);
     assert_eq!(view.click("7", 0), [], "failed rows only select their diagnostic text");
     assert_eq!(view.labels.iter().filter(|entry| entry.0.ends_with(" CENTER")).count(), 3);
@@ -283,13 +284,10 @@ fn window_failures_coexist_with_controls_and_recover_without_stale_diagnostics()
 fn error_only_view_sorts_rows_and_wraps_long_context_without_hiding_the_cause() {
     let cause = "A long executable path could not be read. ".repeat(12);
     let backend = TestBackend {
-        snapshots: [Ok(Snapshot {
-            errors: [
-                (9, anyhow::anyhow!("{cause}").context("capture")),
-                (3, anyhow::anyhow!("short cause")),
-            ].into(),
-            ..Default::default()
-        })].into(),
+        snapshots: [Ok(vec![
+            (9, Err(anyhow::anyhow!("{cause}").context("capture"))),
+            (3, Err(anyhow::anyhow!("short cause"))),
+        ])].into(),
     };
     let mut view = View::with_backend("", backend);
     assert_eq!(view.frame(Vec::new()), []);
@@ -318,11 +316,8 @@ fn repeated_paints_reuse_handle_descriptions_until_the_next_update() {
     struct ErrorBackend;
     impl Backend for ErrorBackend {
         type Handle = NativeHandle;
-        fn snapshot(&mut self) -> anyhow::Result<Snapshot<NativeHandle>> {
-            Ok(Snapshot {
-                errors: [(NativeHandle, anyhow::anyhow!("capture unavailable"))].into(),
-                ..Default::default()
-            })
+        fn snapshot(&mut self) -> anyhow::Result<Vec<(NativeHandle, anyhow::Result<WindowInfo<NativeHandle>>)>> {
+            Ok(vec![(NativeHandle, Err(anyhow::anyhow!("capture unavailable")))])
         }
         #[expect(clippy::panic_in_result_fn, reason = "painting a diagnostic must never perform a native action")]
         fn perform(&mut self, _: NativeHandle, _: WindowAction) -> anyhow::Result<()> {

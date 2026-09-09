@@ -2,7 +2,6 @@ use turbozone_core::util::Cache;
 use turbozone_core::{
     Backend      as CoreBackend,
     WindowInfo   as CoreWindowInfo,
-    Snapshot,
     WindowAction,
     ProgramInfo,
 };
@@ -33,9 +32,6 @@ use windows::Win32::Graphics::Gdi::{HMONITOR, MONITORINFO};
 
 type WindowInfo = CoreWindowInfo<Handle<HWND>>;
 
-/// Failed capture retains only native identity; Display supplies optional diagnostics.
-type WindowSnapshot = Result<WindowInfo, (Handle<HWND>, anyhow::Error)>;
-
 /// Type for caching [`MONITORINFO`] for the lifetime of a snapshot.
 ///
 /// This cache is not shared across snapshots because:
@@ -57,7 +53,7 @@ const TICK_BEFORE_EVICT: u64 = 600;
 /// Applies native relevance rules even when required capture failed.
 /// Empty titles are excluded independently of capture success. Identifying the shell
 /// requires complete program metadata, so a failed Program Manager capture is retained.
-fn include_window(empty_title: bool, window: &WindowSnapshot) -> bool {
+fn include_window(empty_title: bool, window: &Result<WindowInfo>) -> bool {
     !empty_title && !window.as_ref().is_ok_and(|window| {
         window.title == "Program Manager" &&
         window.program.name.eq_ignore_ascii_case("explorer.exe")
@@ -88,7 +84,7 @@ pub struct Backend {
 impl CoreBackend for Backend {
     type Handle = Handle<HWND>;
 
-    fn snapshot(&mut self) -> Result<Snapshot<Self::Handle>> {
+    fn snapshot(&mut self) -> Result<Vec<(Self::Handle, Result<WindowInfo>)>> {
         self.next_seq += 1;
 
         let mut ctx = SnapshotContext {
@@ -98,22 +94,20 @@ impl CoreBackend for Backend {
             program_cache: &mut self.program_cache,
         };
 
-        let mut snapshot = Snapshot::default();
+        let mut snapshot = Vec::new();
         for handle in native::enumerate_windows()?
             .into_iter()
             .filter(|&handle| native::is_app_window(handle)) {
             let title = native::get_window_text(handle);
             let empty_title = title.is_empty();
-            let window = snapshot_window(&mut ctx, handle, title);
+            let window = capture_window(&mut ctx, handle, title);
             // Filtering follows capture so ignored windows retain the existing cache
             // refresh behavior. The optional title stays a backend-local concern.
             if !include_window(empty_title, &window) {
                 continue;
             }
-            match window {
-                Ok(window) => snapshot.windows.push(window),
-                Err((handle, error)) => { snapshot.errors.insert(handle, error); },
-            }
+            // Keep every included outcome in enumeration order, including failures.
+            snapshot.push((Handle(handle), window));
         }
 
         self.program_cache.evict_before(
@@ -139,13 +133,6 @@ impl CoreBackend for Backend {
             _ => panic!("Windows backend received an unsupported TurboZone action"),
         }
     }
-}
-
-/// Associates the first required query failure with its native handle.
-/// Display metadata is optional and remains separate from required capture success.
-fn snapshot_window(ctx: &mut SnapshotContext, handle: HWND, title: SmolStr)
- -> WindowSnapshot {
-    capture_window(ctx, handle, title).map_err(|error| (Handle(handle), error))
 }
 
 /// Captures complete geometry and program data in required-query order.

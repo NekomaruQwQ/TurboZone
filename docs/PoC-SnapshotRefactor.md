@@ -2,6 +2,10 @@
 
 Status: approved on 2026-09-07, including raw snapshots and on-demand EngineView refinement. Implemented and validated.
 
+The snapshot representation and associated signatures below record the initial implementation.
+The approved [ordered-snapshot follow-up](PoC-OrderedSnapshots.md) supersedes those details;
+[the design overview](README.md) describes the current contract.
+
 This proposal continues unnamed change `yptnlwmo` (`bf673e4a`), compared with
 `ktlklstn` (`b1804cec`). The working copy was empty when investigation began.
 The user explicitly requested both enumeration and per-window failures in the UI.

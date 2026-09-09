@@ -117,18 +117,18 @@ impl<B: Backend> App<B> {
     }
 
     /// Advances native observations and rebuilds their diagnostic presentation together.
-    /// Sorting captured descriptions removes HashMap ordering from the UI without
-    /// requiring ordered native handles or using changing titles as widget identity.
+    /// Diagnostic rows sort by captured description independently of backend order.
+    /// Repainting reuses the text while widget identity continues to use native handles.
     fn update(&mut self) {
         self.engine.update();
         self.window_diagnostics.clear();
         if let Ok(snapshot) = self.engine.snapshot().as_ref() {
-            self.window_diagnostics.extend(snapshot.errors.iter().map(|(&handle, error)| {
-                WindowDiagnostic {
+            self.window_diagnostics.extend(snapshot.iter().filter_map(|&(handle, ref result)| {
+                result.as_ref().err().map(|error| WindowDiagnostic {
                     handle,
                     description: format_smolstr!("{handle}"),
                     message: format_smolstr!("{error:#}"),
-                }
+                })
             }));
             self.window_diagnostics.sort_by(|a, b| a.description.cmp(&b.description));
         }

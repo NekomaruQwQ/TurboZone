@@ -7,17 +7,16 @@ use turbozone_core::{ProgramInfo, WindowInfo, WindowState};
 use windows::Win32::Foundation::HWND;
 
 #[test]
-fn invalid_handle_capture_retains_identity_context_and_native_cause() {
+fn invalid_handle_capture_retains_context_and_native_cause() {
     let handle = Handle::invalid();
-    let (failed_handle, error) = Backend::default().capture_handle(handle, "Gone").unwrap_err();
-    assert_eq!(failed_handle, handle);
+    let error = Backend::default().capture_handle(handle, "Gone").unwrap_err();
     assert!(error.to_string().starts_with("failed to get"));
     assert!(error.downcast_ref::<NativeError>().is_some());
 }
 
 #[test]
 fn empty_titles_are_ignored_even_when_capture_failed() {
-    let failed = Err((Handle(HWND::default()), anyhow::anyhow!("denied")));
+    let failed = Err(anyhow::anyhow!("denied"));
     assert!(!Backend::includes(true, &failed));
     assert!(Backend::includes(false, &failed));
 }

@@ -12,34 +12,21 @@ use std::time::Instant;
 
 use smol_str::*;
 
-/// One backend observation, retaining every successful relevant window and failure.
-///
-/// Handles must be unique across both collections. Platform filtering belongs to the
-/// backend; unmatched successes stay here because rule selection is a derived query.
-#[derive(Debug)]
-pub struct Snapshot<H> {
-    pub windows: Vec<WindowInfo<H>>,
-    pub errors: HashMap<H, anyhow::Error>,
-}
-
-impl<H> Default for Snapshot<H> {
-    fn default() -> Self { Self { windows: Vec::new(), errors: HashMap::new() } }
-}
-
 /// A rule-dependent view borrowing one immutable engine snapshot.
 ///
-/// Groups allocate only their membership lists; windows, program metadata, rule names,
-/// and failures still belong to the engine. Dropping a view never loses observations.
+/// Groups and error entries allocate borrowed projections of the ordered observation.
+/// Windows, program metadata, rule names, and failures still belong to the engine.
+/// Group members and error entries each retain their relative backend enumeration order.
 #[derive(Debug)]
 pub struct EngineView<'a, H> {
     pub groups: Vec<Group<'a, H>>,
-    pub errors: &'a HashMap<H, anyhow::Error>,
+    pub errors: Vec<(H, &'a anyhow::Error)>,
 }
 
 /// Supplies snapshots and interprets native actions for one platform.
 ///
 /// Core forwards actions without dispatching variants. Platform adapters own native
-/// reads, writes, filtering, and per-window error partitioning; core owns orchestration.
+/// reads, writes, and filtering; core owns orchestration and derives views of the results.
 pub trait Backend {
     /// Cheap native identity, stable independently of changing display metadata.
     ///
@@ -47,8 +34,15 @@ pub trait Backend {
     /// window disappeared. It must not fail merely because metadata is unavailable.
     type Handle: fmt::Debug + fmt::Display + Copy + Eq + Hash + 'static;
 
-    /// Captures relevant windows; an outer failure invalidates the entire enumeration.
-    fn snapshot(&mut self) -> anyhow::Result<Snapshot<Self::Handle>>;
+    /// Captures relevant windows and their failures in backend enumeration order.
+    ///
+    /// Each included handle occurs once and equals WindowInfo.handle on success.
+    /// Excluded windows are omitted; unmatched successes remain for derived views.
+    /// Required-query failures retain the handle beside the original error, while an
+    /// outer failure invalidates the entire enumeration. Order may change between calls.
+    #[expect(clippy::type_complexity, reason = "the public contract exposes ordered per-handle outcomes directly")]
+    fn snapshot(&mut self)
+     -> anyhow::Result<Vec<(Self::Handle, anyhow::Result<WindowInfo<Self::Handle>>)>>;
 
     /// Performs one action against live state, retaining contextual native failures.
     /// Implementations must panic for an unsupported future action variant.
@@ -63,7 +57,8 @@ pub trait Backend {
 pub struct Engine<B: Backend> {
     backend: B,
     rules: Vec<Rule>,
-    snapshot: anyhow::Result<Snapshot<B::Handle>>,
+    #[expect(clippy::type_complexity, reason = "the engine owns the backend result without another representation")]
+    snapshot: anyhow::Result<Vec<(B::Handle, anyhow::Result<WindowInfo<B::Handle>>)>>,
     snapshot_timestamp: Instant,
     pending_actions: Vec<(B::Handle, WindowAction)>,
 }
@@ -75,7 +70,7 @@ impl<B: Backend> Engine<B> {
         Self {
             backend,
             rules,
-            snapshot: Ok(Snapshot::default()),
+            snapshot: Ok(Vec::new()),
             snapshot_timestamp: Instant::now(),
             pending_actions: Vec::new(),
         }
@@ -87,7 +82,9 @@ impl<B: Backend> Engine<B> {
     }
 
     /// Borrows the latest raw observation, preserving enumeration failure explicitly.
-    pub const fn snapshot(&self) -> &anyhow::Result<Snapshot<B::Handle>> { &self.snapshot }
+    #[expect(clippy::type_complexity, reason = "raw access borrows the backend's ordered outcome contract")]
+    pub const fn snapshot(&self)
+     -> &anyhow::Result<Vec<(B::Handle, anyhow::Result<WindowInfo<B::Handle>>)>> { &self.snapshot }
 
     /// Returns construction time before the first update, then the last completion time.
     /// Failed attempts advance it too, allowing presentation to pace automatic retries.
@@ -97,8 +94,11 @@ impl<B: Backend> Engine<B> {
     /// Enumeration failure propagates instead of masquerading as an empty matched view.
     pub fn view(&self) -> Result<EngineView<'_, B::Handle>, &anyhow::Error> {
         self.snapshot.as_ref().map(|snapshot| EngineView {
-            groups: group_windows(&self.rules, &snapshot.windows),
-            errors: &snapshot.errors,
+            groups: group_windows(&self.rules,
+                snapshot.iter().filter_map(|&(_, ref result)| result.as_ref().ok())),
+            errors: snapshot.iter().filter_map(|&(handle, ref result)| {
+                result.as_ref().err().map(|error| (handle, error))
+            }).collect(),
         })
     }
 
@@ -127,10 +127,15 @@ impl<B: Backend> Engine<B> {
         let next = self.backend.snapshot();
         match next {
             Ok(ref snapshot) => {
-                let previous = self.snapshot.as_ref().ok();
-                #[expect(clippy::iter_over_hash_type, reason = "per-window log order is not part of the snapshot contract")]
-                for (handle, error) in &snapshot.errors {
-                    let previous_error = previous.and_then(|snapshot| snapshot.errors.get(handle));
+                // A temporary borrowed index keeps comparison linear when enumeration
+                // order changes. The owned sequence remains the only snapshot state.
+                let previous: HashMap<_, _> = self.snapshot.as_ref().ok().into_iter()
+                    .flatten().filter_map(|&(handle, ref result)| {
+                        result.as_ref().err().map(|error| (handle, error))
+                    }).collect();
+                for &(handle, ref result) in snapshot {
+                    let &Err(ref error) = result else { continue; };
+                    let previous_error = previous.get(&handle).copied();
                     if !same_error(previous_error, error) {
                         log::warn!("failed to snapshot window {handle}: {error:#}");
                     }
@@ -219,10 +224,11 @@ fn matches_window<H>(rule: &Rule, window: &WindowInfo<H>) -> bool {
 /// Borrows complete matches in rule source order and then lowercase program-path order.
 ///
 /// Unmatched windows stay in the caller's snapshot. Each emitted group is nonempty,
-/// retains member enumeration order, and uses its first member's program metadata.
-pub fn group_windows<'a, H>(
+/// retains input order, and uses its first member's program metadata. Borrowed iterators
+/// allow callers to select successes without collecting an intermediate window list.
+pub fn group_windows<'a, H: 'a>(
     rules: &'a [Rule],
-    windows: &'a [WindowInfo<H>]) -> Vec<Group<'a, H>> {
+    windows: impl IntoIterator<Item = &'a WindowInfo<H>>) -> Vec<Group<'a, H>> {
     let mut matched = BTreeMap::<
         &SmolStr,
         BTreeMap<SmolStr, (&ProgramInfo, Vec<&WindowInfo<H>>)>>::new();
