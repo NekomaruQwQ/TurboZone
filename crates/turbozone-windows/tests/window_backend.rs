@@ -44,6 +44,39 @@ fn snapshot_uses_program_name_when_executable_has_no_description() {
     assert_eq!(captured.program.description, captured.program.name);
 }
 
+/// Relevance is observed through enumeration; only the fixture's title is changed.
+#[test]
+fn snapshot_excludes_empty_titles_and_recovers_when_the_title_returns() {
+    let window = TestWindow::visible_offscreen();
+    let mut backend = Backend::default();
+    assert!(backend.snapshot().unwrap().iter().any(|&(handle, _)| handle == window.handle()));
+    // SAFETY: The fixture owns this window on the calling thread.
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SetWindowTextW(
+            window.handle().0, &windows::core::HSTRING::new())
+    }.unwrap();
+    assert!(!backend.snapshot().unwrap().iter().any(|&(handle, _)| handle == window.handle()));
+    // SAFETY: The same live fixture is restored without touching other desktop windows.
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SetWindowTextW(
+            window.handle().0, &windows::core::HSTRING::from(window.title()))
+    }.unwrap();
+    assert!(backend.snapshot().unwrap().iter().any(|&(handle, _)| handle == window.handle()));
+}
+
+#[test]
+fn snapshot_retains_a_non_shell_window_named_program_manager() {
+    let window = TestWindow::visible_offscreen();
+    // SAFETY: Only the fixture-owned window is renamed on its creating thread.
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SetWindowTextW(
+            window.handle().0, &windows::core::HSTRING::from("Program Manager"))
+    }.unwrap();
+    let captured = capture(&window);
+    assert_eq!(captured.title, "Program Manager");
+    assert!(!captured.program.name.eq_ignore_ascii_case("explorer.exe"));
+}
+
 #[test]
 fn resize_action_preserves_integer_center_and_sets_exact_client_size() {
     let window = TestWindow::hidden();

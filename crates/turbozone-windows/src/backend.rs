@@ -227,7 +227,3 @@ fn snapshot_program(native_path: &Path) -> Result<ProgramInfo, &'static str> {
         description,
     })
 }
-
-#[cfg(test)]
-#[path = "../tests/include/backend_ext.rs"]
-mod test;

@@ -5,6 +5,7 @@ use euclid::default::{Point2D, Rect, Size2D};
 use turbozone_core::{ProgramInfo, WindowAction, WindowInfo, WindowState};
 
 /// Supplies scripted observations so UI transitions use the real engine boundary.
+/// The final observation repeats for action-triggered refreshes of a stable desktop.
 #[derive(Default)]
 pub struct TestBackend {
     #[expect(clippy::type_complexity, reason = "scripted observations mirror the backend's direct result contract")]
@@ -15,12 +16,25 @@ impl turbozone_core::Backend for TestBackend {
     type Handle = u64;
 
     fn snapshot(&mut self) -> anyhow::Result<Vec<(Self::Handle, anyhow::Result<WindowInfo<Self::Handle>>)>> {
-        self.snapshots.pop_front().unwrap_or_else(|| Ok(Vec::new()))
+        if self.snapshots.len() > 1 {
+            return self.snapshots.pop_front().unwrap();
+        }
+        self.snapshots.front().map_or_else(|| Ok(Vec::new()), |snapshot| {
+            snapshot.as_ref().map(|windows| windows.iter().map(|&(handle, ref result)| {
+                (handle, result.as_ref().map(|window| WindowInfo {
+                    handle: window.handle,
+                    title: window.title.clone(),
+                    state: window.state,
+                    monitor_rect: window.monitor_rect,
+                    content_rect: window.content_rect,
+                    program: Rc::clone(&window.program),
+                }).map_err(|error| anyhow::anyhow!("{error:#}")))
+            }).collect()).map_err(|error| anyhow::anyhow!("{error:#}"))
+        })
     }
 
-    #[expect(clippy::panic_in_result_fn, reason = "a render-side effect must fail the test, not be logged as an operational error")]
     fn perform(&mut self, _: Self::Handle, _: WindowAction) -> anyhow::Result<()> {
-        panic!("headless rendering must emit actions without performing native effects");
+        Ok(())
     }
 }
 

@@ -400,7 +400,3 @@ impl<B: Backend> App<B> {
         selected_size
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/include/app_ext.rs"]
-mod test;

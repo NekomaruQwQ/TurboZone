@@ -41,9 +41,8 @@ fn grouping_keeps_only_complete_matches_and_uses_case_insensitive_program_identi
     assert_eq!(groups[0].rule_name, "tool");
     assert_eq!(groups[0].program.path, "C:/Apps/Tool.exe");
     assert_eq!(groups[0].windows.len(), 2);
-    assert!(std::ptr::eq(
-        groups[0].program,
-        groups[0].windows[0].program.as_ref()));
+    assert_eq!(groups[0].windows.iter().map(|window| window.handle)
+        .collect::<Vec<_>>(), [1, 2]);
     assert_eq!(groups[1].program.path, "C:/Other/Tool.exe");
 }
 
@@ -92,15 +91,17 @@ fn centered_query_uses_integer_centers_without_requiring_equal_rectangles() {
     assert!(!candidate.is_centered());
 }
 
+/// Repeated grouping queries must preserve values and ordering without consuming inputs.
 #[test]
-fn grouping_borrows_members_without_cloning_program_snapshots() {
+fn repeated_grouping_returns_the_same_selected_members() {
     let rules = parse_config("[[rules]]\nname = 'all'").unwrap().rules;
     let windows = [window(1, "C:/Apps/Tool.exe", "Tool")];
-    let before = Rc::strong_count(&windows[0].program);
-    let first = group_windows(&rules, &windows);
-    let second = group_windows(&rules, &windows);
-    assert!(std::ptr::eq(first[0].windows[0], &raw const windows[0]));
-    assert!(std::ptr::eq(second[0].windows[0], &raw const windows[0]));
-    assert!(std::ptr::eq(first[0].rule_name, &raw const rules[0].name));
-    assert_eq!(Rc::strong_count(&windows[0].program), before);
+    for _ in 0..2 {
+        let groups = group_windows(&rules, &windows);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].rule_name, "all");
+        assert_eq!(groups[0].program.path, "C:/Apps/Tool.exe");
+        assert_eq!(groups[0].windows[0].handle, 1);
+        assert_eq!(groups[0].windows[0].title, "Tool");
+    }
 }

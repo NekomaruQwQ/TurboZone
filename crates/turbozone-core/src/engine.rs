@@ -64,7 +64,7 @@ pub struct Engine<B: Backend> {
 impl<B: Backend> Engine<B> {
     /// Creates an engine with no native capture yet and an empty successful snapshot.
     /// Callers provide rules from [`config_parser::parse_config`] or verify them first.
-    pub fn new(rules: Vec<Rule>, backend: B) -> Self {
+    pub const fn new(rules: Vec<Rule>, backend: B) -> Self {
         Self {
             backend,
             rules,
@@ -246,7 +246,3 @@ pub fn group_windows<'a, H: 'a>(
     }
     groups
 }
-
-#[cfg(test)]
-#[path = "../tests/include/engine_ext.rs"]
-mod test;

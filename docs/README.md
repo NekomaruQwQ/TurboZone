@@ -287,9 +287,9 @@ failures are always logged and do not abort actions for the remaining targets.
 
 ## Verification
 
-The [testing convention](Testing.md) keeps all test bodies and fixtures under `tests/`. Private
-Engine, App, and Windows backend suites are included child unit-test modules through test-only
-extension traits; public-contract and isolated-logger tests remain integration targets.
+The [testing convention](Testing.md) keeps all test bodies and fixtures under `tests/`.
+Suites are integration targets exercising public contracts; production modules contain no
+private test-access traits or included test modules.
 
 Tests cover schema/serialization, transactional config rejection, all resize modes,
 selector bounds, exact and partial matching, case sensitivity, priority ties, size filters,
@@ -306,9 +306,11 @@ program-cache identity and its 600-tick retention policy do not yet have direct 
 
 The schema generator is an explicit core binary, and the TOML example is parsed
 and verified by a core regression test. Core fake-backend tests verify
-queue ordering, failure isolation, refresh behavior, raw unmatched-window retention, borrowed
-EngineView identity, interleaved outcome order, grouping, and adjacent-snapshot logging deduplication
-after entry reordering. UI tests cover failure states, mixed usable/error views, recovery, wrapping, cached Display calls, and cadence boundaries.
-Windows capture/filter and Display tests retain native causes and operate on fixture-owned windows. Schema-only tests stay in the core integration suite. Verification uses release-mode
+queue ordering, failure isolation, refresh behavior, raw unmatched-window retention,
+EngineView values and error causes, interleaved outcome order, grouping, and adjacent-snapshot logging deduplication
+after entry reordering. UI tests drive public eframe callbacks and cover failure states, mixed usable/error views, recovery,
+wrapping, cached Display calls, action dispatch, and completion-based pacing after slow captures.
+Windows snapshot, filtering, action-error, and Display tests operate on fixture-owned windows.
+Synthetic failed-capture/filter combinations and Explorer identity are not injected through private hooks. Schema-only tests stay in the core integration suite. Verification uses release-mode
 workspace tests and Clippy with warnings denied. Formatting is manual; no formatter is run.
 Interactive UI checks remain manual.
