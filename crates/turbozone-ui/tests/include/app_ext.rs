@@ -16,7 +16,7 @@ impl<B: Backend> AppTestExt<B> for App<B> {
     }
     fn refresh(&mut self) { self.update(); }
     fn update_due(&self, now: Instant) -> bool { self.should_update(now) }
-    fn completed_at(&self) -> Instant { self.engine.snapshot_timestamp() }
+    fn completed_at(&self) -> Instant { self.last_update_completed }
     fn queue_action(&mut self, target: B::Handle, action: WindowAction) {
         self.engine.queue([(target, action)]);
     }

@@ -56,6 +56,8 @@ const CHAR_WINDOW: char = '\u{1f5d6}';
 /// and turns one immutable snapshot into an ordered batch of user-requested actions.
 pub struct App<B: Backend> {
     engine: Engine<B>,
+    /// Retry pacing belongs to presentation, including failed capture attempts.
+    last_update_completed: Instant,
     window_diagnostics: Vec<WindowDiagnostic<B::Handle>>,
 }
 
@@ -103,6 +105,7 @@ impl<B: Backend> App<B> {
     pub fn new(rules: Vec<Rule>, backend: B) -> Self {
         let mut app = Self {
             engine: Engine::new(rules, backend),
+            last_update_completed: Instant::now(),
             window_diagnostics: Vec::new(),
         };
         app.update();
@@ -113,7 +116,7 @@ impl<B: Backend> App<B> {
     /// Pending actions bypass the cadence; no clock or timer policy enters the backend.
     fn should_update(&self, now: Instant) -> bool {
         self.engine.has_pending_actions() ||
-        now.saturating_duration_since(self.engine.snapshot_timestamp()) >= UPDATE_INTERVAL
+        now.saturating_duration_since(self.last_update_completed) >= UPDATE_INTERVAL
     }
 
     /// Advances native observations and rebuilds their diagnostic presentation together.
@@ -121,6 +124,7 @@ impl<B: Backend> App<B> {
     /// Repainting reuses the text while widget identity continues to use native handles.
     fn update(&mut self) {
         self.engine.update();
+        self.last_update_completed = Instant::now();
         self.window_diagnostics.clear();
         if let Ok(snapshot) = self.engine.snapshot().as_ref() {
             self.window_diagnostics.extend(snapshot.iter().filter_map(|&(handle, ref result)| {

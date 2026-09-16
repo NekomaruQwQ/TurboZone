@@ -8,7 +8,6 @@ use crate::*;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::hash::Hash;
-use std::time::Instant;
 
 use smol_str::*;
 
@@ -59,7 +58,6 @@ pub struct Engine<B: Backend> {
     rules: Vec<Rule>,
     #[expect(clippy::type_complexity, reason = "the engine owns the backend result without another representation")]
     snapshot: anyhow::Result<Vec<(B::Handle, anyhow::Result<WindowInfo<B::Handle>>)>>,
-    snapshot_timestamp: Instant,
     pending_actions: Vec<(B::Handle, WindowAction)>,
 }
 
@@ -71,7 +69,6 @@ impl<B: Backend> Engine<B> {
             backend,
             rules,
             snapshot: Ok(Vec::new()),
-            snapshot_timestamp: Instant::now(),
             pending_actions: Vec::new(),
         }
     }
@@ -85,10 +82,6 @@ impl<B: Backend> Engine<B> {
     #[expect(clippy::type_complexity, reason = "raw access borrows the backend's ordered outcome contract")]
     pub const fn snapshot(&self)
      -> &anyhow::Result<Vec<(B::Handle, anyhow::Result<WindowInfo<B::Handle>>)>> { &self.snapshot }
-
-    /// Returns construction time before the first update, then the last completion time.
-    /// Failed attempts advance it too, allowing presentation to pace automatic retries.
-    pub const fn snapshot_timestamp(&self) -> Instant { self.snapshot_timestamp }
 
     /// Classifies captured successes without native queries, logging, or cached state.
     /// Enumeration failure propagates instead of masquerading as an empty matched view.
@@ -148,7 +141,6 @@ impl<B: Backend> Engine<B> {
             },
         }
         self.snapshot = next;
-        self.snapshot_timestamp = Instant::now();
     }
 }
 

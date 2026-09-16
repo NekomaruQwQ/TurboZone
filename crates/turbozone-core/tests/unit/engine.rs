@@ -220,20 +220,16 @@ fn failures_never_match_unfiltered_or_size_filtered_rules_and_recovery_uses_new_
 }
 
 #[test]
-fn construction_is_inert_and_every_completed_attempt_updates_its_timestamp() {
-    let before = std::time::Instant::now();
+fn construction_is_inert_and_updates_replace_failure_with_recovery() {
     let backend = FakeBackend {
         snapshots: [Err(anyhow::anyhow!("unavailable")), Ok(Vec::new())].into(),
         ..Default::default()
     };
     let mut engine = Engine::new(Vec::new(), backend);
-    assert!(engine.snapshot_timestamp() >= before);
     assert!(engine.view().unwrap().groups.is_empty());
-    for _ in 0..2 {
-        let start = std::time::Instant::now();
-        engine.update();
-        let finish = std::time::Instant::now();
-        assert!((start..=finish).contains(&engine.snapshot_timestamp()));
-    }
+    engine.update();
+    assert_eq!(engine.view().unwrap_err().to_string(), "unavailable");
+    engine.update();
+    assert!(engine.view().unwrap().groups.is_empty());
     assert_eq!(engine.into_backend().attempts_at_snapshot, [0, 0]);
 }

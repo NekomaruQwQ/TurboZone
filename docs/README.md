@@ -262,10 +262,10 @@ action per eligible handle. Core's non-exhaustive `WindowAction` currently conta
 by calling `Backend::perform(handle, action)`, then refreshes through `Backend::snapshot()`. The backend owns variant
 dispatch and deliberately panics on a future unsupported variant rather than silently doing nothing.
 
-The engine records the completion time of every update, including failure. Before its first
-update, that timestamp is construction time and its snapshot is an empty success. The App updates
-immediately at startup, when an action is pending, or at its presentation-owned 3 Hz cadence using
-that completion timestamp. Painting remains independent at 30 Hz. A snapshot is not an atomic OS
+The engine starts with an empty successful snapshot and owns no clock state. The App records
+the completion time of every engine update, including failure, and updates immediately at startup,
+when an action is pending, or at its presentation-owned 3 Hz cadence using that private completion
+timestamp. Painting remains independent at 30 Hz. A snapshot is not an atomic OS
 transaction: windows can disappear or change between queries and actions, so native actions
 remain fallible.
 
