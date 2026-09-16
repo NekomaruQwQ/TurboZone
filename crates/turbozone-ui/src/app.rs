@@ -206,7 +206,7 @@ impl<B: Backend> App<B> {
     /// Uses the stable rule name for headings and queries resize availability on demand.
     fn group_ui<F: FnMut(B::Handle, WindowAction)>(
         ui: &mut Ui,
-        group: &Group<'_, B::Handle>,
+        group: &WindowGroup<'_, B::Handle>,
         rule: &Rule,
         action_callback: &mut F) {
         ui.horizontal(|ui| {

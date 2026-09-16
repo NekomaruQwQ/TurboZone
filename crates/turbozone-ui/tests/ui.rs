@@ -38,7 +38,7 @@ struct RecordingBackend<B: Backend> {
 impl<B: Backend> Backend for RecordingBackend<B> {
     type Handle = B::Handle;
 
-    fn snapshot(&mut self) -> anyhow::Result<Vec<(Self::Handle, anyhow::Result<WindowInfo<Self::Handle>>)>> {
+    fn snapshot(&mut self) -> anyhow::Result<turbozone_core::WindowSnapshotCollection<Self::Handle>> {
         self.calls.borrow_mut().snapshots += 1;
         self.inner.snapshot()
     }
@@ -391,7 +391,7 @@ fn slow_failed_and_successful_captures_are_paced_from_completion() {
     impl Backend for SlowBackend {
         type Handle = u64;
 
-        fn snapshot(&mut self) -> anyhow::Result<Vec<(u64, anyhow::Result<WindowInfo<u64>>)>> {
+        fn snapshot(&mut self) -> anyhow::Result<turbozone_core::WindowSnapshotCollection<u64>> {
             std::thread::sleep(Duration::from_millis(350));
             self.attempt += 1;
             if self.attempt < 3 { anyhow::bail!("enumeration failed"); }

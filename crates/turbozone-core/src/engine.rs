@@ -11,15 +11,18 @@ use std::hash::Hash;
 
 use smol_str::*;
 
-/// A rule-dependent view borrowing one immutable engine snapshot.
+pub type WindowSnapshotCollection<H> =
+    Vec<(H, anyhow::Result<WindowInfo<H>>)>;
+
+/// Complete windows selected by one stable rule and case-insensitive program path.
 ///
-/// Groups and error entries allocate borrowed projections of the ordered observation.
-/// Windows, program metadata, rule names, and failures still belong to the engine.
-/// Group members and error entries each retain their relative backend enumeration order.
+/// All members borrow the original observation. The first matched window supplies the
+/// representative program, preserving display casing without cloning its Rc or metadata.
 #[derive(Debug)]
-pub struct EngineView<'a, H> {
-    pub groups: Vec<Group<'a, H>>,
-    pub errors: Vec<(H, &'a anyhow::Error)>,
+pub struct WindowGroup<'a, H> {
+    pub rule_name: &'a SmolStr,
+    pub program: &'a ProgramInfo,
+    pub windows: Vec<&'a WindowInfo<H>>,
 }
 
 /// Supplies snapshots and interprets native actions for one platform.
@@ -39,9 +42,8 @@ pub trait Backend {
     /// Excluded windows are omitted; unmatched successes remain for derived views.
     /// Required-query failures retain the handle beside the original error, while an
     /// outer failure invalidates the entire enumeration. Order may change between calls.
-    #[expect(clippy::type_complexity, reason = "the public contract exposes ordered per-handle outcomes directly")]
     fn snapshot(&mut self)
-     -> anyhow::Result<Vec<(Self::Handle, anyhow::Result<WindowInfo<Self::Handle>>)>>;
+     -> anyhow::Result<WindowSnapshotCollection<Self::Handle>>;
 
     /// Performs one action against live state, retaining contextual native failures.
     /// Implementations must panic for an unsupported future action variant.
@@ -56,9 +58,19 @@ pub trait Backend {
 pub struct Engine<B: Backend> {
     backend: B,
     rules: Vec<Rule>,
-    #[expect(clippy::type_complexity, reason = "the engine owns the backend result without another representation")]
-    snapshot: anyhow::Result<Vec<(B::Handle, anyhow::Result<WindowInfo<B::Handle>>)>>,
+    snapshot: anyhow::Result<WindowSnapshotCollection<B::Handle>>,
     pending_actions: Vec<(B::Handle, WindowAction)>,
+}
+
+/// A rule-dependent view borrowing one immutable engine snapshot.
+///
+/// Groups and error entries allocate borrowed projections of the ordered observation.
+/// Windows, program metadata, rule names, and failures still belong to the engine.
+/// Group members and error entries each retain their relative backend enumeration order.
+#[derive(Debug)]
+pub struct EngineView<'a, H> {
+    pub groups: Vec<WindowGroup<'a, H>>,
+    pub errors: Vec<(H, &'a anyhow::Error)>,
 }
 
 impl<B: Backend> Engine<B> {
@@ -79,9 +91,9 @@ impl<B: Backend> Engine<B> {
     }
 
     /// Borrows the latest raw observation, preserving enumeration failure explicitly.
-    #[expect(clippy::type_complexity, reason = "raw access borrows the backend's ordered outcome contract")]
-    pub const fn snapshot(&self)
-     -> &anyhow::Result<Vec<(B::Handle, anyhow::Result<WindowInfo<B::Handle>>)>> { &self.snapshot }
+    pub const fn snapshot(&self) -> &anyhow::Result<WindowSnapshotCollection<B::Handle>> {
+        &self.snapshot
+    }
 
     /// Classifies captured successes without native queries, logging, or cached state.
     /// Enumeration failure propagates instead of masquerading as an empty matched view.
@@ -152,17 +164,6 @@ fn same_error(previous: Option<&anyhow::Error>, current: &anyhow::Error) -> bool
     })
 }
 
-/// Complete windows selected by one stable rule and case-insensitive program path.
-///
-/// All members borrow the original observation. The first matched window supplies the
-/// representative program, preserving display casing without cloning its Rc or metadata.
-#[derive(Debug)]
-pub struct Group<'a, H> {
-    pub rule_name: &'a SmolStr,
-    pub program: &'a ProgramInfo,
-    pub windows: Vec<&'a WindowInfo<H>>,
-}
-
 /// Returns the winning rule name for a complete native window snapshot.
 /// Higher priorities replace the winner while equal priorities retain source order.
 pub fn matching_rule_name<'a, H>(
@@ -220,7 +221,7 @@ fn matches_window<H>(rule: &Rule, window: &WindowInfo<H>) -> bool {
 /// allow callers to select successes without collecting an intermediate window list.
 pub fn group_windows<'a, H: 'a>(
     rules: &'a [Rule],
-    windows: impl IntoIterator<Item = &'a WindowInfo<H>>) -> Vec<Group<'a, H>> {
+    windows: impl IntoIterator<Item = &'a WindowInfo<H>>) -> Vec<WindowGroup<'a, H>> {
     let mut matched = BTreeMap::<
         &SmolStr,
         BTreeMap<SmolStr, (&ProgramInfo, Vec<&WindowInfo<H>>)>>::new();
@@ -238,7 +239,7 @@ pub fn group_windows<'a, H: 'a>(
     let mut groups = Vec::new();
     for rule in rules {
         let Some(programs) = matched.remove(&rule.name) else { continue; };
-        groups.extend(programs.into_values().map(|(program, windows)| Group {
+        groups.extend(programs.into_values().map(|(program, windows)| WindowGroup {
             rule_name: &rule.name,
             program,
             windows,
