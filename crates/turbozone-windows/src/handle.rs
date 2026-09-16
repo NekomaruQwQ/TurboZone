@@ -25,8 +25,6 @@ impl HandleTrait for HMONITOR {
 pub struct Handle<T: HandleTrait>(pub T);
 
 impl<T: HandleTrait> Handle<T> {
-    pub fn invalid() -> Self { Self(T::default()) }
-
     /// Returns the native identity for UI keys and diagnostics, without dereferencing it.
     pub fn value(self) -> usize { self.0.addr() }
 }

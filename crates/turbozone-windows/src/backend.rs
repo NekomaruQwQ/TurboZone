@@ -182,7 +182,6 @@ fn capture_window(ctx: &mut SnapshotContext, handle: HWND, title: SmolStr)
         state,
         monitor_rect: monitor.rcWork.convert(),
         content_rect,
-        process_id,
         program,
     })
 }

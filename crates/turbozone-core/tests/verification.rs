@@ -27,7 +27,6 @@ fn window_with_size(
         state: WindowState::Normal,
         monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
         content_rect: Rect::new(Point2D::zero(), size),
-        process_id: 42,
         program: Rc::new(ProgramInfo {
             path: program_path.into(),
             name: program_name.into(),
@@ -155,7 +154,7 @@ fn selector_default_shorthand_enables_an_unbounded_selector() {
 }
 
 #[test]
-fn empty_trimmed_description_uses_rule_name_fallback() {
+fn whitespace_description_remains_valid_and_is_preserved() {
     let rules = validate(&parse(
         r#"
         [[rules]]
@@ -165,7 +164,6 @@ fn empty_trimmed_description_uses_rule_name_fallback() {
     ))
     .expect("empty trimmed description must remain valid");
 
-    assert_eq!(rules[0].display_name(), "app");
     assert_eq!(rules[0].description, "   ");
 }
 

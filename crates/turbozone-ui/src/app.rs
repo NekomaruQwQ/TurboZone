@@ -213,11 +213,6 @@ impl<B: Backend> App<B> {
             ui.heading(group.program.description.as_str());
             ui.add_space(4.0);
             ui.monospace(rule.name.as_str());
-
-            // ui.weak(format!(
-            //     "({}, {:+})",
-            //     rule.display_name(),
-            //     rule.priority));
         });
 
         ui.add(Label::new(RichText::new(group.program.path.as_str()).weak()).truncate());

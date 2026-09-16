@@ -172,11 +172,11 @@
       "additionalProperties": false
     },
     "Rule": {
-      "description": "One rule pairing authored window filters with the actions they enable.\n\nThe engine owns verified rules and interprets patterns on demand; presentation\nqueries display and resize helpers without maintaining another rule model.",
+      "description": "One rule pairing authored window filters with the actions they enable.\n\nThe engine owns verified rules and interprets patterns on demand; presentation\nqueries resize helpers without maintaining another rule model.",
       "type": "object",
       "properties": {
         "description": {
-          "description": "Authored description; [`Self::display_name`] trims and resolves blank labels on access.",
+          "description": "Authored description preserved verbatim for inspection and serialization.",
           "type": "string"
         },
         "move": {

@@ -44,7 +44,6 @@ fn window(handle: u64) -> WindowInfo<u64> {
         state: WindowState::Normal,
         monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
         content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
-        process_id: 42,
         program: Rc::new(ProgramInfo {
             path: "C:/Apps/app.exe".into(),
             name: "app.exe".into(),
@@ -130,7 +129,6 @@ fn engine_exposes_verified_authored_rules_without_normalization() {
     assert_eq!(engine.view().unwrap().groups[0].rule_name, "tool");
     let rule = engine.rule("tool").unwrap();
     assert_eq!(rule.description, "  Tool  ");
-    assert_eq!(rule.display_name(), "Tool");
     assert_eq!(rule.program.name, Some(crate::Pattern::Exact("APP.EXE".into())));
     assert!(engine.rule("unknown").is_none());
 }

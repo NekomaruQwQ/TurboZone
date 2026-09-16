@@ -32,7 +32,6 @@ pub fn window(path: &str, title: &str) -> WindowInfo<u64> {
         state: WindowState::Normal,
         monitor_rect: Rect::new(Point2D::zero(), Size2D::new(1920, 1080)),
         content_rect: Rect::new(Point2D::zero(), Size2D::new(640, 480)),
-        process_id: 42,
         program: Rc::new(ProgramInfo {
             path: path.into(),
             name: path.rsplit('/').next().unwrap().into(),

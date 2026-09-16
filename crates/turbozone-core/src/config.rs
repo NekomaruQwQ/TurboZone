@@ -41,7 +41,7 @@ pub struct Config {
 /// One rule pairing authored window filters with the actions they enable.
 ///
 /// The engine owns verified rules and interprets patterns on demand; presentation
-/// queries display and resize helpers without maintaining another rule model.
+/// queries resize helpers without maintaining another rule model.
 #[derive(Debug, Clone)]
 #[derive(Default)]
 #[derive(JsonSchema)]
@@ -52,7 +52,7 @@ pub struct Rule {
     /// Unique stable identifier retained in the same compact representation
     /// at runtime.
     pub name: SmolStr,
-    /// Authored description; [`Self::display_name`] trims and resolves blank labels on access.
+    /// Authored description preserved verbatim for inspection and serialization.
     #[serde(default, skip_serializing_if = "is_default")]
     pub description: SmolStr,
 
@@ -75,15 +75,6 @@ pub struct Rule {
     /// Resize controls, target, and selector limits.
     #[serde(default, skip_serializing_if = "is_default")]
     pub resize: ResizeRule,
-}
-
-impl Rule {
-    /// Borrows the trimmed display label, falling back to the stable rule name.
-    /// Authored description text remains intact for inspection and serialization.
-    pub fn display_name(&self) -> &str {
-        let description = self.description.trim();
-        if description.is_empty() { &self.name } else { description }
-    }
 }
 
 /// Complete serialized resize behavior.

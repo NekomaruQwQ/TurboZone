@@ -20,7 +20,6 @@ fn snapshot_returns_complete_fields_for_an_owned_visible_window() {
     assert_eq!(
         (
             captured.title.as_str(),
-            captured.process_id,
             captured.monitor_rect,
             captured.content_rect,
             captured.program.path.is_empty(),
@@ -29,7 +28,6 @@ fn snapshot_returns_complete_fields_for_an_owned_visible_window() {
         ),
         (
             window.title(),
-            std::process::id(),
             expected_monitor,
             expected_content,
             false,
@@ -120,7 +118,7 @@ fn handle_display_uses_current_title_and_falls_back_to_native_identity() {
             window.handle().0, &windows::core::HSTRING::new())
     }.unwrap();
     assert_eq!(window.handle().to_string(), prefix);
-    assert_eq!(Handle::<HWND>::invalid().to_string(), "0x0");
+    assert_eq!(Handle(HWND::default()).to_string(), "0x0");
 }
 
 #[test]

@@ -8,7 +8,7 @@ use windows::Win32::Foundation::HWND;
 
 #[test]
 fn invalid_handle_capture_retains_context_and_native_cause() {
-    let handle = Handle::invalid();
+    let handle = Handle(HWND::default());
     let error = Backend::default().capture_handle(handle, "Gone").unwrap_err();
     assert!(error.to_string().starts_with("failed to get"));
     assert!(error.downcast_ref::<NativeError>().is_some());
@@ -37,7 +37,6 @@ fn shell_filter_requires_both_the_title_and_successful_executable_identification
             state: WindowState::Normal,
             monitor_rect: euclid::default::Rect::zero(),
             content_rect: euclid::default::Rect::zero(),
-            process_id: 1,
             program: Rc::new(ProgramInfo {
                 path: program_name.into(),
                 name: program_name.into(),

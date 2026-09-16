@@ -52,9 +52,6 @@ pub struct WindowInfo<H> {
     /// Minimized/maximized windows use their restored geometry.
     pub content_rect: Rect<i32>,
 
-    /// Process ID owning the window.
-    pub process_id: u32,
-
     /// Program details of the executable owning the window.
     ///
     /// [`Rc`] is here used to allow sharing between multiple windows of

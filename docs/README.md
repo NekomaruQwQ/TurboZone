@@ -10,7 +10,7 @@ canonical schema referenced by configs for [editor completion and validation](Sc
 Each `Rule` contains:
 
 1. A required unique `name`.
-2. An optional authored `description`; `Rule::display_name()` trims on access and falls back to the name.
+2. An optional authored `description`, preserved verbatim; UI headings use the rule name.
 3. `program` and `window` filters containing authored `Pattern` values.
 4. A `priority` that defaults to zero.
 5. A `move` centering permission that defaults to false (`relocate` in Rust).
@@ -39,7 +39,7 @@ retain the fixed-array input contract.
 first semantic failure and returns `None`, or `Some(())` after every rule passes. Verification
 changes no authored text, resize variants, or rule order. `Engine::new` takes ownership of
 verified `Vec<Rule>` values and exposes name-based rule lookup; direct callers must verify first.
-Description trimming is a borrowed query and program lowercase conversion occurs only in matching.
+Program lowercase conversion occurs only in matching.
 
 ## Startup and diagnostics
 
@@ -136,7 +136,7 @@ rule/window counts.
 The core crate owns `WindowInfo<H>`, `ProgramInfo`, `WindowState`, and the
 generic `Backend` contract. The Windows crate owns the concrete `Handle<HWND>`. A successful
 `WindowInfo` directly contains its handle, title, visual state, monitor work area, client rectangle,
-PID, and immutable `Rc<ProgramInfo>`. Multiple windows can share one program snapshot.
+and immutable `Rc<ProgramInfo>`. Multiple windows can share one program snapshot.
 Owned UTF-8 text crossing TurboZone boundaries uses `SmolStr`; external string formats and
 persisted bytes remain unchanged.
 

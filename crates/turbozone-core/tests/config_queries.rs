@@ -36,22 +36,6 @@ fn manually_constructed_configs_receive_the_same_semantic_checks() {
 }
 
 #[test]
-fn display_names_borrow_trimmed_descriptions_or_the_rule_name() {
-    for (description, expected) in [
-        ("  My Tool  ", "My Tool"),
-        ("", "tool"),
-        (" \t\n\u{2003}", "tool"),
-        ("\u{2003}Tool\u{2003}", "Tool"),
-    ] {
-        let rule = Rule { name: "tool".into(), description: description.into(), ..Default::default() };
-        assert_eq!(rule.display_name(), expected);
-        assert_eq!(rule.description, description);
-        let backing = if expected == "tool" { rule.name.as_str() } else { rule.description.trim() };
-        assert!(std::ptr::eq(rule.display_name(), backing));
-    }
-}
-
-#[test]
 fn resize_queries_interpret_every_form_without_changing_the_variant() {
     for (resize, primary, selector) in [
         ("", None, None),
