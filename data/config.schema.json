@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Config",
-  "description": "The shared serialized and engine-owned configuration for TurboZone.\n\nDeserialization supplies structure and defaults. Call [`crate::verify_config`]\nbefore engine use; verification preserves these authored values unchanged.",
+  "description": "The shared serialized and engine-owned configuration for TurboZone.\n\nDeserialization supplies structure and defaults. The engine crate verifies the complete\nconfiguration before use, preserving these authored values unchanged.",
   "type": "object",
   "properties": {
     "rules": {
@@ -172,7 +172,7 @@
       "additionalProperties": false
     },
     "Rule": {
-      "description": "One rule pairing authored window filters with the actions they enable.\n\nThe engine owns verified rules and interprets patterns on demand; presentation\nqueries resize helpers without maintaining another rule model.",
+      "description": "One rule pairing authored window filters with the actions they enable.\n\nThe engine owns verified rules and interprets patterns on demand; presentation\nconsumes its derived action availability without resolving authored rules.",
       "type": "object",
       "properties": {
         "description": {

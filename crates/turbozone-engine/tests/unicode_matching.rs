@@ -1,4 +1,4 @@
-use turbozone_core::config_parser::parse_config;
+use turbozone_engine::config_parser::parse_config;
 use turbozone_core::{ProgramInfo, WindowInfo, WindowState};
 use turbozone_engine::matches_rule;
 use std::rc::Rc;

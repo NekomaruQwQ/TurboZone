@@ -1,4 +1,3 @@
-use turbozone_core::config_parser::parse_config;
 use turbozone_core::Pattern;
 
 #[test]
@@ -83,10 +82,3 @@ fn insensitive_matching_preserves_unicode_lowercase_semantics() {
     assert!(!pattern.matches_ignore_case("\u{e4}pp - i - \u{7d42}\u{7aef}"));
 }
 
-#[test]
-fn loading_and_matching_preserve_authored_program_patterns() {
-    let config = parse_config("[[rules]]\nname = 'tool'\nprogram.name = 'TOOL.EXE'").unwrap();
-    let pattern = config.rules[0].program.name.as_ref().unwrap();
-    assert!(pattern.matches_ignore_case("tool.exe"));
-    assert_eq!(pattern, &Pattern::Exact("TOOL.EXE".into()));
-}

@@ -6,6 +6,7 @@ use eframe::NativeOptions;
 use eframe::egui;
 use egui::*;
 
+/// Composition binds the native adapter to the engine; UI consumes only core contracts.
 type NativeEngine = turbozone_engine::EngineImpl<turbozone_windows::Backend>;
 type App = turbozone_ui::app::App<NativeEngine, turbozone_windows::Backend>;
 
@@ -19,7 +20,7 @@ fn main() {
             .join("TurboZone")
             .join("config.toml");
     let config =
-        turbozone_ui::config::load_config(&config_path)
+        turbozone::config::load_config(&config_path)
             .expect("failed to load configuration file");
     let options =
         NativeOptions {

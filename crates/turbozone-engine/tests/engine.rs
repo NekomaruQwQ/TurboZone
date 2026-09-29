@@ -1,7 +1,7 @@
 //! Exercises engine results and backend effects through the public contract.
 
 use turbozone_engine::*;
-use turbozone_core::config_parser::parse_config;
+use turbozone_engine::config_parser::parse_config;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;

@@ -26,7 +26,7 @@ Names are not trimmed or normalized. Omitted `rules` means an empty rule list.
 Unknown properties, old `match_*`, `set_position`, and `set_size` keys, and unsupported
 matcher forms are rejected. There are no compatibility aliases.
 
-`turbozone_core::config_parser::parse_config()` deserializes the entire document before semantic validation.
+`turbozone_engine::config_parser::parse_config()` deserializes the entire document before semantic validation.
 Invalid TOML, top-level structure, or any individual rule rejects the complete configuration;
 partially verified rule sets are never exposed. Successful rules retain declaration order.
 An empty document is a valid configuration with no rules.
@@ -49,7 +49,7 @@ Program lowercase conversion occurs only in matching.
 2. Leave existing config bytes untouched, including comments, schema directives, BOM, and line
    endings. Create a missing file exclusively with only the canonical remote `#:schema` comment.
    Parent directories must already exist. Concurrent creation never authorizes overwriting the file.
-3. Parse and verify transactionally via `turbozone-core`, log a configuration error at its
+3. Parse and verify transactionally via `turbozone-engine`, log a configuration error at its
    failing stage, then launch the UI with source-ordered `Rule` values owned directly by
    `EngineImpl` only after complete validation.
 
@@ -277,14 +277,13 @@ failures are always logged and do not abort actions for the remaining targets.
 ## Source layout
 
 1. `turbozone-core/src/`: shared configuration/schema types and their intrinsic value methods,
-   configuration parsing and validation, window models, Platform and Engine contracts, and borrowed view types.
-2. `turbozone-engine/src/`: EngineImpl, matching, grouping, action availability, queued actions,
+   window models, Platform and Engine contracts, and borrowed view types.
+2. `turbozone-engine/src/`: configuration parsing/validation, EngineImpl, matching, grouping, action availability, queued actions,
    raw snapshot lifecycle, and logging policy. It depends only on core and supporting libraries.
-3. `turbozone-ui/src/`: generic `App<E, P>`, app-owned scheduling, egui presentation, and startup
-   config filesystem operations. Production code and tests have no dependency on the engine crate.
+3. `turbozone-ui/src/`: generic `App<E, P>`, app-owned scheduling, and egui presentation. Production code and tests have no dependency on the engine crate.
 4. `turbozone-windows/src/`: native handles, snapshot adaptation and caching, geometry queries,
    and the concrete Windows Backend implementing Platform. Native behavior remains behind this boundary.
-5. `turbozone/src/`: Windows composition root, logger, path selection, and construction of
+5. `turbozone/src/`: Windows composition root, logger, config filesystem loading/path selection, and construction of
    EngineImpl followed by App. App receives an existing engine instead of constructing it.
 
 The four-method `Engine<P>` contract exposes update, view, queue, and pending-action status.
@@ -320,6 +319,6 @@ EngineView values and error causes, interleaved outcome order, grouping, and adj
 after entry reordering. UI tests use prepared views from a scripted Engine, drive public eframe callbacks and cover failure states, mixed usable/error views, recovery,
 wrapping, cached Display calls, action dispatch, and completion-based pacing after slow captures.
 Windows snapshot, filtering, action-error, and Display tests operate on fixture-owned windows.
-Synthetic failed-capture/filter combinations and Explorer identity are not injected through private hooks. Schema-only tests stay in the core integration suite. Verification uses release-mode
+Synthetic failed-capture/filter combinations and Explorer identity are not injected through private hooks. Schema-only tests stay in the core integration suite; schema/parser agreement is tested in engine. Verification uses release-mode
 workspace tests and Clippy with warnings denied. Formatting is manual; no formatter is run.
 Interactive UI checks remain manual.

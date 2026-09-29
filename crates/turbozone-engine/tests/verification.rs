@@ -4,7 +4,7 @@ use std::rc::Rc;
 use euclid::default::{Point2D, Rect, Size2D};
 use smol_str::SmolStr;
 use turbozone_core::*;
-use turbozone_core::config_parser::*;
+use turbozone_engine::config_parser::*;
 
 /// Deserializes fixtures that exercise semantic verification separately from document parsing.
 fn parse(source: &str) -> Config {

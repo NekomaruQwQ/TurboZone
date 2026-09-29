@@ -22,8 +22,8 @@ fn is_default<T: Default + PartialEq>(value: &T) -> bool {
 
 /// The shared serialized and engine-owned configuration for TurboZone.
 ///
-/// Deserialization supplies structure and defaults. Call [`crate::verify_config`]
-/// before engine use; verification preserves these authored values unchanged.
+/// Deserialization supplies structure and defaults. The engine crate verifies the complete
+/// configuration before use, preserving these authored values unchanged.
 // Sizes use euclid geometry directly. Its Serde tuple representation preserves
 // authored `[width, height]` arrays; Schemars overrides retain that wire contract
 // and its dimension limits independently of the runtime geometry type.
@@ -41,7 +41,7 @@ pub struct Config {
 /// One rule pairing authored window filters with the actions they enable.
 ///
 /// The engine owns verified rules and interprets patterns on demand; presentation
-/// queries resize helpers without maintaining another rule model.
+/// consumes its derived action availability without resolving authored rules.
 #[derive(Debug, Clone)]
 #[derive(Default)]
 #[derive(JsonSchema)]

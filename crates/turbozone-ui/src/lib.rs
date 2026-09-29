@@ -1,8 +1,7 @@
-//! Framework-specific presentation and startup filesystem services for TurboZone.
+//! Framework-specific presentation for the shared application contract.
 //!
-//! This crate renders the shared Engine contract through eframe and loads configuration using
-//! only standard filesystem facilities. Native window behavior and process entry points
-//! remain platform-adapter responsibilities.
+//! App owns rendering, interactions, diagnostic text, and completion-based scheduling.
+//! Its engine is supplied by the composition root; configuration loading and native
+//! operations remain outside this crate, including its test dependencies.
 
-pub mod config;
 pub mod app;

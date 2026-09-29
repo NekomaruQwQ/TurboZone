@@ -27,4 +27,7 @@ LICENSE
 /crates/turbozone-engine/
 /crates/turbozone-core/src/platform.rs
 /crates/turbozone-core/src/lib.rs
+/crates/turbozone/src/config.rs
+/crates/turbozone/src/lib.rs
+/crates/turbozone-ui/src/lib.rs
 # END agent

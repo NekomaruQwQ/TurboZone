@@ -20,7 +20,7 @@ pub struct EngineImpl<P: Platform> {
 
 impl<P: Platform> EngineImpl<P> {
     /// Creates an engine with no native capture yet and an empty successful snapshot.
-    /// Callers provide rules from [`config_parser::parse_config`] or verify them first.
+    /// Callers provide rules from [`crate::config_parser::parse_config`] or verify them first.
     pub const fn new(rules: Vec<Rule>, platform: P) -> Self {
         Self {
             platform,

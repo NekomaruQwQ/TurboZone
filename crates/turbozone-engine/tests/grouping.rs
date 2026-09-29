@@ -1,4 +1,4 @@
-use turbozone_core::config_parser::parse_config;
+use turbozone_engine::config_parser::parse_config;
 use std::rc::Rc;
 use turbozone_engine::group_windows;
 

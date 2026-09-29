@@ -3,7 +3,7 @@
 use std::rc::Rc;
 use euclid::default::{Point2D, Rect, Size2D};
 use turbozone_core::*;
-use turbozone_core::config_parser::parse_config;
+use turbozone_engine::config_parser::parse_config;
 use turbozone_engine::group_windows;
 
 fn window(handle: u64, centered: bool, size: Size2D<i32>) -> WindowInfo<u64> {

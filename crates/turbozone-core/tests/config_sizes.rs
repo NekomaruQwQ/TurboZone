@@ -2,7 +2,6 @@
 //! Check every size position independently so optional fields and untagged resize
 //! variants cannot silently acquire a different Serde representation.
 
-use turbozone_core::config_parser::parse_config;
 use euclid::default::Size2D;
 use serde_json::json;
 use turbozone_core::{Config, ResizeRule};
@@ -38,7 +37,7 @@ fn every_size_field_decodes_as_geometry_and_serializes_as_a_pair() {
         let pointer = format!("/rules/0/{}", field.replace('.', "/"));
         assert_eq!(serialized.pointer(&pointer), Some(&json!([1440, 900])), "{field}");
 
-        let restored = parse_config(&toml::to_string(&config).unwrap()).unwrap();
+        let restored: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
         assert_eq!(serde_json::to_value(restored).unwrap(), serialized, "{field}");
     }
 }

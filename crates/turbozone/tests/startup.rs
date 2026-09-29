@@ -9,7 +9,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 use smol_str::SmolStr;
-use turbozone_ui::config::load_config;
+use turbozone::config::load_config;
 
 #[path = "support/temp_dir.rs"]
 mod temp_dir;

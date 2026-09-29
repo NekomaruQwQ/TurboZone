@@ -9,7 +9,8 @@ modules do not include private-access test modules or expose APIs solely for ass
 1. Put integration suites in `tests/<subject>.rs` and shared fixtures in
    `tests/support/<name>.rs`, explicitly included by their consumers. Each suite must
    compile once; fixture-only files must not become Cargo test targets.
-2. Exercise configuration through parsing, verification, serialization, and queries.
+2. Exercise parsing and verification in engine tests, and intrinsic value queries and serialization
+   in core tests. Schema/parser agreement belongs to the engine integration suite.
    Test algorithm results, boundaries, error behavior, and intended use through their
    existing public contracts.
 3. Exercise EngineImpl through construction, queueing, updates, snapshots, views, and rule

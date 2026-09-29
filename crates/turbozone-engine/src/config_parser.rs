@@ -1,7 +1,7 @@
 //! TOML parsing and non-mutating verification for platform-independent configuration.
 //!
 //! This module owns structural and semantic acceptance of authored [`Config`] values.
-//! Matching and presentation interpret verified rules directly without a compiled model.
+//! The engine interprets verified rules directly and derives controls for presentation.
 //! Deserialization and semantic validation are transactional: any error rejects the
 //! complete configuration and is logged here before control returns to the caller.
 //! A well-formed default outside resize bounds only warns; runtime queries suppress
@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use euclid::default::Size2D;
 use smol_str::*;
 
-use crate::*;
+use turbozone_core::*;
 
 /// Parses and validates a complete TOML configuration without performing filesystem I/O.
 ///

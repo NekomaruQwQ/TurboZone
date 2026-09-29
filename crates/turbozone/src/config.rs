@@ -19,7 +19,7 @@ const CONFIG_SCHEMA_URL: &str =
 ///
 /// Relative paths are rejected so launch context cannot change configuration identity.
 /// Existing config bytes are never modified. Unreadable configs and invalid documents
-/// are fatal; the core parser logs validation failures without writing back to the file.
+/// are fatal; the engine parser logs validation failures without writing back to the file.
 /// Parent directories must exist.
 pub fn load_config(path: &Path) -> Result<Vec<Rule>> {
     anyhow::ensure!(!path.is_empty(), "configuration path must not be empty");
@@ -28,7 +28,7 @@ pub fn load_config(path: &Path) -> Result<Vec<Rule>> {
     log::info!("config_path: {}", path.display());
 
     let source = read_or_create_config(path)?;
-    let config = turbozone_core::config_parser::parse_config(&source)
+    let config = turbozone_engine::config_parser::parse_config(&source)
         .with_context(|| format_smolstr!("failed to parse configuration: {}", path.display()))?;
     log::info!("loaded {} rules", config.rules.len());
     Ok(config.rules)
