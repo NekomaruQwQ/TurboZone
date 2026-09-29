@@ -52,13 +52,13 @@ const CHAR_WINDOW: char = '\u{1f5d6}';
 
 /// TurboZone application state shared by the logic and UI phases.
 ///
-/// Core's engine owns native state and queued effects. This layer owns framework timing
+/// The application engine owns native state and queued effects. This layer owns framework timing
 /// and turns one immutable snapshot into an ordered batch of user-requested actions.
-pub struct App<B: Backend> {
-    engine: Engine<B>,
+pub struct App<E: Engine<P>, P: Platform> {
+    engine: E,
     /// Retry pacing belongs to presentation, including failed capture attempts.
     last_update_completed: Instant,
-    window_diagnostics: Vec<WindowDiagnostic<B::Handle>>,
+    window_diagnostics: Vec<WindowDiagnostic<P::Window>>,
 }
 
 /// Presentation text for one failed window, refreshed only after engine updates.
@@ -69,7 +69,7 @@ struct WindowDiagnostic<H> {
     message: SmolStr,
 }
 
-impl<B: Backend> eframe::App for App<B> {
+impl<E: Engine<P>, P: Platform> eframe::App for App<E, P> {
     fn logic(&mut self, _: &Context, _: &mut eframe::Frame) {
         if self.should_update(Instant::now()) {
             self.update();
@@ -100,11 +100,11 @@ impl<B: Backend> eframe::App for App<B> {
     }
 }
 
-impl<B: Backend> App<B> {
-    /// Takes ownership of verified authored rules and captures the initial snapshot.
-    pub fn new(rules: Vec<Rule>, backend: B) -> Self {
+impl<E: Engine<P>, P: Platform> App<E, P> {
+    /// Takes ownership of an application service and performs its initial update.
+    pub fn new(engine: E) -> Self {
         let mut app = Self {
-            engine: Engine::new(rules, backend),
+            engine,
             last_update_completed: Instant::now(),
             window_diagnostics: Vec::new(),
         };
@@ -126,13 +126,13 @@ impl<B: Backend> App<B> {
         self.engine.update();
         self.last_update_completed = Instant::now();
         self.window_diagnostics.clear();
-        if let Ok(snapshot) = self.engine.snapshot().as_ref() {
-            self.window_diagnostics.extend(snapshot.iter().filter_map(|&(handle, ref result)| {
-                result.as_ref().err().map(|error| WindowDiagnostic {
+        if let Ok(view) = self.engine.view() {
+            self.window_diagnostics.extend(view.errors.into_iter().map(|(handle, error)| {
+                WindowDiagnostic {
                     handle,
                     description: format_smolstr!("{handle}"),
                     message: format_smolstr!("{error:#}"),
-                })
+                }
             }));
             self.window_diagnostics.sort_by(|a, b| a.description.cmp(&b.description));
         }
@@ -160,7 +160,7 @@ impl<B: Backend> App<B> {
     /// Derives a borrowed view for this paint and emits actions without native effects.
     /// Enumeration failure replaces all previous content; per-window failures coexist
     /// with usable groups. Both diagnostic states remain visible when logs are silent.
-    fn app_ui<F: FnMut(B::Handle, WindowAction)>(
+    fn app_ui<F: FnMut(P::Window, WindowAction)>(
         &self,
         ui: &mut Ui,
         action_callback: &mut F) {
@@ -176,10 +176,8 @@ impl<B: Backend> App<B> {
 
         for group in &view.groups {
             let group_id = (group.rule_name.as_str(), group.program.path.as_str());
-            let rule = self.engine.rule(group.rule_name)
-                .expect("a rendered group must reference an active rule");
             ui.push_id(group_id, |ui| {
-                Self::group_ui(ui, group, rule, action_callback);
+                Self::group_ui(ui, group, action_callback);
             });
         }
         if view.groups.is_empty() && view.errors.is_empty() {
@@ -203,58 +201,36 @@ impl<B: Backend> App<B> {
         }
     }
 
-    /// Uses the stable rule name for headings and queries resize availability on demand.
-    fn group_ui<F: FnMut(B::Handle, WindowAction)>(
+    /// Renders engine-provided group controls and preserves the captured target order.
+    fn group_ui<F: FnMut(P::Window, WindowAction)>(
         ui: &mut Ui,
-        group: &WindowGroup<'_, B::Handle>,
-        rule: &Rule,
+        group: &WindowGroup<'_, P::Window>,
         action_callback: &mut F) {
         ui.horizontal(|ui| {
             ui.heading(group.program.description.as_str());
             ui.add_space(4.0);
-            ui.monospace(rule.name.as_str());
+            ui.monospace(group.rule_name.as_str());
         });
 
         ui.add(Label::new(RichText::new(group.program.path.as_str()).weak()).truncate());
         ui.add_space(4.0);
 
-        if  rule.relocate ||
-            rule.resize.selector().is_some() ||
-            rule.resize.primary_size().is_some() {
+        if group.actions.center != ActionState::Unavailable ||
+            group.actions.resize != ResizeAvailability::Disabled {
             ui.horizontal(|ui| {
-                let is_centered =
-                    group
-                        .windows
-                        .iter()
-                        .all(|window| window.is_centered());
-                let common_size =
-                    rule.resize
-                        .primary_size()
-                        .is_some_and(|primary_size| {
-                            group
-                                .windows
-                                .iter()
-                                .map(|window| window.content_rect.size)
-                                .all(|size| size == primary_size)
-                        });
-                Self::action_ui(
-                    ui,
-                    rule,
-                    is_centered,
-                    common_size,
-                    &mut |action| {
-                        for window in &group.windows {
-                            action_callback(window.handle, action);
-                        }
-                    });
+                Self::action_ui(ui, &group.actions, &mut |action| {
+                    for window in &group.windows {
+                        action_callback(window.info.handle, action);
+                    }
+                });
             });
             ui.add_space(4.0);
         }
 
         for window in &group.windows {
-            ui.push_id(window.handle, |ui| {
-                Self::window_ui(ui, rule, window, &mut |action| {
-                    action_callback(window.handle, action);
+            ui.push_id(window.info.handle, |ui| {
+                Self::window_ui(ui, window, &mut |action| {
+                    action_callback(window.info.handle, action);
                 });
             });
             ui.add_space(2.0);
@@ -262,53 +238,34 @@ impl<B: Backend> App<B> {
         ui.add_space(8.0);
     }
 
+    /// Observed metadata supplies row text; availability already contains control policy.
     fn window_ui<F: FnMut(WindowAction)>(
         ui: &mut Ui,
-        rule: &Rule,
-        window: &WindowInfo<B::Handle>,
+        window: &WindowView<'_, P::Window>,
         action_callback: &mut F) {
         ui.horizontal(|ui| {
             ui.style_mut().spacing.item_spacing.x = 4.0;
             ui.label(format!("{CHAR_WINDOW}"));
-            match window.state {
+            match window.info.state {
                 WindowState::Maximized => { ui.weak("[max]"); },
                 WindowState::Minimized => { ui.weak("[min]"); },
                 WindowState::Normal => {},
             }
-            ui.add(Label::new(window.title.as_str()).truncate());
+            ui.add(Label::new(window.info.title.as_str()).truncate());
         });
 
-        ui.horizontal(|ui| {
-            let resized =
-                rule.resize
-                    .primary_size()
-                    .map(|size| size == window.content_rect.size)
-                    .unwrap_or(true);
-            Self::action_ui(
-                ui,
-                rule,
-                window.is_centered(),
-                resized,
-                action_callback);
-        });
+        ui.horizontal(|ui| Self::action_ui(ui, &window.actions, action_callback));
     }
 
+    /// Maps explicit action states to widgets without interpreting authored rules.
     fn action_ui<F: FnMut(WindowAction)>(
         ui: &mut Ui,
-        rule: &Rule,
-        centered: bool,
-        resized: bool,
+        actions: &ActionAvailability,
         action_callback: &mut F) {
-        if rule.relocate {
+        if actions.center != ActionState::Unavailable {
             ui.weak("POSITION");
-
-            let icon =
-                if centered {
-                    CHAR_CHECK
-                } else {
-                    CHAR_EMPTY
-                };
-            ui.add_enabled_ui(!centered, |ui| {
+            let icon = if actions.center == ActionState::Satisfied { CHAR_CHECK } else { CHAR_EMPTY };
+            ui.add_enabled_ui(actions.center == ActionState::Available, |ui| {
                 Button::new(format!("{icon} CENTER"))
                     .pipe(|button| ui.add_sized((80.0, 16.0), button))
                     .clicked()
@@ -320,49 +277,43 @@ impl<B: Backend> App<B> {
 
         ui.label("|");
 
-        // Core owns primary-target eligibility, so group and individual controls both
-        // suppress out-of-bounds defaults while retaining the bounded size selector.
-        if let ResizeRule::Exact { exact } = rule.resize {
-            ui.weak("SIZE");
-
-            let target_size = exact;
-            let icon = if resized { CHAR_CHECK } else { CHAR_EMPTY };
-            ui.add_enabled_ui(!resized, |ui| {
-                Button::new(
-                    format!(
-                        "{icon} {}x{}",
-                        target_size.width,
-                        target_size.height))
-                    .pipe(|button| ui.add_sized((80.0, 16.0), button))
-                    .clicked()
-                    .then(|| action_callback(WindowAction::Resize(target_size)));
-            });
-        } else if let Some(selector) = rule.resize.selector() {
-            ui.weak("SIZE");
-
-            if let Some(target_size) = rule.resize.primary_size() {
-                let icon = if resized { CHAR_CHECK } else { CHAR_EMPTY };
-                ui.add_enabled_ui(!resized, |ui| {
-                    Button::new(format!("{icon} {}x{}", target_size.width, target_size.height))
-                        .pipe(|button| ui.add_sized((80.0, 16.0), button))
-                        .clicked()
-                        .then(|| action_callback(WindowAction::Resize(target_size)));
-                });
-                ui.weak("OR");
-            }
-
-            let selected = ComboBox::from_id_salt("size")
-                .width(80.0)
-                .selected_text("SELECT")
-                .show_ui(ui, |ui| Self::size_select_ui(ui, None, &selector))
-                .inner
-                .flatten();
-            if let Some(size) = selected {
-                action_callback(WindowAction::Resize(size));
-            }
-        } else {
-            ui.weak("RESIZE DISABLED");
+        match actions.resize {
+            ResizeAvailability::Disabled => { ui.weak("RESIZE DISABLED"); },
+            ResizeAvailability::Exact(target) => {
+                ui.weak("SIZE");
+                Self::resize_target_ui(ui, target, action_callback);
+            },
+            ResizeAvailability::Selector { primary, ref settings } => {
+                ui.weak("SIZE");
+                if let Some(target) = primary {
+                    Self::resize_target_ui(ui, target, action_callback);
+                    ui.weak("OR");
+                }
+                let selected = ComboBox::from_id_salt("size")
+                    .width(80.0)
+                    .selected_text("SELECT")
+                    .show_ui(ui, |ui| Self::size_select_ui(ui, None, settings))
+                    .inner
+                    .flatten();
+                if let Some(size) = selected {
+                    action_callback(WindowAction::Resize(size));
+                }
+            },
         }
+    }
+
+    /// Both exact and selector-primary buttons use the supplied satisfaction state.
+    fn resize_target_ui<F: FnMut(WindowAction)>(
+        ui: &mut Ui,
+        target: ResizeTarget,
+        action_callback: &mut F) {
+        let icon = if target.satisfied { CHAR_CHECK } else { CHAR_EMPTY };
+        ui.add_enabled_ui(!target.satisfied, |ui| {
+            Button::new(format!("{icon} {}x{}", target.size.width, target.size.height))
+                .pipe(|button| ui.add_sized((80.0, 16.0), button))
+                .clicked()
+                .then(|| action_callback(WindowAction::Resize(target.size)));
+        });
     }
 
     /// Converts selector clicks into values; native work stays outside egui callbacks.

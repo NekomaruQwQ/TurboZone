@@ -1,0 +1,19 @@
+[package]
+name = "turbozone-engine"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+
+[lints]
+workspace = true
+
+[dependencies]
+turbozone-core = { path = "../turbozone-core" }
+anyhow = { workspace = true }
+log = { workspace = true }
+smol_str = { workspace = true }
+
+[dev-dependencies]
+euclid = { workspace = true }
+serde_json = "1.0"
+toml = "1.1.5"

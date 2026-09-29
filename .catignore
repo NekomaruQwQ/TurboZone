@@ -24,4 +24,7 @@ LICENSE
 # BEGIN agent
 /crates/turbozone-windows/src/backend.rs
 /crates/turbozone-ui/src/app.rs
+/crates/turbozone-engine/
+/crates/turbozone-core/src/platform.rs
+/crates/turbozone-core/src/lib.rs
 # END agent

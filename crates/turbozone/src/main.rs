@@ -6,7 +6,8 @@ use eframe::NativeOptions;
 use eframe::egui;
 use egui::*;
 
-type App = turbozone_ui::app::App<turbozone_windows::Backend>;
+type NativeEngine = turbozone_engine::EngineImpl<turbozone_windows::Backend>;
+type App = turbozone_ui::app::App<NativeEngine, turbozone_windows::Backend>;
 
 fn main() {
     pretty_env_logger::init();
@@ -30,7 +31,7 @@ fn main() {
         eframe::run_native("TurboZone", options, Box::new(move |cc| {
             setup_fonts(&cc.egui_ctx);
             App::setup_egui(&cc.egui_ctx);
-            Ok(Box::new(App::new(config, <_>::default())))
+            Ok(Box::new(App::new(NativeEngine::new(config, <_>::default()))))
         }));
 
     result.expect("failed to start eframe application");

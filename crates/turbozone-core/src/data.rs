@@ -31,7 +31,7 @@ pub enum WindowState {
 }
 
 /// A complete immutable native observation used by classification and rendering.
-/// Failed required queries appear beside their handle in [`crate::Backend::snapshot`].
+/// Failed required queries appear beside their handle in [`crate::Platform::snapshot`].
 #[derive(Debug)]
 pub struct WindowInfo<H> {
     /// The native handle identifying the exact enumerated window.
@@ -56,7 +56,7 @@ pub struct WindowInfo<H> {
     ///
     /// [`Rc`] is here used to allow sharing between multiple windows of
     /// the same program. Exact sharing behavior depends on the platform
-    /// [`Backend`](crate::Backend).
+    /// [`Platform`](crate::Platform).
     ///
     /// Encountering invalid utf-8 strings in any of the fields is considered
     /// an error and will be reported as a failure to capture this window.

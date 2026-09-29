@@ -2314,6 +2314,7 @@ dependencies = [
  "smol_str 0.3.6",
  "tap",
  "turbozone-core",
+ "turbozone-engine",
  "turbozone-ui",
  "turbozone-windows",
 ]
@@ -2331,6 +2332,19 @@ dependencies = [
  "serde_json",
  "smol_str 0.3.6",
  "toml",
+]
+
+[[package]]
+name = "turbozone-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "euclid",
+ "log",
+ "serde_json",
+ "smol_str 0.3.6",
+ "toml",
+ "turbozone-core",
 ]
 
 [[package]]

@@ -12,15 +12,15 @@ modules do not include private-access test modules or expose APIs solely for ass
 2. Exercise configuration through parsing, verification, serialization, and queries.
    Test algorithm results, boundaries, error behavior, and intended use through their
    existing public contracts.
-3. Exercise Engine through construction, queueing, updates, snapshots, views, and rule
-   lookup. A fake backend can share a recorder with its test through `Rc<RefCell<_>>`;
-   the engine still owns the backend. Assert calls and returned values without
+3. Exercise EngineImpl through construction, queueing, updates, snapshots, views, and rule
+   lookup. A fake platform can share a recorder with its test through `Rc<RefCell<_>>`;
+   the engine still owns the platform. Assert calls and returned values without
    extracting the backend, reading rule storage, comparing pointers, or counting Rc owners.
 4. Exercise App through `eframe::App::ui` and `eframe::App::logic`. Headless tests use
    egui pointer events and eframe's existing `Frame::_new_kittest()` constructor.
-   Find controls through rendered text, then observe backend actions after logic runs.
+   Find controls through rendered text, then observe queued engine commands after logic runs.
    No test helper reads App fields or invokes private rendering/scheduling functions.
-5. Observe polling through backend calls and real elapsed time with margin beyond the
+5. Observe polling through engine updates and real elapsed time with margin beyond the
    polling interval. Slow captures verify completion-based pacing for failures and
    recovery; clicked actions verify immediate dispatch. These tests intentionally
    cover observable scheduling rather than an exact private timestamp boundary.
@@ -39,10 +39,11 @@ snapshots; no private test seam exists to manufacture those states. Backend cach
 layout and eviction bookkeeping remain internal mechanisms; generic Cache behavior
 is tested separately through lazy insertion and eviction results.
 
-UI fixtures repeat their final scripted observation so action-triggered refreshes can
-represent a stable desktop. Their recording adapter observes the public Backend
-contract; it does not substitute for App orchestration or rendering. Textual fixture
-errors preserve displayed chains without promising error downcast identity.
+UI fixtures supply explicit group/window action availability and repeat their final prepared
+view for action-triggered updates. They implement the core Engine contract without importing
+EngineImpl, parsing config, matching rules, or deriving satisfaction. Their recorder distinguishes
+queued commands from commands drained by update. UI timing tests use slow engine updates.
+Original fixture errors remain available as borrowed chains; diagnostic formatting stays in App.
 
 ## Isolation and maintenance
 
@@ -57,7 +58,7 @@ errors preserve displayed chains without promising error downcast identity.
 ## Validation
 
 ```nu
-cargo test -p turbozone-core --test engine --release --locked
+cargo test -p turbozone-engine --test engine --release --locked
 cargo test -p turbozone-ui --test ui --release --locked
 cargo test --workspace --release --locked
 cargo clippy --workspace --all-targets --all-features --release --locked -- -D warnings

@@ -1,5 +1,6 @@
 //! Exercises snapshot diagnostics through the real engine, in an isolated logger process.
 
+use turbozone_engine::*;
 use std::collections::VecDeque;
 use std::fmt;
 use std::sync::Mutex;
@@ -7,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use smol_str::{SmolStr, format_smolstr};
-use turbozone_core::{Backend, Engine, WindowAction, WindowInfo};
+use turbozone_core::{Platform, Engine as _, WindowAction, WindowInfo};
 
 struct CapturedLogs(Mutex<Vec<(Level, SmolStr)>>);
 
@@ -36,8 +37,8 @@ impl fmt::Display for TestHandle {
 #[expect(clippy::type_complexity, reason = "scripted observations mirror the backend's direct result contract")]
 struct ScriptedBackend(VecDeque<anyhow::Result<Vec<(TestHandle, anyhow::Result<WindowInfo<TestHandle>>)>>>);
 
-impl Backend for ScriptedBackend {
-    type Handle = TestHandle;
+impl Platform for ScriptedBackend {
+    type Window = TestHandle;
     fn snapshot(&mut self) -> anyhow::Result<Vec<(TestHandle, anyhow::Result<WindowInfo<TestHandle>>)>> {
         self.0.pop_front().expect("each update needs a scripted observation")
     }
@@ -56,7 +57,7 @@ fn enumeration(cause: &str) -> anyhow::Result<Vec<(TestHandle, anyhow::Result<Wi
     Err(anyhow::anyhow!("{cause}").context("enumerate"))
 }
 
-fn advance(engine: &mut Engine<ScriptedBackend>) -> Vec<(Level, SmolStr)> {
+fn advance(engine: &mut EngineImpl<ScriptedBackend>) -> Vec<(Level, SmolStr)> {
     engine.update();
     std::mem::take(&mut *LOGS.0.lock().unwrap())
 }
@@ -87,7 +88,7 @@ fn engine_deduplicates_adjacent_snapshots_without_hiding_current_errors() {
         Ok(failures(&[(7, "denied")])),
         Ok(failures(&[(7, "denied")])),
     ].into());
-    let mut engine = Engine::new(Vec::new(), backend);
+    let mut engine = EngineImpl::new(Vec::new(), backend);
     assert_eq!(advance(&mut engine), [(Level::Warn,
         "failed to snapshot window native-window-7-title-0: capture: denied".into())]);
     assert_eq!(advance(&mut engine), NO_LOGS);

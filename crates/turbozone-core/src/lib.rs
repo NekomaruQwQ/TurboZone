@@ -1,8 +1,7 @@
-//! Platform-independent product logic and backend contracts for TurboZone.
+//! Shared contracts, configuration value semantics, and observation types.
 //!
-//! Core owns configuration interpretation, stable rule identity, action orchestration,
-//! snapshot grouping, and non-fatal logging policy. Platform adapters own native reads
-//! and writes, while presentation crates decide when to tick and how to render the state.
+//! Platform and Engine describe cooperation without owning application state. Configuration
+//! types retain their intrinsic matching and resize queries; orchestration lives in engine.
 
 pub mod util {
     mod cache;
@@ -13,6 +12,9 @@ mod config;
 mod data;
 pub use config::*;
 pub use data::*;
+
+mod platform;
+pub use platform::*;
 
 mod engine;
 pub use engine::*;

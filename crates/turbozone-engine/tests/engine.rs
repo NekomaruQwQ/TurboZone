@@ -1,5 +1,6 @@
 //! Exercises engine results and backend effects through the public contract.
 
+use turbozone_engine::*;
 use turbozone_core::config_parser::parse_config;
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -7,7 +8,7 @@ use std::rc::Rc;
 
 use euclid::default::{Point2D, Rect, Size2D};
 use turbozone_core::{
-    ProgramInfo, WindowAction, Backend, Engine, WindowInfo, WindowState,
+    ProgramInfo, WindowAction, Platform, Engine as _, WindowInfo, WindowState,
 };
 
 /// Records the action boundary independently of action variants and supplies scripted snapshots.
@@ -27,17 +28,17 @@ struct BackendCalls {
     attempts_at_snapshot: Vec<usize>,
 }
 
-impl Backend for FakeBackend {
-    type Handle = u64;
+impl Platform for FakeBackend {
+    type Window = u64;
 
-    fn snapshot(&mut self) -> anyhow::Result<Vec<(Self::Handle, anyhow::Result<WindowInfo<Self::Handle>>)>> {
+    fn snapshot(&mut self) -> anyhow::Result<Vec<(Self::Window, anyhow::Result<WindowInfo<Self::Window>>)>> {
         let mut calls = self.calls.borrow_mut();
         let attempted = calls.attempted.len();
         calls.attempts_at_snapshot.push(attempted);
         self.snapshots.pop_front().unwrap_or_else(|| Ok(Vec::new()))
     }
 
-    fn perform(&mut self, target: Self::Handle, action: WindowAction) -> anyhow::Result<()> {
+    fn perform(&mut self, target: Self::Window, action: WindowAction) -> anyhow::Result<()> {
         self.calls.borrow_mut().attempted.push((target, action));
         if self.failing_handle == Some(target) {
             anyhow::bail!("scripted action failure");
@@ -67,7 +68,7 @@ fn update_forwards_actions_in_queue_order_before_refreshing() {
     let mut backend = FakeBackend::default();
     backend.snapshots.push_back(Ok(vec![(1, Ok(window(1)))]));
     let calls = Rc::clone(&backend.calls);
-    let mut engine = Engine::new(rules, backend);
+    let mut engine = EngineImpl::new(rules, backend);
     engine.queue([
         (1, WindowAction::Center),
         (2, WindowAction::Resize(Size2D::new(1280, 720))),
@@ -92,7 +93,7 @@ fn failed_action_does_not_prevent_later_targets_or_refresh() {
     let mut backend = FakeBackend { failing_handle: Some(1), ..Default::default() };
     backend.snapshots.push_back(Ok(vec![(2, Ok(window(2)))]));
     let calls = Rc::clone(&backend.calls);
-    let mut engine = Engine::new(rules, backend);
+    let mut engine = EngineImpl::new(rules, backend);
     engine.queue([
         (1, WindowAction::Center),
         (2, WindowAction::Center),
@@ -100,7 +101,7 @@ fn failed_action_does_not_prevent_later_targets_or_refresh() {
 
     engine.update();
 
-    assert_eq!(engine.view().unwrap().groups[0].windows[0].handle, 2);
+    assert_eq!(engine.view().unwrap().groups[0].windows[0].info.handle, 2);
     assert_eq!(calls.borrow().attempted, [
         (1, WindowAction::Center),
         (2, WindowAction::Center),
@@ -113,7 +114,7 @@ fn failed_snapshot_clears_previously_visible_sections() {
     let mut backend = FakeBackend::default();
     backend.snapshots.push_back(Ok(vec![(1, Ok(window(1)))]));
     backend.snapshots.push_back(Err(anyhow::anyhow!("enumeration unavailable")));
-    let mut engine = Engine::new(rules, backend);
+    let mut engine = EngineImpl::new(rules, backend);
     engine.update();
     assert_eq!(engine.view().unwrap().groups.len(), 1);
 
@@ -131,7 +132,7 @@ fn engine_exposes_verified_authored_rules_without_normalization() {
          [[rules]]\nname = 'fallback'").unwrap().rules;
     let mut backend = FakeBackend::default();
     backend.snapshots.push_back(Ok(vec![(1, Ok(window(1)))]));
-    let mut engine = Engine::new(rules, backend);
+    let mut engine = EngineImpl::new(rules, backend);
     engine.update();
 
     assert_eq!(engine.rule("fallback").unwrap().name, "fallback");
@@ -164,7 +165,7 @@ fn raw_snapshot_and_views_preserve_interleaved_outcomes_and_error_causes() {
         ..Default::default()
     };
     let calls = Rc::clone(&backend.calls);
-    let mut engine = Engine::new(rules, backend);
+    let mut engine = EngineImpl::new(rules, backend);
     engine.update();
     let raw = engine.snapshot().as_ref().unwrap();
     assert_eq!(raw.iter().map(|&(handle, ref result)| (handle, result.is_ok()))
@@ -173,10 +174,10 @@ fn raw_snapshot_and_views_preserve_interleaved_outcomes_and_error_causes() {
         std::io::ErrorKind::PermissionDenied);
     for _ in 0..2 {
         let view = engine.view().unwrap();
-        assert_eq!(view.groups[0].windows.iter().map(|window| window.handle)
+        assert_eq!(view.groups[0].windows.iter().map(|window| window.info.handle)
             .collect::<Vec<_>>(), [4, 1]);
         assert_eq!(view.groups[0].program.path, "C:/Apps/app.exe");
-        assert!(view.groups[0].windows.iter().all(|window| window.title == "Selected"));
+        assert!(view.groups[0].windows.iter().all(|window| window.info.title == "Selected"));
         assert_eq!(view.errors[0].1.to_string(), "gone");
         assert_eq!(view.errors[1].1.downcast_ref::<std::io::Error>().unwrap().kind(),
             std::io::ErrorKind::PermissionDenied);
@@ -205,7 +206,7 @@ fn failures_never_match_unfiltered_or_size_filtered_rules_and_recovery_uses_new_
             ].into(),
             ..Default::default()
         };
-        let mut engine = Engine::new(parse_config(source).unwrap().rules, backend);
+        let mut engine = EngineImpl::new(parse_config(source).unwrap().rules, backend);
         engine.update();
         assert!(engine.view().unwrap().groups.is_empty());
         assert_eq!(engine.view().unwrap().errors.len(), 1);
@@ -214,7 +215,7 @@ fn failures_never_match_unfiltered_or_size_filtered_rules_and_recovery_uses_new_
         assert!(view.errors.is_empty());
         if !source.is_empty() {
             assert_eq!(view.groups[0].program.path, "C:/Other/recovered.exe");
-            assert_eq!(view.groups[0].windows[0].content_rect.size, Size2D::new(800, 600));
+            assert_eq!(view.groups[0].windows[0].info.content_rect.size, Size2D::new(800, 600));
         }
         engine.update();
         assert!(engine.view().unwrap().groups.is_empty());
@@ -234,7 +235,7 @@ fn construction_is_inert_and_updates_replace_failure_with_recovery() {
         ..Default::default()
     };
     let calls = Rc::clone(&backend.calls);
-    let mut engine = Engine::new(Vec::new(), backend);
+    let mut engine = EngineImpl::new(Vec::new(), backend);
     assert!(engine.view().unwrap().groups.is_empty());
     assert_eq!(calls.borrow().attempts_at_snapshot, [] as [usize; 0]);
     engine.update();

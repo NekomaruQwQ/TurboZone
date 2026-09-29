@@ -1,7 +1,7 @@
 //! Public-contract tests for Windows snapshots, actions, diagnostics, and geometry.
 
 use euclid::default::Size2D;
-use turbozone_core::{Backend as _, WindowAction, WindowInfo, WindowState};
+use turbozone_core::{Platform as _, WindowAction, WindowInfo, WindowState};
 use turbozone_windows::{Backend, Handle, NativeError};
 use windows::Win32::Foundation::{E_INVALIDARG, HWND};
 

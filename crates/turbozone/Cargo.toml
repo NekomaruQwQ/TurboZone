@@ -11,6 +11,7 @@ default-run = "turbozone"
 workspace = true
 
 [dependencies]
+turbozone-engine = { path = "../turbozone-engine" }
 turbozone-core = { path = "../turbozone-core" }
 turbozone-windows = { path = "../turbozone-windows" }
 turbozone-ui = { path = "../turbozone-ui" }

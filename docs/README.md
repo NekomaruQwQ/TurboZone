@@ -37,7 +37,7 @@ geometry. Euclid’s Serde support preserves `[width, height]` pairs, and schema
 retain the fixed-array input contract.
 `verify_config(&Config)` can also check deserialized or manually constructed values. It logs the
 first semantic failure and returns `None`, or `Some(())` after every rule passes. Verification
-changes no authored text, resize variants, or rule order. `Engine::new` takes ownership of
+changes no authored text, resize variants, or rule order. `EngineImpl::new` takes ownership of
 verified `Vec<Rule>` values and exposes name-based rule lookup; direct callers must verify first.
 Program lowercase conversion occurs only in matching.
 
@@ -51,7 +51,7 @@ Program lowercase conversion occurs only in matching.
    Parent directories must already exist. Concurrent creation never authorizes overwriting the file.
 3. Parse and verify transactionally via `turbozone-core`, log a configuration error at its
    failing stage, then launch the UI with source-ordered `Rule` values owned directly by
-   `Engine` only after complete validation.
+   `EngineImpl` only after complete validation.
 
 Unreadable config, creation failure, and invalid documents exit nonzero before the UI opens.
 Startup never generates schemas, and user-authored config is never rewritten automatically.
@@ -118,7 +118,7 @@ directly, without predicate vectors or function pointers. Entirely empty partial
 by validation and fail closed if constructed manually. Absent filters remain `None` and need no
 matching conversion. Matching normalization is independent of platform-backend cache identity.
 
-`Engine` directly owns one source-order `Vec<Rule>`. Its uncached `view()` query evaluates
+`EngineImpl<P>` directly owns one source-order `Vec<Rule>`. Its uncached `view()` query evaluates
 each complete `WindowInfo` against those rules:
 
 1. Scan all rules in source order.
@@ -126,7 +126,7 @@ each complete `WindowInfo` against those rules:
 3. Replace the winner only when a matching rule has strictly greater priority.
 4. Equal priority therefore favors the first rule.
 
-`matching_rule_name(rules, window)` returns the winning name and `Engine::rule(name)` resolves
+`matching_rule_name(rules, window)` returns the winning name and `EngineImpl::rule(name)` resolves
 it. Name-based lookup preserves source-order UI groups without allowing array positions to escape
 as identity. No additional priority index is needed for the expected
 rule/window counts.
@@ -134,13 +134,13 @@ rule/window counts.
 ## Window geometry and snapshots
 
 The core crate owns `WindowInfo<H>`, `ProgramInfo`, `WindowState`, and the
-generic `Backend` contract. The Windows crate owns the concrete `Handle<HWND>`. A successful
+generic `Platform` and `Engine<P>` contracts. The Windows crate owns the concrete `Handle<HWND>`. A successful
 `WindowInfo` directly contains its handle, title, visual state, monitor work area, client rectangle,
 and immutable `Rc<ProgramInfo>`. Multiple windows can share one program snapshot.
 Owned UTF-8 text crossing TurboZone boundaries uses `SmolStr`; external string formats and
 persisted bytes remain unchanged.
 
-`Backend::snapshot()` returns `anyhow::Result<Vec<(H, anyhow::Result<WindowInfo<H>>)>>`.
+`Platform::snapshot()` returns `anyhow::Result<Vec<(H, anyhow::Result<WindowInfo<H>>)>>`.
 The vector retains successful and failed captures together in backend enumeration order.
 Each included handle occurs exactly once; on success, the tuple handle equals `WindowInfo.handle`.
 Unmatched successful windows remain in raw state because matching is a derived query.
@@ -151,7 +151,7 @@ boundary. Enumeration order is preserved within each observation, not guaranteed
 observations. Optional title/description behavior remains unchanged. APIs with documented native errors
 retain those causes; APIs without a last-error contract report an explicit failure message.
 
-The backend filters native relevance before core sees the snapshot. Empty or unreadable titles
+The backend filters native relevance before the engine sees the snapshot. Empty or unreadable titles
 remain excluded even if required capture fails. Program Manager is excluded only when successful
 capture identifies explorer.exe. Capture still precedes those title/program filters so cache refresh
 behavior remains unchanged. These omissions are not per-window failures exposed to the UI.
@@ -168,7 +168,7 @@ and [DPI-aware frame calculation](https://learn.microsoft.com/en-us/windows/win3
 Custom non-client layouts and wrapped menus are not fully inferable from window styles; restored
 client geometry retains this limitation of the standard-frame approach.
 
-Each `Backend::snapshot()` call owns call-local monitor and process-path caches. Monitor results are
+Each `Platform::snapshot()` call owns call-local monitor and process-path caches. Monitor results are
 shared by all window-capture queries for that monitor, including failures. Process-path results are
 shared by process ID so multiple windows from one process issue only one path query during the
 snapshot. Both caches are discarded when the call returns: monitor work areas may change, monitors
@@ -179,7 +179,7 @@ path. It does not case-fold or normalize separators for cache identity. Successf
 immutable `Rc<ProgramInfo>`; deterministic path-conversion failures can occupy the same cache.
 Missing, empty, or unreadable version metadata produces a successful program detail whose display
 description falls back to the program filename. Program-cache retention is an internal backend
-policy rather than part of the core snapshot contract. Its threshold remains 600 enumeration-attempt
+policy rather than part of the shared snapshot contract. Its threshold remains 600 enumeration-attempt
 sequence steps (roughly 200 seconds at steady 3 Hz polling, faster with actions). Failed enumeration
 advances the sequence but skips eviction; this is not a wall-clock expiration policy. Existing snapshots keep their program
 details alive independently through `Rc`. Native actions query current geometry separately.
@@ -202,7 +202,7 @@ change a window's winning rule after the next native snapshot.
 `Engine::update()` performs pending actions, captures and stores raw backend state, and compares
 errors with the previous snapshot using a temporary borrowed lookup by handle. Entry reordering
 never makes a failure new; newly emitted window warnings follow enumeration order. It performs
-no grouping. `Engine::snapshot()` borrows that raw Result; `Engine::view()` returns `Result<EngineView<'_, H>, &anyhow::Error>` on demand:
+no grouping. `EngineImpl::snapshot()` borrows that raw Result; `Engine::view()` returns `Result<EngineView<'_, H>, &anyhow::Error>` on demand:
 
 ```text
 Raw snapshot
@@ -214,14 +214,15 @@ Successful window
     winning rule    -> borrowed member of a (rule, lowercase program path) group
 ```
 
-`EngineView` contains `Vec<Group<'_, H>>` and `Vec<(H, &anyhow::Error)>`. Its error entries retain
+`EngineView` contains `Vec<WindowGroup<'_, H>>` and `Vec<(H, &anyhow::Error)>`. Its error entries retain
 the relative enumeration order of failures. `group_windows()` accepts an iterator of borrowed
 windows, including slices, so the engine can select successes without an intermediate window list.
-Each Group borrows its rule name, first member's ProgramInfo, and member windows. No window,
+Each group borrows its rule name, first member's ProgramInfo, and member windows through
+`WindowView`. Group and window rows carry derived `ActionAvailability` values. No window,
 error, or program Rc is cloned. Groups are nonempty, ordered by rule source order and then
 lowercase program path; members preserve enumeration order and representative display casing.
-The query has no native effects, logs, or grouping cache. Calling it once per paint currently
-means grouping at approximately 30 Hz; native capture remains independently paced at 3 Hz.
+The query has no native effects, logs, or grouping cache. Calling it once per paint, plus once after each update for diagnostic text,
+means grouping at approximately 33 Hz; native capture remains independently paced at 3 Hz.
 
 Windows from the same program matching the same rule share a group. Different paths or winning
 rules form separate groups. Actionless matches still appear. Successful rows retain their program
@@ -257,9 +258,9 @@ and normal/maximized/minimized state; restored actions update placement rather t
 the window. Oversized targets that cannot fit native dimensions return errors.
 
 Individual actions capture one handle from the rendered snapshot. Group controls append one
-action per eligible handle. Core's non-exhaustive `WindowAction` currently contains
+action per eligible handle. The shared non-exhaustive `WindowAction` currently contains
 `Resize(size)` and `Center`. The engine queues `(handle, action)` pairs and drains them in order
-by calling `Backend::perform(handle, action)`, then refreshes through `Backend::snapshot()`. The backend owns variant
+by calling `Platform::perform(handle, action)`, then refreshes through `Platform::snapshot()`. The backend owns variant
 dispatch and deliberately panics on a future unsupported variant rather than silently doing nothing.
 
 The engine starts with an empty successful snapshot and owns no clock state. The App records
@@ -275,15 +276,23 @@ failures are always logged and do not abort actions for the remaining targets.
 
 ## Source layout
 
-1. `turbozone-core/src/`: serialized config and schema types, validation, runtime matching,
-   backend contract, action queue, raw snapshot lifecycle, borrowed EngineView grouping, log deduplication, and window
-   models. It performs no filesystem I/O and does not install a logger.
-2. `turbozone-ui/src/`: generic `App<B>`, app-owned scheduling cadence, flat egui presentation,
-   and startup config filesystem operations. It has no dependency on the Windows crate.
-3. `turbozone-windows/src/`: native handles, snapshot adaptation and caching, geometry queries, and
-   the concrete Windows `Backend`. It has no dependency on the UI or executable crate.
-4. `turbozone/src/`: the Windows composition root, config-path selection, logger initialization, UI/backend assembly,
-   and the `turbozone.exe` entry point.
+1. `turbozone-core/src/`: shared configuration/schema types and their intrinsic value methods,
+   configuration parsing and validation, window models, Platform and Engine contracts, and borrowed view types.
+2. `turbozone-engine/src/`: EngineImpl, matching, grouping, action availability, queued actions,
+   raw snapshot lifecycle, and logging policy. It depends only on core and supporting libraries.
+3. `turbozone-ui/src/`: generic `App<E, P>`, app-owned scheduling, egui presentation, and startup
+   config filesystem operations. Production code and tests have no dependency on the engine crate.
+4. `turbozone-windows/src/`: native handles, snapshot adaptation and caching, geometry queries,
+   and the concrete Windows Backend implementing Platform. Native behavior remains behind this boundary.
+5. `turbozone/src/`: Windows composition root, logger, path selection, and construction of
+   EngineImpl followed by App. App receives an existing engine instead of constructing it.
+
+The four-method `Engine<P>` contract exposes update, view, queue, and pending-action status.
+Raw snapshot and rule inspection remain inherent EngineImpl methods. Views derive per-window
+and group action permission and satisfaction using core value methods. A group is satisfied only
+when every member is satisfied; group commands retain all rendered members in order. Exact mode
+has no selector, while unusable selector defaults disappear without disabling the selector. The
+UI keeps its preset catalog and uses supplied ResizeSelector bounds to filter menu entries.
 
 ## Verification
 
@@ -305,10 +314,10 @@ generic cache's lazy insertion, key identity, hit refresh, and eviction boundary
 program-cache identity and its 600-tick retention policy do not yet have direct instrumentation.
 
 The schema generator is an explicit core binary, and the TOML example is parsed
-and verified by a core regression test. Core fake-backend tests verify
+and verified by an engine regression test. Engine fake-platform tests verify
 queue ordering, failure isolation, refresh behavior, raw unmatched-window retention,
 EngineView values and error causes, interleaved outcome order, grouping, and adjacent-snapshot logging deduplication
-after entry reordering. UI tests drive public eframe callbacks and cover failure states, mixed usable/error views, recovery,
+after entry reordering. UI tests use prepared views from a scripted Engine, drive public eframe callbacks and cover failure states, mixed usable/error views, recovery,
 wrapping, cached Display calls, action dispatch, and completion-based pacing after slow captures.
 Windows snapshot, filtering, action-error, and Display tests operate on fixture-owned windows.
 Synthetic failed-capture/filter combinations and Explorer identity are not injected through private hooks. Schema-only tests stay in the core integration suite. Verification uses release-mode

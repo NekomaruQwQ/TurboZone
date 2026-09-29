@@ -1,76 +1,48 @@
-//! Public rendering, interaction, and refresh behavior exercised without native GUI startup.
+//! Public rendering, interaction, and refresh behavior exercised through a fake Engine.
 
-use turbozone_core::config_parser::parse_config;
 use eframe::egui::{Context, Event, Modifiers, PointerButton, Pos2, RawInput, Rect, Shape, Vec2};
-use euclid::default::{Point2D, Size2D};
-use smol_str::{SmolStr, format_smolstr};
-use turbozone_core::{Backend, WindowAction, WindowInfo};
+use euclid::default::Size2D;
+use smol_str::SmolStr;
+use turbozone_core::*;
 use turbozone_ui::app::{App, TURBOZONE_WINDOW_SIZE};
 use eframe::App as _;
 use std::cell::RefCell;
+use std::fmt::{Debug, Display};
+use std::hash::Hash;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 #[path = "support/window.rs"]
 mod fixture;
-use fixture::{TestBackend, window};
+use fixture::{Calls, Scene, TestEngine, TestPlatform, window};
 
-/// Drives the public framework callbacks with pointer input and observes backend effects.
-/// Text positions come from egui output, so no private widget IDs or app fields are needed.
-struct View<B: Backend = TestBackend> {
+/// Drives public callbacks and records engine commands without depending on EngineImpl.
+struct View<H: Debug + Display + Copy + Eq + Hash + 'static = u64> {
     context: Context,
-    app: App<RecordingBackend<B>>,
-    calls: Rc<RefCell<BackendCalls<B::Handle>>>,
+    app: App<TestEngine<H>, TestPlatform<H>>,
+    calls: Rc<RefCell<Calls<H>>>,
     labels: Vec<(SmolStr, Rect)>,
 }
 
-/// Records only interactions exposed by the backend contract, independently of App storage.
-struct BackendCalls<H> {
-    actions: Vec<(H, WindowAction)>,
-    snapshots: usize,
-}
-
-struct RecordingBackend<B: Backend> {
-    inner: B,
-    calls: Rc<RefCell<BackendCalls<B::Handle>>>,
-}
-
-impl<B: Backend> Backend for RecordingBackend<B> {
-    type Handle = B::Handle;
-
-    fn snapshot(&mut self) -> anyhow::Result<turbozone_core::WindowSnapshotCollection<Self::Handle>> {
-        self.calls.borrow_mut().snapshots += 1;
-        self.inner.snapshot()
-    }
-
-    fn perform(&mut self, target: Self::Handle, action: WindowAction) -> anyhow::Result<()> {
-        self.calls.borrow_mut().actions.push((target, action));
-        self.inner.perform(target, action)
-    }
-}
-
 impl View {
-    fn new(source: &str, windows: Vec<WindowInfo<u64>>) -> Self {
-        Self::with_backend(source, TestBackend {
-            snapshots: [Ok(windows.into_iter().map(|window| (window.handle, Ok(window))).collect())].into(),
-        })
+    fn new(actions: ActionAvailability, windows: Vec<WindowInfo<u64>>) -> Self {
+        Self::with_engine(TestEngine::new(vec![Ok(Scene::group(windows, actions))]))
     }
 }
 
-impl<B: Backend> View<B> {
-    fn with_backend(source: &str, backend: B) -> Self {
-        let rules = parse_config(source).unwrap().rules;
-        let calls = Rc::new(RefCell::new(BackendCalls { actions: Vec::new(), snapshots: 0 }));
-        let app = App::new(rules, RecordingBackend { inner: backend, calls: Rc::clone(&calls) });
+impl<H: Debug + Display + Copy + Eq + Hash + 'static> View<H> {
+    fn with_engine(engine: TestEngine<H>) -> Self {
+        let calls = Rc::clone(engine.calls());
+        let app = App::new(engine);
         let context = Context::default();
-        App::<B>::setup_egui(&context);
+        App::<TestEngine<H>, TestPlatform<H>>::setup_egui(&context);
         let mut view = Self { context, app, calls, labels: Vec::new() };
         view.frame(Vec::new());
         view
     }
 
     fn frame(&mut self, events: Vec<Event>) {
-        let snapshots_before = self.calls.borrow().snapshots;
+        let updates_before = self.calls.borrow().updates;
         let input = RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::from(TURBOZONE_WINDOW_SIZE))),
             events,
@@ -87,7 +59,7 @@ impl<B: Backend> View<B> {
                 text.galley.rect.translate(text.pos.to_vec2()))),
             _ => None,
         }).collect();
-        assert_eq!(self.calls.borrow().snapshots, snapshots_before, "painting must not capture native state");
+        assert_eq!(self.calls.borrow().updates, updates_before, "painting must not capture application state");
         assert!(self.calls.borrow().actions.is_empty(), "painting must defer actions to logic");
     }
 
@@ -97,14 +69,14 @@ impl<B: Backend> View<B> {
 
     /// Public logic observes real elapsed time; no clock state is exposed or overwritten.
     fn refresh(&mut self) {
-        let before = self.calls.borrow().snapshots;
+        let before = self.calls.borrow().updates;
         std::thread::sleep(Duration::from_millis(350));
         self.logic();
-        assert_eq!(self.calls.borrow().snapshots, before + 1, "elapsed polling interval must trigger capture");
+        assert_eq!(self.calls.borrow().updates, before + 1, "elapsed polling interval must trigger capture");
     }
 
     /// Occurrence zero addresses group controls; subsequent occurrences address windows.
-    fn click(&mut self, label: &str, occurrence: usize) -> Vec<(B::Handle, WindowAction)> {
+    fn click(&mut self, label: &str, occurrence: usize) -> Vec<(H, WindowAction)> {
         let position = self.labels.iter()
             .filter(|entry| entry.0 == label)
             .nth(occurrence)
@@ -126,8 +98,30 @@ impl<B: Backend> View<B> {
     }
 }
 
-fn rendered_text(source: &str) -> Vec<SmolStr> {
-    View::new(source, vec![window("C:/Apps/App.exe", "Application")])
+
+const fn actions() -> ActionAvailability {
+    ActionAvailability { center: ActionState::Available, resize: ResizeAvailability::Disabled }
+}
+
+const fn exact(satisfied: bool) -> ActionAvailability {
+    ActionAvailability {
+        center: if satisfied { ActionState::Satisfied } else { ActionState::Available },
+        resize: ResizeAvailability::Exact(ResizeTarget { size: Size2D::new(1280, 720), satisfied }),
+    }
+}
+
+const fn selector(min: Option<Size2D<i32>>, max: Option<Size2D<i32>>) -> ActionAvailability {
+    ActionAvailability {
+        center: ActionState::Unavailable,
+        resize: ResizeAvailability::Selector {
+            primary: None,
+            settings: ResizeSelector { default: None, min, max },
+        },
+    }
+}
+
+fn rendered_text(actions: ActionAvailability) -> Vec<SmolStr> {
+    View::new(actions, vec![window("C:/Apps/App.exe", "Application")])
         .labels.into_iter().map(|(text, _)| text).collect()
 }
 
@@ -141,12 +135,13 @@ fn grouped_windows() -> Vec<WindowInfo<u64>> {
 
 #[test]
 fn empty_matches_render_the_quiet_inline_state() {
-    assert_eq!(rendered_text(""), ["- nothing here -"]);
+    let view = View::<u64>::with_engine(TestEngine::new(vec![Ok(Scene::empty())]));
+    assert_eq!(view.labels.iter().map(|entry| entry.0.as_str()).collect::<Vec<_>>(), ["- nothing here -"]);
 }
 
 #[test]
 fn viewport_keeps_the_approved_comfortable_size() {
-    let viewport = App::<TestBackend>::viewport();
+    let viewport = App::<TestEngine<u64>, TestPlatform<u64>>::viewport();
     let expected = Some(Vec2::new(450.0, 720.0));
     assert_eq!(viewport.inner_size, expected);
     assert_eq!(viewport.min_inner_size, expected);
@@ -157,7 +152,9 @@ fn viewport_keeps_the_approved_comfortable_size() {
 
 #[test]
 fn actionless_groups_keep_only_the_flat_program_and_window_hierarchy() {
-    let text = rendered_text("[[rules]]\nname = 'app'\ndescription = ' My Application '");
+    let text = rendered_text(ActionAvailability {
+        center: ActionState::Unavailable, resize: ResizeAvailability::Disabled,
+    });
     for expected in [
         "App Description",
         "app",
@@ -177,36 +174,25 @@ fn actionless_groups_keep_only_the_flat_program_and_window_hierarchy() {
 
 #[test]
 fn resize_modes_preserve_primary_and_selector_controls() {
+    let target = ResizeTarget { size: Size2D::new(1280, 720), satisfied: false };
     for (resize, primary, selector) in [
-        ("resize = false", false, false),
-        ("resize = true", false, true),
-        ("resize = {}", false, true),
-        ("resize = [1280, 720]", true, true),
-        ("resize.exact = [1280, 720]", true, false),
-        ("resize.default = [1280, 720]", true, true),
-        ("resize = { default = [1280, 720], max = [960, 540] }",
-            false, true),
-        ("resize = { default = [1280, 720], min = [1281, 720] }",
-            false, true),
+        (ResizeAvailability::Disabled, false, false),
+        (ResizeAvailability::Exact(target), true, false),
+        (ResizeAvailability::Selector { primary: None, settings: ResizeSelector::default() }, false, true),
+        (ResizeAvailability::Selector { primary: Some(target), settings: ResizeSelector::default() }, true, true),
     ] {
-        let source = format_smolstr!("[[rules]]\nname = 'app'\nmove = true\n{resize}");
-        let text = rendered_text(&source);
+        let text = rendered_text(ActionAvailability { center: ActionState::Available, resize });
         assert_eq!(text.iter().filter(|text| text.ends_with(" CENTER")).count(), 2);
-        assert_eq!(
-            text.iter().filter(|text| text.ends_with(" 1280x720")).count(),
-            if primary { 2 } else { 0 },
-            "{resize}: {text:?}");
-        assert_eq!(
-            text.iter().filter(|text| text.as_str() == "SELECT").count(),
-            if selector { 2 } else { 0 },
-            "{resize}: {text:?}");
+        assert_eq!(text.iter().filter(|text| text.ends_with(" 1280x720")).count(),
+            if primary { 2 } else { 0 }, "{text:?}");
+        assert_eq!(text.iter().filter(|text| text.as_str() == "SELECT").count(),
+            if selector { 2 } else { 0 }, "{text:?}");
     }
 }
 
 #[test]
 fn group_and_individual_buttons_capture_their_rendered_targets() {
-    let source = "[[rules]]\nname = 'app'\nmove = true\nresize.exact = [1280, 720]";
-    let mut view = View::new(source, grouped_windows());
+    let mut view = View::new(exact(false), grouped_windows());
     for (label, action) in [
         ("\u{26ab} CENTER", WindowAction::Center),
         ("\u{26ab} 1280x720", WindowAction::Resize(Size2D::new(1280, 720))),
@@ -218,13 +204,7 @@ fn group_and_individual_buttons_capture_their_rendered_targets() {
 
 #[test]
 fn satisfied_controls_are_disabled_for_windows_and_complete_groups() {
-    let source = "[[rules]]\nname = 'app'\nmove = true\nresize.exact = [1280, 720]";
-    let mut windows = grouped_windows();
-    for window in &mut windows {
-        window.content_rect.origin = Point2D::new(320, 180);
-        window.content_rect.size = Size2D::new(1280, 720);
-    }
-    let mut view = View::new(source, windows);
+    let mut view = View::new(exact(true), grouped_windows());
     for label in ["\u{2705} CENTER", "\u{2705} 1280x720"] {
         for occurrence in 0..3 {
             assert_eq!(view.click(label, occurrence), []);
@@ -234,11 +214,9 @@ fn satisfied_controls_are_disabled_for_windows_and_complete_groups() {
 
 #[test]
 fn one_satisfied_window_does_not_disable_actions_for_the_group() {
-    let source = "[[rules]]\nname = 'app'\nmove = true\nresize = [1280, 720]";
-    let mut windows = grouped_windows();
-    windows[0].content_rect.origin = Point2D::new(320, 180);
-    windows[0].content_rect.size = Size2D::new(1280, 720);
-    let mut view = View::new(source, windows);
+    let mut scene = Scene::group(grouped_windows(), exact(false));
+    scene.groups[0].windows[0].1 = exact(true);
+    let mut view = View::with_engine(TestEngine::new(vec![Ok(scene)]));
     assert_eq!(view.click("\u{2705} CENTER", 0), []);
     assert_eq!(view.click("\u{2705} 1280x720", 0), []);
     assert_eq!(view.click("\u{26ab} CENTER", 0), [
@@ -252,11 +230,10 @@ fn one_satisfied_window_does_not_disable_actions_for_the_group() {
 
 #[test]
 fn selectors_keep_bounds_and_emit_group_or_individual_actions() {
-    let source = "[[rules]]\nname = 'app'\n\
-        resize = { default = [1280, 720], min = [960, 540], max = [960, 600] }";
+    let controls = selector(Some(Size2D::new(960, 540)), Some(Size2D::new(960, 600)));
     let action = WindowAction::Resize(Size2D::new(960, 540));
     for (occurrence, targets) in [(0, vec![(1, action), (2, action)]), (2, vec![(2, action)])] {
-        let mut view = View::new(source, grouped_windows());
+        let mut view = View::new(controls.clone(), grouped_windows());
         assert_eq!(view.click("SELECT", occurrence), []);
         // Popups settle their layout on the frame after opening.
         view.frame(Vec::new());
@@ -269,8 +246,7 @@ fn selectors_keep_bounds_and_emit_group_or_individual_actions() {
 
 #[test]
 fn selector_with_no_manifest_choices_explains_its_empty_state() {
-    let source = "[[rules]]\nname = 'app'\nresize.max = [100, 100]";
-    let mut view = View::new(source, grouped_windows());
+    let mut view = View::new(selector(None, Some(Size2D::new(100, 100))), grouped_windows());
     assert_eq!(view.click("SELECT", 0), []);
     view.frame(Vec::new());
     assert!(view.labels.iter().any(|entry| entry.0 == "No sizes within configured limits"));
@@ -278,22 +254,16 @@ fn selector_with_no_manifest_choices_explains_its_empty_state() {
 
 #[test]
 fn window_failures_coexist_with_controls_and_recover_without_stale_diagnostics() {
-    let source = "[[rules]]\nname = 'app'\nmove = true";
-    // Reverse handle order and interleave a failure to catch accidental sorting or
-    // partition-based reconstruction of the usable rows and group action targets.
-    let mut initial: Vec<_> = grouped_windows().into_iter().rev()
-        .map(|window| (window.handle, Ok(window))).collect();
-    initial.insert(1, (7, Err(anyhow::anyhow!("access denied").context("program path"))));
-    let backend = TestBackend {
-        snapshots: [
-            Ok(initial),
-            Err(anyhow::anyhow!("desktop unavailable").context("enumeration")),
-            Ok(grouped_windows().into_iter().map(|window| (window.handle, Ok(window))).collect()),
-            Ok(vec![(7, Err(anyhow::anyhow!("still unavailable")))]),
-            Ok(Vec::new()),
-        ].into(),
-    };
-    let mut view = View::with_backend(source, backend);
+    let mut initial = Scene::group(grouped_windows().into_iter().rev().collect(), actions());
+    initial.errors.push((7, anyhow::anyhow!("access denied").context("program path")));
+    let engine = TestEngine::new(vec![
+        Ok(initial),
+        Err(anyhow::anyhow!("desktop unavailable").context("enumeration")),
+        Ok(Scene::group(grouped_windows(), actions())),
+        Ok(Scene { groups: Vec::new(), errors: vec![(7, anyhow::anyhow!("still unavailable"))] }),
+        Ok(Scene::empty()),
+    ]);
+    let mut view = View::with_engine(engine);
     assert!(view.labels.iter().any(|entry| entry.0 == "Windows with errors (1)"));
     assert!(view.labels.iter().any(|entry| entry.0 == "program path: access denied"));
     assert_eq!(view.labels.iter().filter(|entry| entry.0 == "First" || entry.0 == "Second")
@@ -327,13 +297,14 @@ fn window_failures_coexist_with_controls_and_recover_without_stale_diagnostics()
 #[test]
 fn error_only_view_sorts_rows_and_wraps_long_context_without_hiding_the_cause() {
     let cause = "A long executable path could not be read. ".repeat(12);
-    let backend = TestBackend {
-        snapshots: [Ok(vec![
-            (9, Err(anyhow::anyhow!("{cause}").context("capture"))),
-            (3, Err(anyhow::anyhow!("short cause"))),
-        ])].into(),
-    };
-    let mut view = View::with_backend("", backend);
+    let engine = TestEngine::new(vec![Ok(Scene {
+        groups: Vec::new(),
+        errors: vec![
+            (9, anyhow::anyhow!("{cause}").context("capture")),
+            (3, anyhow::anyhow!("short cause")),
+        ],
+    })]);
+    let mut view = View::with_engine(engine);
     view.frame(Vec::new());
     let text: Vec<_> = view.labels.iter().map(|entry| entry.0.as_str()).collect();
     assert_eq!(&text[..4], ["Windows with errors (2)", "3", "short cause", "9"]);
@@ -357,18 +328,10 @@ fn repeated_paints_reuse_handle_descriptions_until_the_next_update() {
             f.write_str("native-window-description")
         }
     }
-    struct ErrorBackend;
-    impl Backend for ErrorBackend {
-        type Handle = NativeHandle;
-        fn snapshot(&mut self) -> anyhow::Result<Vec<(NativeHandle, anyhow::Result<WindowInfo<NativeHandle>>)>> {
-            Ok(vec![(NativeHandle, Err(anyhow::anyhow!("capture unavailable")))])
-        }
-        #[expect(clippy::panic_in_result_fn, reason = "painting a diagnostic must never perform a native action")]
-        fn perform(&mut self, _: NativeHandle, _: WindowAction) -> anyhow::Result<()> {
-            panic!("diagnostics have no native action");
-        }
-    }
-    let mut view = View::with_backend("", ErrorBackend);
+    let mut view = View::with_engine(TestEngine::new(vec![Ok(Scene {
+        groups: Vec::new(),
+        errors: vec![(NativeHandle, anyhow::anyhow!("capture unavailable"))],
+    })]));
     let initial_calls = CALLS.get();
     assert!(initial_calls > 0);
     assert!(view.labels.iter().any(|entry| entry.0 == "native-window-description"));
@@ -383,28 +346,21 @@ fn repeated_paints_reuse_handle_descriptions_until_the_next_update() {
     assert_eq!(CALLS.get(), refreshed_calls);
 }
 
-/// A slow backend makes start-based scheduling observably wrong even without reading a clock field.
+/// A slow engine makes start-based scheduling observably wrong even without reading a clock field.
 /// Calls immediately after completion must wait, whether capture failed or recovered.
 #[test]
 fn slow_failed_and_successful_captures_are_paced_from_completion() {
-    struct SlowBackend { attempt: usize }
-    impl Backend for SlowBackend {
-        type Handle = u64;
-
-        fn snapshot(&mut self) -> anyhow::Result<turbozone_core::WindowSnapshotCollection<u64>> {
-            std::thread::sleep(Duration::from_millis(350));
-            self.attempt += 1;
-            if self.attempt < 3 { anyhow::bail!("enumeration failed"); }
-            Ok(Vec::new())
-        }
-
-        fn perform(&mut self, _: u64, _: WindowAction) -> anyhow::Result<()> { Ok(()) }
-    }
-    let mut view = View::with_backend("", SlowBackend { attempt: 0 });
-    assert_eq!(view.calls.borrow().snapshots, 1, "startup captures immediately");
+    let mut engine = TestEngine::new(vec![
+        Err(anyhow::anyhow!("enumeration failed")),
+        Err(anyhow::anyhow!("enumeration failed")),
+        Ok(Scene::<u64>::empty()),
+    ]);
+    engine.set_delay(Duration::from_millis(350));
+    let mut view = View::with_engine(engine);
+    assert_eq!(view.calls.borrow().updates, 1, "startup captures immediately");
     for expected in [1, 2, 3] {
         view.logic();
-        assert_eq!(view.calls.borrow().snapshots, expected, "completion starts a new polling interval");
+        assert_eq!(view.calls.borrow().updates, expected, "completion starts a new polling interval");
         if expected < 3 { view.refresh(); }
     }
     view.frame(Vec::new());
@@ -414,15 +370,15 @@ fn slow_failed_and_successful_captures_are_paced_from_completion() {
 
 #[test]
 fn a_clicked_action_bypasses_the_polling_delay_and_is_not_replayed() {
-    let mut view = View::new("[[rules]]\nname = 'app'\nmove = true", grouped_windows());
-    let before = view.calls.borrow().snapshots;
+    let mut view = View::new(actions(), grouped_windows());
+    let before = view.calls.borrow().updates;
     let started = Instant::now();
     assert_eq!(view.click("\u{26ab} CENTER", 0), [
         (1, WindowAction::Center), (2, WindowAction::Center),
     ]);
     assert!(started.elapsed() < Duration::from_millis(333), "the action must not wait for periodic capture");
-    assert_eq!(view.calls.borrow().snapshots, before + 1);
+    assert_eq!(view.calls.borrow().updates, before + 1);
     view.logic();
     assert_eq!(view.calls.borrow().actions, []);
-    assert_eq!(view.calls.borrow().snapshots, before + 1);
+    assert_eq!(view.calls.borrow().updates, before + 1);
 }

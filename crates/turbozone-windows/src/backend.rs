@@ -1,6 +1,6 @@
 use turbozone_core::util::Cache;
 use turbozone_core::{
-    Backend      as CoreBackend,
+    Platform     as CorePlatform,
     WindowInfo   as CoreWindowInfo,
     WindowAction,
     ProgramInfo,
@@ -81,10 +81,10 @@ pub struct Backend {
     program_cache: ProgramCache,
 }
 
-impl CoreBackend for Backend {
-    type Handle = Handle<HWND>;
+impl CorePlatform for Backend {
+    type Window = Handle<HWND>;
 
-    fn snapshot(&mut self) -> Result<Vec<(Self::Handle, Result<WindowInfo>)>> {
+    fn snapshot(&mut self) -> Result<Vec<(Self::Window, Result<WindowInfo>)>> {
         self.next_seq += 1;
 
         let mut ctx = SnapshotContext {
@@ -117,7 +117,7 @@ impl CoreBackend for Backend {
     }
 
     #[expect(clippy::panic_in_result_fn, reason = "an unknown action is a core/backend contract mismatch, not an operational failure")]
-    fn perform(&mut self, target: Self::Handle, action: WindowAction) -> Result<()> {
+    fn perform(&mut self, target: Self::Window, action: WindowAction) -> Result<()> {
         match action {
             WindowAction::Center =>
                 center_window(target)
