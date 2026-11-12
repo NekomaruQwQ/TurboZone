@@ -10,14 +10,14 @@ publish = false
 
 [workspace.dependencies]
 anyhow = "1.0"
-egui = "0.36.1"
+egui = "0.36.0"
 euclid = "0.22.14"
-log = "0.4.34"
-smol_str = { version = "0.3.6", features = ["serde"] }
+log = "0.4.35"
+smol_str = { version = "0.3.7", features = ["serde"] }
 tap = "1.0.1"
 
 [workspace.dependencies.eframe]
-version = "0.36.1"
+version = "0.36.0"
 default-features = false
 features = ["glow"]
 
