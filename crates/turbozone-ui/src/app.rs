@@ -42,9 +42,6 @@ pub const TURBOZONE_WINDOW_SIZE: [f32; 2] = [450.0, 720.0];
 /// Native state changes less often than the UI paints, so snapshots use a separate cadence.
 const UPDATE_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 3);
 
-/// Painting stays responsive without coupling native enumeration to every frame.
-const RENDER_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 30);
-
 const CHAR_EMPTY: char = '\u{26ab}';
 const CHAR_CHECK: char = '\u{2705}';
 const CHAR_CROSS: char = '\u{00d7}';
@@ -89,14 +86,11 @@ impl<E: Engine<P>, P: Platform> eframe::App for App<E, P> {
                 });
         });
 
-        let request_repaint = !actions.is_empty();
-        self.engine.queue(actions);
-
-        if request_repaint {
+        if !actions.is_empty() {
             ui.request_repaint();
-        } else {
-            ui.request_repaint_after(RENDER_INTERVAL);
         }
+
+        self.engine.queue(actions);
     }
 }
 
@@ -252,6 +246,7 @@ impl<E: Engine<P>, P: Platform> App<E, P> {
                 WindowState::Normal => {},
             }
             ui.add(Label::new(window.info.title.as_str()).truncate());
+            ui.weak(format!("{}x{}", window.info.content_rect.width(), window.info.content_rect.height()))
         });
 
         ui.horizontal(|ui| Self::action_ui(ui, &window.actions, action_callback));

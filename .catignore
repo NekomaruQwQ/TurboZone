@@ -3,6 +3,9 @@
 /crates/turbozone-core/src/engine.rs
 /crates/turbozone-core/src/logging.rs
 
+# `turbozone-engine`
+/crates/turbozone-engine/src/
+
 # `turbozone-windows`
 /crates/turbozone-windows/src/native.rs
 /crates/turbozone-windows/src/window.rs
@@ -20,14 +23,3 @@ tests/
 LICENSE
 *.lock
 *.schema.json
-
-# BEGIN agent
-/crates/turbozone-windows/src/backend.rs
-/crates/turbozone-ui/src/app.rs
-/crates/turbozone-engine/
-/crates/turbozone-core/src/platform.rs
-/crates/turbozone-core/src/lib.rs
-/crates/turbozone/src/config.rs
-/crates/turbozone/src/lib.rs
-/crates/turbozone-ui/src/lib.rs
-# END agent
